@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Результаты прогонов конвейера
+out/
+*.geojson.tmp
+
+# Node / web
+node_modules/
+web/dist/
+web/.vite/
+
+# TypeScript-типы, сгенерированные из web/src/types/schema.json через npx.
+# Сама JSON Schema КОММИТИТСЯ: она порождается из core/schemas.py и нужна тем,
+# у кого под рукой нет Python. Руками не правится ни то, ни другое.
+web/src/types/schema.ts
+
+# Локальное хранилище API
+storage/
+
+# Редакторы и ОС
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

@@ -142,6 +142,9 @@ vehicles:
         resolution_px: [1440, 1080]
         resolution_mp: 1.55
         focal_length_mm: 8
+        # Размер пикселя взят из спецификации ТОЙ ЖЕ камеры в документе Gemini:
+        # [Gemini] стр. 3, «Размер пикселя 3,45 мкм». Не выдумано, перенесено.
+        pixel_size_um: 3.45
         fov_diagonal_deg: 43
         shutter: global
 
@@ -154,9 +157,15 @@ vehicles:
     name: Геоскан 801
     type: multirotor
 
-    cruise_speed_mps:
+    # Поле называется по тому, что реально написано в источнике: это МАКСИМУМ.
+    # Крейсерская скорость выводится из него правилом в core/assumptions.py
+    # (MULTIROTOR_CRUISE_FRACTION_OF_MAX) и помечается как производная.
+    max_horizontal_speed_mps:
       value: 15.0
       source: "[801] стр. 3, «Макс. горизонтальная скорость полета 15 м/с» (это МАКСИМУМ, не крейсер)"
+    cruise_speed_mps:
+      value: null
+      gap: "Крейсерская скорость в буклете не выделена, дан только максимум 15 м/с."
     endurance_s:
       value: 2400
       source: "[801] стр. 3, «Макс. продолжительность полета 40 мин»"
@@ -227,9 +236,13 @@ vehicles:
     name: Геоскан Gemini
     type: multirotor
 
-    cruise_speed_mps:
+    # См. комментарий у Геоскан 801: имя поля соответствует источнику.
+    max_horizontal_speed_mps:
       value: 15.0
       source: "[Gemini] стр. 1, «Макс. скорость полета горизонтальная 15 м/с» (МАКСИМУМ, не крейсер)"
+    cruise_speed_mps:
+      value: null
+      gap: "Крейсерская скорость в спецификации не выделена, дан только максимум 15 м/с."
     vertical_speed_mps:
       value: 5.0
       source: "[Gemini] стр. 1, «Макс. скорость полета вертикальная 5 м/с»"

@@ -1,0 +1,78 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "geoscan-planner"
+version = "0.1.0"
+description = "Сервис планирования и распределения беспилотных авиационных работ"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+# Состав зависимостей ограничен разделом 3 PROJECT_BRIEF.md.
+# Добавление чего-либо сверх этого списка — только решением команды (AGENT.md §7).
+dependencies = [
+    "numpy>=1.26",
+    "shapely>=2.0",
+    "pyproj>=3.6",
+    "pydantic>=2.6",
+    # ОТКЛОНЕНИЕ ОТ БРИФА §3: PyYAML в разрешённом списке не значится, но
+    # data/vehicles.yaml мандирован тем же брифом (§7) и его нужно чем-то читать.
+    # Лицензия MIT, зависимостей нет. Обратный путь — конвертировать каталог в
+    # JSON и убрать зависимость. См. docs/current_state.md §5, долг №11.
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+api = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+]
+dev = [
+    "geoscan-planner[api]",
+    "pytest>=8.0",
+    "ruff>=0.4",
+]
+
+[project.scripts]
+geoscan-plan = "core.cli:main"
+
+[tool.setuptools]
+packages = [
+    "core",
+    "core.geo",
+    "core.survey",
+    "core.coverage",
+    "core.flight",
+    "core.transit",
+    "core.allocate",
+    "core.validate",
+    "core.export",
+    "api",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = [
+    # `class X(str, Enum)` вместо `StrEnum` — общепринятая форма для pydantic и,
+    # что важнее, работает на Python 3.10. Целевая среда (Docker) — 3.11, но код
+    # намеренно остаётся запускаемым на 3.10: у части машин команды нет 3.11.
+    "UP042",
+    # `datetime.UTC` появился в 3.11. `timezone.utc` — по той же причине.
+    "UP017",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# В реестре допущений длинные строки-источники читаемее, чем перенесённые.
+"core/assumptions.py" = ["E501"]
+# Query()/Depends() в значениях по умолчанию — штатная форма записи FastAPI.
+"api/main.py" = ["B008"]

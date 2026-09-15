@@ -1,0 +1,42 @@
+# Запуск всего решения одной командой на чистой машине:
+#
+#     docker compose up
+#
+# Интерфейс: http://localhost:5173
+# API и его документация: http://localhost:8000/docs
+#
+# Очереди задач нет намеренно: Celery, Redis и RabbitMQ запрещены брифом §3,
+# расчёт идёт фоновой задачей внутри процесса API с поллингом статуса.
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      # Сценарии, нарисованные в интерфейсе, переживают перезапуск контейнера.
+      - ./storage:/app/storage
+    environment:
+      GEOSCAN_VEHICLES: /app/data/vehicles.yaml
+      GEOSCAN_STORAGE: /app/storage
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    ports:
+      - "5173:5173"
+    environment:
+      # Прокси /api → сервис api внутри сети compose (см. web/vite.config.ts).
+      VITE_API_TARGET: http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
