@@ -1,0 +1,353 @@
+# Технические характеристики БВС.
+#
+# ПРАВИЛО (инвариант 6 брифа): ни одно число здесь не выдумывается.
+# У каждого параметра есть поле `source` с документом и страницей.
+# Неизвестная характеристика — `value: null` и `gap:` с описанием пробела,
+# а НЕ правдоподобное число.
+#
+# Единицы — СИ (метры, секунды, м/с, Вт·ч, радианы). В `source` при
+# необходимости указано исходное значение в единицах документа.
+#
+# Источники (лежат в docs/, скачаны по ссылкам из раздела 6 исходного ТЗ):
+#   [201]    docs/Geoscan_201.pdf         — выдержка из руководства, стр. 115-117
+#   [801]    docs/Geoscan_801.pdf         — рекламный буклет, стр. 3-4
+#   [Gemini] docs/Gemini_Specs_EN_RUS.pdf — спецификация, стр. 1-6
+
+vehicles:
+  - id: geoscan-201
+    name: Геоскан 201
+    type: fixed_wing
+
+    airspeed_min_mps:
+      value: 17.8
+      source: "[201] стр. 115, «Скорость полета (воздушная) 64–130 км/ч» → 64 км/ч"
+    airspeed_max_mps:
+      value: 36.1
+      source: "[201] стр. 115, «Скорость полета (воздушная) 64–130 км/ч» → 130 км/ч"
+    cruise_speed_mps:
+      value: null
+      gap: >-
+        Крейсерская скорость в документе не выделена, дан только диапазон
+        воздушной скорости 64–130 км/ч. Рабочее значение выбирается в
+        core/assumptions.py как решение команды, а не как ТТХ производителя.
+
+    endurance_s:
+      value: 10800
+      source: "[201] стр. 115, «Макс. продолжительность полета 180 мин»"
+    max_range_m:
+      value: 210000
+      source: "[201] стр. 115, «Максимальная протяженность маршрута 210 км»"
+    max_wind_mps:
+      value: 12.0
+      source: "[201] стр. 115, «Макс. допустимая скорость ветра 12 м/с»"
+
+    max_takeoff_mass_kg:
+      value: 8.5
+      source: "[201] стр. 115, «Макс. взлетная масса 8,5 кг»"
+    max_payload_mass_kg:
+      value: 1.5
+      source: "[201] стр. 115, «Макс. масса полезной нагрузки 1,5 кг»"
+    wingspan_m:
+      value: 2.22
+      source: "[201] стр. 115, «Размах крыла 2,22 м»"
+
+    min_safe_altitude_m:
+      value: 100
+      source: "[201] стр. 115, «Мин. безопасная высота полета 100 м»"
+    max_altitude_m:
+      value: 4000
+      source: "[201] стр. 115, «Макс. высота полета 4000 м»"
+
+    turn_radius_m:
+      value: null
+      gap: >-
+        ПРОБЕЛ, БЛОКИРУЮЩИЙ E4. Минимальный радиус разворота в предоставленной
+        выдержке из руководства отсутствует, хотя бриф на него ссылается.
+        Нужен для схемы разворота и удлинения галсов за границу полигона.
+        Либо запросить у организаторов, либо оценить из скорости и
+        допустимого крена и зафиксировать как ДОПУЩЕНИЕ в assumptions.py.
+
+    takeoff_mode:
+      value: catapult
+      source: "[201] стр. 115, «Взлет — с пусковой установки»"
+    landing_mode:
+      value: parachute
+      source: "[201] стр. 115, «Посадка — в автоматическом режиме на парашюте»"
+
+    survey_area_per_sortie_km2:
+      value: [7, 22]
+      source: >-
+        [201] стр. 115, «Площадь съемки за один полет 7–22 км».
+        В источнике опечатка: пропущен знак степени, по смыслу это км².
+        Диапазон, а не одно число, — зависит от высоты и типа камеры.
+
+    motor:
+      type:
+        value: electric_brushless
+        source: "[201] стр. 115, «Двигатель — электрический бесколлекторный»"
+      power_w:
+        value: 220
+        source: "[201] стр. 115, «Мощность двигателя 220 Вт»"
+
+    battery:
+      cells:
+        value: 5
+        source: "[201] стр. 116, «Количество ячеек 5»"
+      nominal_voltage_v:
+        value: 18.5
+        source: "[201] стр. 116, «Номинальное напряжение 18,5 В»"
+      voltage_limits_v:
+        value: [15, 21]
+        source: "[201] стр. 116, «Нижний предел 15 В», «Верхний предел 21 В»"
+      capacity_mah:
+        value: 40000
+        source: "[201] стр. 116, «Емкость 40 000 мА·ч»"
+      energy_wh:
+        value: 740
+        source: >-
+          ПРОИЗВОДНАЯ ВЕЛИЧИНА, не из документа: 18,5 В × 40 А·ч = 740 Вт·ч.
+          Считать оценкой сверху — реальная отдаваемая энергия ниже.
+
+    operating_temp_c:
+      value: [-20, 40]
+      source: "[201] стр. 115, базовая АКБ. С АКБ «Арктика»: от -40 до +20 °C"
+
+    payloads:
+      - id: riebo-r4-r6
+        name: Фотокамера Riebo R4/R6
+        kind: rgb
+        source: "[201] стр. 117"
+        resolution_mp: [45, 61]
+        focal_length_mm: 40
+        fov_horizontal_deg: 89.84
+        fov_vertical_deg: 67.16
+      - id: sony-dsc-rx1rm2-m3
+        name: Фотокамера Sony DSC-RX1RM2/M3
+        kind: rgb
+        source: "[201] стр. 117"
+        resolution_mp: [43.6, 61]
+        sensor_mm: [35.9, 24]
+        shutter: central
+      - id: sony-zv-e10
+        name: Фотокамера Sony ZV-E10
+        kind: rgb
+        source: "[201] стр. 117"
+        resolution_mp: 24.3
+        sensor_mm: [23.5, 15.6]
+        shutter: focal_plane
+      - id: pollux
+        name: Мультиспектральная камера Pollux
+        kind: multispectral
+        source: "[201] стр. 117, [Gemini] стр. 3-4"
+        resolution_px: [1440, 1080]
+        resolution_mp: 1.55
+        focal_length_mm: 8
+        fov_diagonal_deg: 43
+        shutter: global
+
+    payload_note: >-
+      [201] стр. 117, сноска: «тип фотокамер и наличие внутреннего
+      GNSS-приемника БВС зависят от комплектации БАС». Состав нагрузки —
+      параметр сценария, а не жёсткое свойство борта.
+
+  - id: geoscan-801
+    name: Геоскан 801
+    type: multirotor
+
+    cruise_speed_mps:
+      value: 15.0
+      source: "[801] стр. 3, «Макс. горизонтальная скорость полета 15 м/с» (это МАКСИМУМ, не крейсер)"
+    endurance_s:
+      value: 2400
+      source: "[801] стр. 3, «Макс. продолжительность полета 40 мин»"
+    max_wind_mps:
+      value: 10.0
+      source: "[801] стр. 3, «Макс. допустимая скорость ветра 10 м/с»"
+    max_altitude_m:
+      value: 4000
+      source: "[801] стр. 3, «Макс. высота полета (над уровнем моря) 4000 м»"
+    mass_kg:
+      value: 1.5
+      source: "[801] стр. 3, «Масса 1,5 кг»"
+    diagonal_size_m:
+      value: 0.435
+      source: "[801] стр. 3, «Размер по диагонали 435 мм»"
+    operating_temp_c:
+      value: [-20, 40]
+      source: "[801] стр. 3, «Рабочий диапазон температур от -20 до +40 °C»"
+    turn_radius_m:
+      value: 0
+      source: "Мультиротор разворачивается на месте — не ТТХ, а свойство типа БВС"
+
+    max_payload_mass_kg:
+      value: null
+      gap: "В буклете нет. Нагрузка несъёмная (подвес в комплекте), для планирования не критично."
+    survey_area_per_sortie_km2:
+      value: null
+      gap: "В буклете нет — см. payload_note, это не съёмочный борт."
+    battery:
+      value: null
+      gap: "Ёмкость, напряжение и энергия АКБ в буклете отсутствуют. Нужны для модели энергии E4."
+
+    payloads:
+      - id: geoscan-801-visible
+        name: Камера видимого спектра (на подвесе)
+        kind: inspection_rgb
+        source: "[801] стр. 4"
+        sensor_inch: "1/2.3"
+        resolution_mp: 12
+        focal_length_mm: [4.35, 16]
+        hybrid_zoom: "до 12x"
+      - id: geoscan-801-thermal
+        name: Тепловизионная камера (на подвесе)
+        kind: ir
+        source: "[801] стр. 4"
+        resolution_px: [640, 512]
+        focal_length_mm: 9.1
+        spectral_range_um: [8, 14]
+        thermal_sensitivity_mk: 40
+        temp_measurement_ranges_c: [[-20, 150], [100, 550]]
+      - id: geoscan-801-gimbal
+        name: Трёхосевой подвес
+        kind: gimbal
+        source: "[801] стр. 4"
+        roll_deg: [-30, 30]
+        pitch_deg: [-97.5, 32.5]
+        yaw_deg: [-48, 48]
+
+    payload_note: >-
+      ВАЖНО ДЛЯ E2 (матрица совместимости «борт × нагрузка»).
+      801 — инспекционный, а не фотограмметрический борт: зум-камера и
+      тепловизор на подвесе, без съёмочной камеры с фиксированным фокусом и
+      без параметра «площадь съёмки за вылет». Для площадной RGB-съёмки он
+      не предназначен. Пригоден для ИК-съёмки; пригодность для площадного
+      покрытия требует отдельного решения команды.
+
+  - id: geoscan-gemini
+    name: Геоскан Gemini
+    type: multirotor
+
+    cruise_speed_mps:
+      value: 15.0
+      source: "[Gemini] стр. 1, «Макс. скорость полета горизонтальная 15 м/с» (МАКСИМУМ, не крейсер)"
+    vertical_speed_mps:
+      value: 5.0
+      source: "[Gemini] стр. 1, «Макс. скорость полета вертикальная 5 м/с»"
+    endurance_s:
+      value: 2400
+      source: "[Gemini] стр. 1, «Макс. продолжительность полета 40 мин»"
+    max_wind_mps:
+      value: 10.0
+      source: "[Gemini] стр. 1, «Макс. допустимая скорость ветра 10 м/с»"
+    max_altitude_asl_m:
+      value: 4000
+      source: "[Gemini] стр. 1, «Макс. высота полета (над уровнем моря) 4000 м»"
+    max_altitude_agl_m:
+      value: 500
+      source: >-
+        [Gemini] стр. 1, «Макс. высота полета (над уровнем земли) 500 м».
+        ЖЁСТКИЙ ПОТОЛОК ВЫСОТЫ СЪЁМКИ для E2 — ограничивает достижимый GSD.
+    mass_kg:
+      value: 2.0
+      source: "[Gemini] стр. 1, «Масса (с АКБ и винтами) 2 кг»"
+    diagonal_size_m:
+      value: 0.550
+      source: "[Gemini] стр. 1, «Размер по диагонали (без винтов) 550 мм»"
+    operating_temp_c:
+      value: [-15, 40]
+      source: "[Gemini] стр. 1, «Рабочий диапазон температур от -15 до 40 °C»"
+    turn_radius_m:
+      value: 0
+      source: "Мультиротор разворачивается на месте — не ТТХ, а свойство типа БВС"
+
+    motor:
+      type:
+        value: electric_brushless
+        source: "[Gemini] стр. 1, «Двигатели электрические, бесколлекторные, 4 шт»"
+      count:
+        value: 4
+        source: "[Gemini] стр. 1"
+
+    battery:
+      type:
+        value: li_ion
+        source: "[Gemini] стр. 2, «Тип АКБ литий-ионный»"
+      capacity_mah:
+        value: 6700
+        source: "[Gemini] стр. 2, «Емкость 6700 мА·ч»"
+      voltage_v:
+        value: 21.6
+        source: "[Gemini] стр. 2, «Напряжение 21,6 В»"
+      energy_wh:
+        value: 144.7
+        source: "[Gemini] стр. 2, «Энергия 144,7 Вт·ч» — прямо из документа, не расчёт"
+      mass_kg:
+        value: 0.710
+        source: "[Gemini] стр. 2, «Масса 710 г»"
+      charging_time_s:
+        value: 6300
+        source: "[Gemini] стр. 5, «Время заряда АКБ ~105 мин» — важно для многовылетности"
+
+    survey_area_per_sortie_km2:
+      value: null
+      gap: >-
+        ПРОТИВОРЕЧИЕ С БРИФОМ. PROJECT_BRIEF.md §7 утверждает «площадь съёмки
+        до ~1 км² за вылет», но в официальной спецификации такого параметра
+        НЕТ ни на одной из 6 страниц. Число из брифа — неподтверждённое.
+        Не использовать: площадь считается моделью съёмки (E2) из высоты,
+        ширины захвата и продолжительности полёта.
+
+    payloads:
+      - id: geoscan-pf1b
+        name: Фотокамера Geoscan PF1B
+        kind: rgb
+        source: "[Gemini] стр. 3"
+        resolution_px: [6000, 4000]
+        resolution_mp: 24.3
+        sensor_mm: [23.5, 15.6]
+        sensor_format: APS-C
+        focal_length_mm: 20
+        shutter: mechanical_focal_plane
+        max_aperture: 2.8
+        iso_range: [100, 25600]
+      - id: pollux
+        name: Мультиспектральная камера Геоскан Pollux
+        kind: multispectral
+        source: "[Gemini] стр. 3-4"
+        resolution_px: [1440, 1080]
+        resolution_mp_per_band: 1.55
+        spectral_bands: 5
+        sensor_inch: "1/2.9"
+        sensor_diagonal_mm: 6.3
+        pixel_size_um: 3.45
+        focal_length_mm: 8
+        efl_35mm_mm: 44.4
+        fov_diagonal_deg: 43
+        shutter: global
+        rgb_capable: true
+        file_format: "TIFF 16 бит"
+
+    payload_note: >-
+      [Gemini] стр. 6: «может поставляться с фотокамерой Sony UMC-R10C или
+      мультиспектральной камерой Геоскан Pollux». Раздел ТТХ при этом описывает
+      камеру Geoscan PF1B — документ внутренне расходится в названии RGB-камеры.
+      Для E2 существенны оптические параметры (матрица, фокусное), они указаны.
+
+    gnss:
+      receiver:
+        value: "U-blox ZED-F9P"
+        source: "[Gemini] стр. 2"
+      ppk_accuracy:
+        value: "10 мм + 1 ppm × длина базовой линии (гориз. и верт.)"
+        source: "[Gemini] стр. 2"
+
+# ---------------------------------------------------------------------------
+# Параметры, которых нет НИ В ОДНОМ источнике и которые обязаны жить
+# в core/assumptions.py как явные допущения команды:
+#
+#   - battery_reserve_fraction  — доля неснижаемого резерва заряда
+#   - turn_radius_m у Геоскан 201
+#   - крейсерская (а не максимальная) скорость для всех бортов
+#   - расход энергии по фазам полёта (взлёт / набор / галс / разворот / посадка)
+#   - время подготовки борта и замены батареи между вылетами
+# ---------------------------------------------------------------------------
