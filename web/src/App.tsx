@@ -13,6 +13,7 @@ import L from 'leaflet';
 import {
   exportUrl,
   fetchMissionGeoJson,
+  getResult,
   listScenarios,
   startPlanning,
   waitForJob,
@@ -79,7 +80,6 @@ export default function App() {
         throw new Error(finished.error ?? 'расчёт не удался');
       }
       const document = await fetchMissionGeoJson(job.id);
-      const { getResult } = await import('./api');
       setResult(await getResult(job.id));
 
       if (mapRef.current) {

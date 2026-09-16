@@ -188,7 +188,7 @@ def command_export_schema(args: argparse.Namespace) -> int:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(schema, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"JSON Schema записана: {path}")
-    print(f"Дальше: npx json-schema-to-typescript {path} -o {path.with_suffix('.ts')}")
+    print("Дальше: cd web && npm run gen:types")
     return 0
 
 

@@ -1,13 +1,14 @@
 # Образ фронта. Контекст сборки — каталог web/.
-FROM node:20-alpine
+# Та же мажорная версия Node, что у разработчиков (24 LTS), чтобы package-lock
+# собирался одинаково в образе и локально.
+FROM node:24-alpine
 
 WORKDIR /app
 
-# package-lock.json в репозитории пока нет, поэтому install, а не ci.
-# TODO(E0): зафиксировать lock-файл — иначе сборка на чистой машине может
-# подтянуть другие версии, чем те, на которых шла разработка.
-COPY package.json ./
-RUN npm install
+# npm ci ставит ровно то, что записано в package-lock.json, и падает при
+# расхождении с package.json — сборка на чистой машине воспроизводима.
+COPY package.json package-lock.json ./
+RUN npm ci --no-fund --no-audit
 
 COPY . .
 

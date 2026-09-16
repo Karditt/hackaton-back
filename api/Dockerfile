@@ -7,12 +7,14 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# Зависимости ставятся отдельным слоем: правка кода не должна ронять кеш pip.
+# pyproject.toml объявляет пакеты core и api, поэтому оба каталога должны
+# лежать в контексте до pip install — иначе сборка колеса падает с
+# «package directory 'api' does not exist».
 COPY pyproject.toml README.md ./
 COPY core ./core
+COPY api ./api
 RUN pip install --no-cache-dir ".[api]"
 
-COPY api ./api
 COPY data ./data
 COPY scenarios ./scenarios
 
