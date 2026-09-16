@@ -39,7 +39,7 @@ python -m core.cli --batch scenarios/ -o out/
 
 # генерация TypeScript-типов из core/schemas.py (после ЛЮБОЙ правки контракта)
 python -m core.cli export-schema -o web/src/types/schema.json
-npx json-schema-to-typescript web/src/types/schema.json -o web/src/types/schema.ts
+cd web && npm run gen:types   # закреплённая версия генератора из web/package.json
 ```
 
 ## Критичные инварианты
