@@ -19,6 +19,11 @@ import type { GeoJsonDocument } from './api';
 const OSM_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
 const OSM_ATTRIBUTION = '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>';
 
+// Leaflet 1.9 по умолчанию ставит в префикс атрибуции флаг. Префикс заменён на
+// простую ссылку на библиотеку. Атрибуцию OSM (OSM_ATTRIBUTION) убирать нельзя —
+// её требует лицензия ODbL.
+const LEAFLET_PREFIX = '<a href="https://leafletjs.com" title="JavaScript-библиотека интерактивных карт">Leaflet</a>';
+
 /** Цвета фаз полёта. Те же смыслы, что в стилях KML (core/export/kml.py). */
 const PHASE_COLORS: Record<string, string> = {
   takeoff: '#16a34a',
@@ -38,6 +43,7 @@ const LAYER_STYLES: Record<string, L.PathOptions> = {
 
 export function createMap(container: HTMLElement): L.Map {
   const map = L.map(container, { preferCanvas: true }).setView([59.9, 30.3], 12);
+  map.attributionControl.setPrefix(LEAFLET_PREFIX);
   L.tileLayer(import.meta.env.VITE_TILE_URL ?? OSM_URL, {
     attribution: OSM_ATTRIBUTION,
     maxZoom: 18,
