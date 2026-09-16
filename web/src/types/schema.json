@@ -1,0 +1,1270 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "GeoscanPlannerContract",
+  "description": "Контракт core/schemas.py. Файл генерируется, руками не правится.",
+  "type": "object",
+  "properties": {
+    "scenario": {
+      "$ref": "#/definitions/Scenario"
+    },
+    "pipelineResult": {
+      "$ref": "#/definitions/PipelineResult"
+    }
+  },
+  "definitions": {
+    "FleetUnit": {
+      "additionalProperties": false,
+      "description": "Строка состава флота: борт из каталога, сколько штук и с какой нагрузкой.",
+      "properties": {
+        "vehicle_id": {
+          "description": "Идентификатор из data/vehicles.yaml",
+          "title": "Vehicle Id",
+          "type": "string"
+        },
+        "count": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Count",
+          "type": "integer"
+        },
+        "payload_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Нагрузка; None — выберет модель съёмки (E2)",
+          "title": "Payload Id"
+        },
+        "site_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Приписка к площадке; None — выберет распределение (E6)",
+          "title": "Site Id"
+        },
+        "battery_sets": {
+          "default": 1,
+          "description": "Комплектов АКБ на борт — предел числа вылетов",
+          "minimum": 1,
+          "title": "Battery Sets",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "vehicle_id"
+      ],
+      "title": "FleetUnit",
+      "type": "object"
+    },
+    "GeoPoint": {
+      "additionalProperties": false,
+      "description": "Точка в WGS84 (EPSG:4326), градусы.\n\nДопускается как на входе сценария, так и в экспорте — и больше нигде.\nПринимает компактную запись `[lon, lat]` или `[lon, lat, alt_m]`\n(порядок как в GeoJSON, RFC 7946: сначала долгота).",
+      "properties": {
+        "lon": {
+          "description": "Долгота, градусы WGS84",
+          "maximum": 180.0,
+          "minimum": -180.0,
+          "title": "Lon",
+          "type": "number"
+        },
+        "lat": {
+          "description": "Широта, градусы WGS84",
+          "maximum": 90.0,
+          "minimum": -90.0,
+          "title": "Lat",
+          "type": "number"
+        },
+        "alt_m": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Высота, метры (см. AltitudeMode)",
+          "title": "Alt M"
+        }
+      },
+      "required": [
+        "lon",
+        "lat"
+      ],
+      "title": "GeoPoint",
+      "type": "object"
+    },
+    "GeoPolygon": {
+      "additionalProperties": false,
+      "description": "Полигон в WGS84: внешний контур и произвольное число отверстий.\n\nКольца не требуется замыкать — замыкание доопределяется при переводе в\nshapely. Принимает компактную запись в виде координат GeoJSON Polygon:\n`[[[lon, lat], ...], [[lon, lat], ...]]` (первое кольцо — внешнее).",
+      "properties": {
+        "outer": {
+          "description": "Внешний контур, WGS84",
+          "items": {
+            "$ref": "#/definitions/GeoPoint"
+          },
+          "minItems": 3,
+          "title": "Outer",
+          "type": "array"
+        },
+        "holes": {
+          "description": "Отверстия, WGS84",
+          "items": {
+            "items": {
+              "$ref": "#/definitions/GeoPoint"
+            },
+            "type": "array"
+          },
+          "title": "Holes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "outer"
+      ],
+      "title": "GeoPolygon",
+      "type": "object"
+    },
+    "NoFlyZone": {
+      "additionalProperties": false,
+      "description": "Запретная зона, WGS84.\n\nВысотные границы опциональны: зона без них считается запретной на всех\nвысотах, что консервативнее и безопаснее.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "default": "",
+          "title": "Name",
+          "type": "string"
+        },
+        "polygon": {
+          "$ref": "#/definitions/GeoPolygon"
+        },
+        "min_alt_m": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Min Alt M"
+        },
+        "max_alt_m": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Alt M"
+        }
+      },
+      "required": [
+        "id",
+        "polygon"
+      ],
+      "title": "NoFlyZone",
+      "type": "object"
+    },
+    "QualityRequirement": {
+      "additionalProperties": false,
+      "description": "Требования к качеству материала — вход сенсорной модели (E2).",
+      "properties": {
+        "gsd_m": {
+          "description": "Целевое разрешение на местности, метры на пиксель",
+          "exclusiveMinimum": 0,
+          "title": "Gsd M",
+          "type": "number"
+        },
+        "forward_overlap": {
+          "description": "Продольное перекрытие, доля 0..1",
+          "exclusiveMaximum": 1.0,
+          "minimum": 0.0,
+          "title": "Forward Overlap",
+          "type": "number"
+        },
+        "side_overlap": {
+          "description": "Поперечное перекрытие, доля 0..1",
+          "exclusiveMaximum": 1.0,
+          "minimum": 0.0,
+          "title": "Side Overlap",
+          "type": "number"
+        }
+      },
+      "required": [
+        "gsd_m",
+        "forward_overlap",
+        "side_overlap"
+      ],
+      "title": "QualityRequirement",
+      "type": "object"
+    },
+    "Site": {
+      "additionalProperties": false,
+      "description": "Наземная площадка взлёта-посадки, WGS84.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "default": "",
+          "title": "Name",
+          "type": "string"
+        },
+        "position": {
+          "$ref": "#/definitions/GeoPoint"
+        },
+        "kind": {
+          "$ref": "#/definitions/SiteKind",
+          "default": "primary"
+        }
+      },
+      "required": [
+        "id",
+        "position"
+      ],
+      "title": "Site",
+      "type": "object"
+    },
+    "SiteKind": {
+      "description": "Назначение наземной площадки.",
+      "enum": [
+        "primary",
+        "reserve"
+      ],
+      "title": "SiteKind",
+      "type": "string"
+    },
+    "SurveyType": {
+      "description": "Тип съёмки. У каждого — свой пресет сенсорной модели (E2).",
+      "enum": [
+        "rgb",
+        "multispectral",
+        "ir",
+        "lidar",
+        "geophysical"
+      ],
+      "title": "SurveyType",
+      "type": "string"
+    },
+    "Wind": {
+      "additionalProperties": false,
+      "description": "Ветер.\n\nИНВАРИАНТ 4. `direction_deg` — МЕТЕОРОЛОГИЧЕСКАЯ конвенция: направление,\nОТКУДА дует. 0° — северный ветер (дует с севера на юг), 90° — восточный.\nПерепутанный знак даёт зеркальный план и обнаруживается только на демо.\nПеревод в вектор сноса — `core.flight.wind.wind_vector`, и только там.\n\nДопущение: ветер постоянен по всей области и по высоте (профиля нет).",
+      "properties": {
+        "speed_mps": {
+          "description": "Скорость ветра, м/с",
+          "minimum": 0.0,
+          "title": "Speed Mps",
+          "type": "number"
+        },
+        "direction_deg": {
+          "description": "Откуда дует, градусы от севера по часовой стрелке",
+          "maximum": 360.0,
+          "minimum": 0.0,
+          "title": "Direction Deg",
+          "type": "number"
+        }
+      },
+      "required": [
+        "speed_mps",
+        "direction_deg"
+      ],
+      "title": "Wind",
+      "type": "object"
+    },
+    "Scenario": {
+      "additionalProperties": false,
+      "description": "Полное задание на планирование. Координаты — WGS84.\n\nЭто ГРАНИЦА системы: дальше по конвейеру всё в метрах (инвариант 1).",
+      "properties": {
+        "id": {
+          "default": "scenario",
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "default": "",
+          "title": "Name",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "area": {
+          "$ref": "#/definitions/GeoPolygon",
+          "description": "Область съёмки"
+        },
+        "no_fly_zones": {
+          "items": {
+            "$ref": "#/definitions/NoFlyZone"
+          },
+          "title": "No Fly Zones",
+          "type": "array"
+        },
+        "airspace_boundary": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/GeoPolygon"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Граница разрешённого воздушного пространства"
+        },
+        "sites": {
+          "description": "Площадки взлёта-посадки",
+          "items": {
+            "$ref": "#/definitions/Site"
+          },
+          "minItems": 1,
+          "title": "Sites",
+          "type": "array"
+        },
+        "survey_type": {
+          "$ref": "#/definitions/SurveyType",
+          "default": "rgb"
+        },
+        "quality": {
+          "$ref": "#/definitions/QualityRequirement"
+        },
+        "wind": {
+          "$ref": "#/definitions/Wind"
+        },
+        "fleet": {
+          "items": {
+            "$ref": "#/definitions/FleetUnit"
+          },
+          "minItems": 1,
+          "title": "Fleet",
+          "type": "array"
+        },
+        "alpha": {
+          "default": 0.5,
+          "description": "Вес makespan в целевой функции α·makespan + (1−α)·суммарный налёт",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Alpha",
+          "type": "number"
+        },
+        "seed": {
+          "default": 42,
+          "description": "Зерно ГПСЧ: один сценарий + один seed = один план",
+          "title": "Seed",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "area",
+        "sites",
+        "quality",
+        "fleet"
+      ],
+      "title": "Scenario",
+      "type": "object"
+    },
+    "Allocation": {
+      "additionalProperties": false,
+      "description": "Распределение по флоту — до расчёта стоимости.",
+      "properties": {
+        "crs": {
+          "$ref": "#/definitions/CrsInfo"
+        },
+        "assignments": {
+          "items": {
+            "$ref": "#/definitions/SortieAssignment"
+          },
+          "title": "Assignments",
+          "type": "array"
+        },
+        "algorithm": {
+          "description": "Имя алгоритма: baseline / constructive / local_search",
+          "title": "Algorithm",
+          "type": "string"
+        },
+        "alpha": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Alpha",
+          "type": "number"
+        },
+        "seed": {
+          "title": "Seed",
+          "type": "integer"
+        },
+        "warnings": {
+          "items": {
+            "$ref": "#/definitions/PlanWarning"
+          },
+          "title": "Warnings",
+          "type": "array"
+        },
+        "stub": {
+          "default": false,
+          "title": "Stub",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "crs",
+        "algorithm",
+        "alpha",
+        "seed"
+      ],
+      "title": "Allocation",
+      "type": "object"
+    },
+    "AltitudeMode": {
+      "description": "Режим высоты в экспорте.\n\nКритично для KML: три режима дают три РАЗНЫХ смысла одной и той же цифры\n(PROJECT_BRIEF.md §7). Проект работает без ЦМР, поэтому по умолчанию\nвысота относительна точке старта.",
+      "enum": [
+        "clampToGround",
+        "relativeToGround",
+        "absolute"
+      ],
+      "title": "AltitudeMode",
+      "type": "string"
+    },
+    "CoverageSet": {
+      "additionalProperties": false,
+      "description": "Покрытие области галсами. Геометрия — метры (инвариант 1).",
+      "properties": {
+        "crs": {
+          "$ref": "#/definitions/CrsInfo"
+        },
+        "strips": {
+          "items": {
+            "$ref": "#/definitions/Strip"
+          },
+          "title": "Strips",
+          "type": "array"
+        },
+        "azimuth_deg": {
+          "description": "Выбранное направление галсов",
+          "exclusiveMaximum": 360.0,
+          "minimum": 0.0,
+          "title": "Azimuth Deg",
+          "type": "number"
+        },
+        "work_area_m2": {
+          "description": "Площадь рабочей маски, м²",
+          "minimum": 0,
+          "title": "Work Area M2",
+          "type": "number"
+        },
+        "covered_area_m2": {
+          "description": "Площадь, покрытая полосами захвата, м²",
+          "minimum": 0,
+          "title": "Covered Area M2",
+          "type": "number"
+        },
+        "warnings": {
+          "items": {
+            "$ref": "#/definitions/PlanWarning"
+          },
+          "title": "Warnings",
+          "type": "array"
+        },
+        "stub": {
+          "default": false,
+          "title": "Stub",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "crs",
+        "azimuth_deg",
+        "work_area_m2",
+        "covered_area_m2"
+      ],
+      "title": "CoverageSet",
+      "type": "object"
+    },
+    "CrsInfo": {
+      "additionalProperties": false,
+      "description": "Рабочая метрическая проекция, выбранная ядром под конкретный сценарий.\n\nСопровождает КАЖДУЮ стадию: без неё метры не интерпретируются обратно\nв координаты и экспорт невозможен.",
+      "properties": {
+        "epsg": {
+          "description": "Код EPSG метрической проекции, например 32636",
+          "title": "Epsg",
+          "type": "integer"
+        },
+        "name": {
+          "description": "Человекочитаемое имя, например «UTM zone 36N»",
+          "title": "Name",
+          "type": "string"
+        },
+        "unit": {
+          "default": "m",
+          "description": "Единица проекции, всегда метры",
+          "title": "Unit",
+          "type": "string"
+        }
+      },
+      "required": [
+        "epsg",
+        "name"
+      ],
+      "title": "CrsInfo",
+      "type": "object"
+    },
+    "FlightPhase": {
+      "description": "Фаза полёта. Инвариант 7: время считается по фазам, а не «длина / скорость».",
+      "enum": [
+        "takeoff",
+        "climb",
+        "transit",
+        "strip",
+        "turn",
+        "descent",
+        "landing"
+      ],
+      "title": "FlightPhase",
+      "type": "string"
+    },
+    "Leg": {
+      "additionalProperties": false,
+      "description": "Участок полёта одной фазы.\n\nИнвариант 7: `duration_s` НЕ равно `length_m / speed`. Учитываются фаза,\nветер, развороты. Как именно — определяет модель полёта (E4).",
+      "properties": {
+        "phase": {
+          "$ref": "#/definitions/FlightPhase"
+        },
+        "waypoints": {
+          "items": {
+            "$ref": "#/definitions/Waypoint"
+          },
+          "minItems": 2,
+          "title": "Waypoints",
+          "type": "array"
+        },
+        "length_m": {
+          "minimum": 0,
+          "title": "Length M",
+          "type": "number"
+        },
+        "duration_s": {
+          "minimum": 0,
+          "title": "Duration S",
+          "type": "number"
+        },
+        "ground_speed_mps": {
+          "description": "Средняя путевая скорость, м/с",
+          "minimum": 0,
+          "title": "Ground Speed Mps",
+          "type": "number"
+        },
+        "energy_wh": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Израсходованная энергия, Вт·ч",
+          "title": "Energy Wh"
+        },
+        "strip_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Заполняется для фазы STRIP",
+          "title": "Strip Id"
+        }
+      },
+      "required": [
+        "phase",
+        "waypoints",
+        "length_m",
+        "duration_s",
+        "ground_speed_mps"
+      ],
+      "title": "Leg",
+      "type": "object"
+    },
+    "MetricLineString": {
+      "additionalProperties": false,
+      "description": "Ломаная в метрической проекции. Минимум две точки.",
+      "properties": {
+        "points": {
+          "items": {
+            "$ref": "#/definitions/MetricPoint"
+          },
+          "minItems": 2,
+          "title": "Points",
+          "type": "array"
+        }
+      },
+      "required": [
+        "points"
+      ],
+      "title": "MetricLineString",
+      "type": "object"
+    },
+    "MetricPoint": {
+      "additionalProperties": false,
+      "description": "Точка в рабочей метрической проекции, метры.",
+      "properties": {
+        "x_m": {
+          "title": "X M",
+          "type": "number"
+        },
+        "y_m": {
+          "title": "Y M",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x_m",
+        "y_m"
+      ],
+      "title": "MetricPoint",
+      "type": "object"
+    },
+    "Mission": {
+      "additionalProperties": false,
+      "description": "Готовое полётное задание группы БВС — выход конвейера.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "scenario_id": {
+          "title": "Scenario Id",
+          "type": "string"
+        },
+        "crs": {
+          "$ref": "#/definitions/CrsInfo"
+        },
+        "origin": {
+          "$ref": "#/definitions/GeoPoint",
+          "description": "Точка привязки проекции: центр области, WGS84"
+        },
+        "sorties": {
+          "items": {
+            "$ref": "#/definitions/Sortie"
+          },
+          "title": "Sorties",
+          "type": "array"
+        },
+        "metrics": {
+          "$ref": "#/definitions/MissionMetrics"
+        },
+        "warnings": {
+          "items": {
+            "$ref": "#/definitions/PlanWarning"
+          },
+          "title": "Warnings",
+          "type": "array"
+        },
+        "algorithm": {
+          "title": "Algorithm",
+          "type": "string"
+        },
+        "alpha": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Alpha",
+          "type": "number"
+        },
+        "seed": {
+          "title": "Seed",
+          "type": "integer"
+        },
+        "altitude_mode": {
+          "$ref": "#/definitions/AltitudeMode",
+          "default": "relativeToGround"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "stub_stages": {
+          "description": "Стадии, отработавшие на заглушке. Непустой список = план не окончательный",
+          "items": {
+            "$ref": "#/definitions/Stage"
+          },
+          "title": "Stub Stages",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "scenario_id",
+        "crs",
+        "origin",
+        "metrics",
+        "algorithm",
+        "alpha",
+        "seed"
+      ],
+      "title": "Mission",
+      "type": "object"
+    },
+    "MissionMetrics": {
+      "additionalProperties": false,
+      "description": "Метрики плана. Ровно то, что оптимизируется и что сравнивается с baseline.",
+      "properties": {
+        "makespan_s": {
+          "description": "Время выполнения всех работ, секунды",
+          "minimum": 0,
+          "title": "Makespan S",
+          "type": "number"
+        },
+        "total_flight_time_s": {
+          "description": "Суммарный налёт всех бортов, секунды",
+          "minimum": 0,
+          "title": "Total Flight Time S",
+          "type": "number"
+        },
+        "total_distance_m": {
+          "minimum": 0,
+          "title": "Total Distance M",
+          "type": "number"
+        },
+        "sortie_count": {
+          "minimum": 0,
+          "title": "Sortie Count",
+          "type": "integer"
+        },
+        "vehicle_count": {
+          "minimum": 0,
+          "title": "Vehicle Count",
+          "type": "integer"
+        },
+        "strips_planned": {
+          "minimum": 0,
+          "title": "Strips Planned",
+          "type": "integer"
+        },
+        "strips_covered": {
+          "minimum": 0,
+          "title": "Strips Covered",
+          "type": "integer"
+        },
+        "objective_value": {
+          "description": "α·makespan + (1−α)·суммарный налёт, секунды. Функция зафиксирована (AGENT.md §7)",
+          "title": "Objective Value",
+          "type": "number"
+        },
+        "alpha": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Alpha",
+          "type": "number"
+        }
+      },
+      "required": [
+        "makespan_s",
+        "total_flight_time_s",
+        "total_distance_m",
+        "sortie_count",
+        "vehicle_count",
+        "strips_planned",
+        "strips_covered",
+        "objective_value",
+        "alpha"
+      ],
+      "title": "MissionMetrics",
+      "type": "object"
+    },
+    "PlanWarning": {
+      "additionalProperties": false,
+      "description": "Предупреждение о плане.\n\nAGENT.md §8: невыполнимый сценарий — это предупреждение или типизированное\nисключение с объяснением, а не тихий пустой результат. Заглушки стадий\nобязаны сообщать о себе именно здесь, иначе они «молча выглядят как\nнастоящий расчёт».",
+      "properties": {
+        "code": {
+          "description": "Машинный код, например 'stub.flight'",
+          "title": "Code",
+          "type": "string"
+        },
+        "severity": {
+          "$ref": "#/definitions/Severity",
+          "default": "warning"
+        },
+        "stage": {
+          "$ref": "#/definitions/Stage"
+        },
+        "message": {
+          "description": "Человекочитаемое объяснение",
+          "title": "Message",
+          "type": "string"
+        },
+        "context": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Идентификаторы: sortie_id, vehicle_id, strip_id и т.п.",
+          "title": "Context",
+          "type": "object"
+        },
+        "geometry": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/MetricLineString"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Проблемный участок для подсветки на карте (E11)"
+        }
+      },
+      "required": [
+        "code",
+        "stage",
+        "message"
+      ],
+      "title": "PlanWarning",
+      "type": "object"
+    },
+    "Severity": {
+      "description": "Тяжесть предупреждения валидатора.",
+      "enum": [
+        "info",
+        "warning",
+        "error"
+      ],
+      "title": "Severity",
+      "type": "string"
+    },
+    "Sortie": {
+      "additionalProperties": false,
+      "description": "Один вылет одного борта: от взлёта до посадки.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "vehicle_id": {
+          "title": "Vehicle Id",
+          "type": "string"
+        },
+        "vehicle_instance": {
+          "default": 0,
+          "title": "Vehicle Instance",
+          "type": "integer"
+        },
+        "site_id": {
+          "title": "Site Id",
+          "type": "string"
+        },
+        "trip_index": {
+          "default": 0,
+          "title": "Trip Index",
+          "type": "integer"
+        },
+        "legs": {
+          "items": {
+            "$ref": "#/definitions/Leg"
+          },
+          "title": "Legs",
+          "type": "array"
+        },
+        "start_time_s": {
+          "description": "Момент взлёта от начала работ, секунды",
+          "minimum": 0,
+          "title": "Start Time S",
+          "type": "number"
+        },
+        "duration_s": {
+          "description": "Полётное время вылета, секунды",
+          "minimum": 0,
+          "title": "Duration S",
+          "type": "number"
+        },
+        "distance_m": {
+          "minimum": 0,
+          "title": "Distance M",
+          "type": "number"
+        },
+        "energy_wh": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Energy Wh"
+        },
+        "energy_fraction_used": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Доля израсходованной ёмкости АКБ, 0..1",
+          "title": "Energy Fraction Used"
+        },
+        "strip_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Strip Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "vehicle_id",
+        "site_id",
+        "start_time_s",
+        "duration_s",
+        "distance_m"
+      ],
+      "title": "Sortie",
+      "type": "object"
+    },
+    "SortieAssignment": {
+      "additionalProperties": false,
+      "description": "Назначение: какой борт, с какой площадки, какие галсы и в каком порядке.",
+      "properties": {
+        "sortie_id": {
+          "title": "Sortie Id",
+          "type": "string"
+        },
+        "vehicle_id": {
+          "title": "Vehicle Id",
+          "type": "string"
+        },
+        "vehicle_instance": {
+          "default": 0,
+          "description": "Номер экземпляра борта внутри строки флота",
+          "minimum": 0,
+          "title": "Vehicle Instance",
+          "type": "integer"
+        },
+        "site_id": {
+          "title": "Site Id",
+          "type": "string"
+        },
+        "strip_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Strip Ids",
+          "type": "array"
+        },
+        "trip_index": {
+          "default": 0,
+          "description": "Номер вылета этого борта, с нуля",
+          "minimum": 0,
+          "title": "Trip Index",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "sortie_id",
+        "vehicle_id",
+        "site_id"
+      ],
+      "title": "SortieAssignment",
+      "type": "object"
+    },
+    "Stage": {
+      "description": "Стадия конвейера. Нужна, чтобы предупреждение было адресным.",
+      "enum": [
+        "geo",
+        "survey",
+        "coverage",
+        "flight",
+        "transit",
+        "allocate",
+        "validate",
+        "export"
+      ],
+      "title": "Stage",
+      "type": "string"
+    },
+    "Strip": {
+      "additionalProperties": false,
+      "description": "Один галс: геометрия в метрах, высота, скорость.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "line": {
+          "$ref": "#/definitions/MetricLineString"
+        },
+        "length_m": {
+          "minimum": 0,
+          "title": "Length M",
+          "type": "number"
+        },
+        "altitude_agl_m": {
+          "exclusiveMinimum": 0,
+          "title": "Altitude Agl M",
+          "type": "number"
+        },
+        "speed_mps": {
+          "exclusiveMinimum": 0,
+          "title": "Speed Mps",
+          "type": "number"
+        },
+        "azimuth_deg": {
+          "description": "Направление съёмки, градусы",
+          "exclusiveMaximum": 360.0,
+          "minimum": 0.0,
+          "title": "Azimuth Deg",
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "line",
+        "length_m",
+        "altitude_agl_m",
+        "speed_mps",
+        "azimuth_deg"
+      ],
+      "title": "Strip",
+      "type": "object"
+    },
+    "SurveyParams": {
+      "additionalProperties": false,
+      "description": "Параметры съёмки для одной пары «борт × нагрузка». Результат E2.",
+      "properties": {
+        "vehicle_id": {
+          "title": "Vehicle Id",
+          "type": "string"
+        },
+        "payload_id": {
+          "title": "Payload Id",
+          "type": "string"
+        },
+        "survey_type": {
+          "$ref": "#/definitions/SurveyType"
+        },
+        "altitude_agl_m": {
+          "description": "Высота съёмки над точкой старта, метры",
+          "exclusiveMinimum": 0,
+          "title": "Altitude Agl M",
+          "type": "number"
+        },
+        "gsd_m": {
+          "description": "Фактическое разрешение на местности, м/пиксель",
+          "exclusiveMinimum": 0,
+          "title": "Gsd M",
+          "type": "number"
+        },
+        "swath_width_m": {
+          "description": "Ширина полосы захвата, метры",
+          "exclusiveMinimum": 0,
+          "title": "Swath Width M",
+          "type": "number"
+        },
+        "strip_spacing_m": {
+          "description": "Шаг между галсами, метры",
+          "exclusiveMinimum": 0,
+          "title": "Strip Spacing M",
+          "type": "number"
+        },
+        "survey_speed_mps": {
+          "description": "Скорость на галсе, м/с",
+          "exclusiveMinimum": 0,
+          "title": "Survey Speed Mps",
+          "type": "number"
+        },
+        "forward_overlap": {
+          "exclusiveMaximum": 1.0,
+          "minimum": 0.0,
+          "title": "Forward Overlap",
+          "type": "number"
+        },
+        "side_overlap": {
+          "exclusiveMaximum": 1.0,
+          "minimum": 0.0,
+          "title": "Side Overlap",
+          "type": "number"
+        },
+        "shot_interval_s": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Интервал съёмки, секунды",
+          "title": "Shot Interval S"
+        }
+      },
+      "required": [
+        "vehicle_id",
+        "payload_id",
+        "survey_type",
+        "altitude_agl_m",
+        "gsd_m",
+        "swath_width_m",
+        "strip_spacing_m",
+        "survey_speed_mps",
+        "forward_overlap",
+        "side_overlap"
+      ],
+      "title": "SurveyParams",
+      "type": "object"
+    },
+    "SurveyPlan": {
+      "additionalProperties": false,
+      "description": "Результат сенсорной модели по всему флоту сценария.",
+      "properties": {
+        "per_vehicle": {
+          "items": {
+            "$ref": "#/definitions/SurveyParams"
+          },
+          "minItems": 1,
+          "title": "Per Vehicle",
+          "type": "array"
+        },
+        "reference_vehicle_id": {
+          "description": "Борт, по параметрам которого строится покрытие (см. TODO(E3) в coverage)",
+          "title": "Reference Vehicle Id",
+          "type": "string"
+        },
+        "warnings": {
+          "items": {
+            "$ref": "#/definitions/PlanWarning"
+          },
+          "title": "Warnings",
+          "type": "array"
+        },
+        "stub": {
+          "default": false,
+          "description": "True — стадия работала на заглушке",
+          "title": "Stub",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "per_vehicle",
+        "reference_vehicle_id"
+      ],
+      "title": "SurveyPlan",
+      "type": "object"
+    },
+    "Waypoint": {
+      "additionalProperties": false,
+      "description": "Точка маршрута: плановое положение, высота и путевая скорость.\n\nВысота — над точкой взлёта (рельеф не моделируется, см.\n`core.assumptions.TERRAIN_MODEL`). Именно это значение уходит в KML\nс режимом `relativeToGround`.",
+      "properties": {
+        "x_m": {
+          "description": "Координата X рабочей проекции, метры",
+          "title": "X M",
+          "type": "number"
+        },
+        "y_m": {
+          "description": "Координата Y рабочей проекции, метры",
+          "title": "Y M",
+          "type": "number"
+        },
+        "alt_m": {
+          "description": "Высота над точкой взлёта, метры",
+          "title": "Alt M",
+          "type": "number"
+        },
+        "ground_speed_mps": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Путевая скорость на подходе к точке, м/с",
+          "title": "Ground Speed Mps"
+        }
+      },
+      "required": [
+        "x_m",
+        "y_m",
+        "alt_m"
+      ],
+      "title": "Waypoint",
+      "type": "object"
+    },
+    "PipelineResult": {
+      "additionalProperties": false,
+      "description": "Все промежуточные стадии одного прогона.\n\nКонвейер отлаживается по стадиям, и любую из них надо уметь показать на\nкарте во время защиты (PROJECT_BRIEF.md §2).",
+      "properties": {
+        "scenario_id": {
+          "title": "Scenario Id",
+          "type": "string"
+        },
+        "crs": {
+          "$ref": "#/definitions/CrsInfo"
+        },
+        "survey_plan": {
+          "$ref": "#/definitions/SurveyPlan"
+        },
+        "coverage": {
+          "$ref": "#/definitions/CoverageSet"
+        },
+        "allocation": {
+          "$ref": "#/definitions/Allocation"
+        },
+        "mission": {
+          "$ref": "#/definitions/Mission"
+        },
+        "timings_s": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "description": "Длительность каждой стадии, секунды",
+          "title": "Timings S",
+          "type": "object"
+        }
+      },
+      "required": [
+        "scenario_id",
+        "crs",
+        "survey_plan",
+        "coverage",
+        "allocation",
+        "mission"
+      ],
+      "title": "PipelineResult",
+      "type": "object"
+    }
+  }
+}
