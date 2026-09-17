@@ -164,6 +164,10 @@ python -m core.cli assumptions --team-only
 
 Формат: дата — что изменилось. Правки контракта `core/schemas.py` отмечаются **жирным** и описываются отдельно.
 
+### 2026-09-17 — слияние в main
+
+- Ветка `e10-web-structure` влита в `main` через PR #3 merge-коммитом `55c6292`. Откат слияния: `git revert -m 1 55c6292`.
+
 ### 2026-09-17 — E10: структура фронтенда, ветка `e10-web-structure`
 
 - `web/src` разнесён из четырёх файлов по слоям. `api/`: транспорт (`http.ts`), сценарии, задачи и поллинг, типы. `features/planning/`: хуки `useScenarios` и `usePlanning`, форма из `ScenarioSelect` и `AlphaSlider`. `features/result/`: метрики, предупреждения, выгрузка. `features/map/`: подложка, стили фаз, слой плана, подписи, компонент `MapView`. `shared/`: форматирование, `Notice`, `Section`. `styles/`: токены и сброс. `app/`: корневой компонент и раскладка. Стили компонентов — CSS-модули Vite, новых зависимостей нет.
