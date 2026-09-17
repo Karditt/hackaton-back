@@ -1,0 +1,11 @@
+.section {
+  margin-top: 24px;
+}
+
+.title {
+  margin: 0 0 8px;
+  font-size: 15px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}

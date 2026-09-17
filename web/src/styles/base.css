@@ -1,0 +1,16 @@
+/* Сброс и базовые элементы. Стили компонентов — в их *.module.css. */
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+}
+
+button,
+input,
+select {
+  font: inherit;
+}

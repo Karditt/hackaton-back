@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
-  /** Адрес тайлов подложки. Задаётся для офлайн-фолбэка (см. src/map.ts). */
+  /** Адрес тайлов подложки. Задаётся для офлайн-фолбэка (см. src/features/map/baseMap.ts). */
   readonly VITE_TILE_URL?: string;
 }
 

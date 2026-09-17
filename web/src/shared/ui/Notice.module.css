@@ -1,0 +1,14 @@
+.notice {
+  padding: 8px 10px;
+  border-radius: var(--radius);
+}
+
+.error {
+  color: var(--error);
+  background: var(--error-bg);
+}
+
+.caution {
+  color: var(--warning);
+  background: var(--warning-bg);
+}
