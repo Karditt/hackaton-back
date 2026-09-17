@@ -5,8 +5,11 @@
   "type": "module",
   "description": "Редактор сценария и визуализация плана. Слой представления: не считает маршруты, а рисует то, что вернул API.",
   "scripts": {
+    "predev": "npm run gen:types",
     "dev": "vite",
+    "prebuild": "npm run gen:types",
     "build": "tsc --noEmit && vite build",
+    "typecheck": "npm run gen:types && tsc --noEmit",
     "preview": "vite preview",
     "gen:types": "json2ts -i src/types/schema.json -o src/types/schema.ts"
   },

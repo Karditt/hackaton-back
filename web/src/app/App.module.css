@@ -1,0 +1,27 @@
+.layout {
+  display: grid;
+  grid-template-columns: var(--panel-width) 1fr;
+  height: 100vh;
+}
+
+.panel {
+  overflow-y: auto;
+  padding: 20px;
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+}
+
+.map {
+  height: 100vh;
+}
+
+.title {
+  margin: 0;
+  font-size: 22px;
+  letter-spacing: 0.04em;
+}
+
+.subtitle {
+  margin: 4px 0 20px;
+  color: var(--muted);
+}

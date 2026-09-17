@@ -1,0 +1,51 @@
+.metrics {
+  margin: 0;
+}
+
+.metricRow {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  padding: 2px 0;
+}
+
+.metricRow dt {
+  color: var(--muted);
+}
+
+.metricRow dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.warnings {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.warningItem {
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  border-left: 3px solid var(--line);
+  background: var(--bg);
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+
+.severityError {
+  border-left-color: var(--error);
+}
+
+.severityWarning {
+  border-left-color: var(--warning);
+}
+
+.severityInfo {
+  border-left-color: var(--line);
+}
+
+.exports {
+  margin-top: 16px;
+}
