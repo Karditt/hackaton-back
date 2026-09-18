@@ -31,35 +31,43 @@ def test_core_does_not_import_web_layers() -> None:
 def test_plan_writes_geojson(tmp_path: Path) -> None:
     """Документированная короткая форма вызова работает без подкоманды."""
     output = tmp_path / "mission.geojson"
-    code = main([str(SCENARIOS_DIR / "simple.json"), "-o", str(output)])
-    assert code == 0
+    assert main([str(SCENARIOS_DIR / "simple.json"), "-o", str(output)]) == 0
     assert json.loads(output.read_text(encoding="utf-8"))["type"] == "FeatureCollection"
 
 
-def test_batch_runs_every_scenario(tmp_path: Path) -> None:
-    """`--batch` прогоняет весь каталог и пишет оба формата на каждый сценарий."""
-    code = main(["--batch", str(SCENARIOS_DIR), "-o", str(tmp_path)])
+def test_mode_can_be_overridden(tmp_path: Path) -> None:
+    """Режим оптимизации переключается из командной строки (№23)."""
+    output = tmp_path / "mission.geojson"
+    code = main([str(SCENARIOS_DIR / "simple.json"), "-o", str(output), "--mode", "min_resource"])
     assert code == 0
+    assert json.loads(output.read_text(encoding="utf-8"))["properties"]["mode"] == "min_resource"
+
+
+def test_batch_writes_every_format_for_every_scenario(tmp_path: Path) -> None:
+    """`--batch` прогоняет весь каталог; невыполнимый сценарий — не провал, а отчёт."""
+    assert main(["--batch", str(SCENARIOS_DIR), "-o", str(tmp_path)]) == 0
     for path in SCENARIOS_DIR.glob("*.json"):
-        assert (tmp_path / f"{path.stem}.geojson").is_file()
-        assert (tmp_path / f"{path.stem}.kml").is_file()
+        for suffix in (".geojson", ".kml", ".schedule.csv"):
+            assert (tmp_path / f"{path.stem}{suffix}").is_file()
 
 
 def test_export_schema_produces_valid_json(tmp_path: Path) -> None:
     """Контракт выгружается в JSON Schema — вход генератора TypeScript-типов."""
     output = tmp_path / "schema.json"
     assert main(["export-schema", "-o", str(output)]) == 0
-    schema = json.loads(output.read_text(encoding="utf-8"))
-    assert "Scenario" in schema["definitions"]
-    assert "PipelineResult" in schema["definitions"]
+    definitions = json.loads(output.read_text(encoding="utf-8"))["definitions"]
+    assert {"Scenario", "PipelineResult", "Mission", "Schedule", "Recommendation"} <= set(
+        definitions
+    )
 
 
-def test_assumptions_json_lists_sources(capsys: pytest.CaptureFixture[str]) -> None:
-    """Реестр допущений выгружается машиночитаемо — основа раздела ограничений."""
+def test_assumptions_json_separates_customer_values(capsys: pytest.CaptureFixture[str]) -> None:
+    """Реестр допущений: у каждого числа источник; значения заказчика помечены отдельно."""
     assert main(["assumptions", "--json"]) == 0
     items = json.loads(capsys.readouterr().out)
-    assert items
     assert all(item["source"] for item in items)
+    customer = {item["name"] for item in items if item["kind"] == "customer"}
+    assert {"BATTERY_RESERVE_FRACTION", "SEPARATION_FIXED_WING_M"} <= customer
 
 
 def test_missing_scenario_returns_error_code(tmp_path: Path) -> None:
@@ -87,4 +95,4 @@ def test_dump_stages_writes_intermediate_results(tmp_path: Path) -> None:
     )
     assert code == 0
     stages = json.loads((tmp_path / "simple.stages.json").read_text(encoding="utf-8"))
-    assert {"survey_plan", "coverage", "allocation", "mission"} <= set(stages)
+    assert {"survey_plan", "decomposition", "allocation", "coverage", "mission"} <= set(stages)

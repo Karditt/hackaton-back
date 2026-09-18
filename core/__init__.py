@@ -7,9 +7,12 @@
 Инвариант 2 (PROJECT_BRIEF.md §5): `core` не импортирует ничего из `api` и `web`.
 Любой такой импорт — дефект, даже «только для типов».
 
-Конвейер стадий:
+Конвейер стадий (по ответам заказчика, docs/customer_qa.md):
 
-    Scenario ──▶ SurveyPlan ──▶ CoverageSet ──▶ Allocation ──▶ Mission ──▶ Files
+    Scenario → SurveyPlan → Decomposition → Allocation → Coverage
+             → вылеты → Schedule → Validation → Mission → Files
+
+Итог — полный план или отчёт о невыполнимости; частичных планов нет.
 
 Сборка конвейера — в `core.pipeline`, общий контракт — в `core.schemas`.
 """

@@ -173,14 +173,13 @@ docs/
 
 ### 3.6 API
 
-Существующие эндпоинты (E9, каркас): `GET /health`, `GET /vehicles`, `GET /assumptions`, `GET|POST /scenarios`, `GET /scenarios/{id}`, `POST /scenarios/{id}/plan`, `GET /jobs`, `GET /jobs/{id}`, `GET /jobs/{id}/result`, `GET /jobs/{id}/export`. Описание — `/docs` и `/openapi.json`.
+Существующие эндпоинты (E9): `GET /health`, `GET /vehicles`, `GET /assumptions`, `GET|POST /scenarios` (приём с проверкой, 422 с местом ошибки), `GET /scenarios/{id}`, `POST /scenarios/{id}/plan?mode=…`, `GET /jobs`, `GET /jobs/{id}`, `GET /jobs/{id}/result`, `GET /jobs/{id}/schedule` (№31), `GET /jobs/{id}/export?format=geojson|kml|schedule`. Описание — `/docs` и `/openapi.json`, формат файлов — [`export_format.md`](export_format.md).
 
 Добавляются:
 
 | Метод | Путь | Назначение |
 |---|---|---|
 | `POST` | `/scenarios/import` | Сценарий из параметров и геослоёв файлами (GeoJSON/KML) (№8) |
-| `GET` | `/jobs/{id}/schedule` | Расписание отдельно от маршрутов (№31) |
 | `GET` | `/runs`, `/runs/{id}` | История прогонов — бонус (№14) |
 | `GET` | `/compare?runs=a,b` | Сравнение вариантов плана — бонус (№14) |
 

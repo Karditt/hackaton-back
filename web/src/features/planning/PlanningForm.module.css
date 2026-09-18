@@ -44,3 +44,19 @@ select.control {
 .status {
   color: var(--muted);
 }
+
+fieldset.field {
+  border: none;
+  padding: 0;
+  margin: 0 0 16px;
+}
+
+.option {
+  display: block;
+  margin-top: 6px;
+  font-weight: 400;
+}
+
+.option input {
+  margin-right: 6px;
+}

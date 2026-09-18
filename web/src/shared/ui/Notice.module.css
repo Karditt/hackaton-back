@@ -12,3 +12,8 @@
   color: var(--warning);
   background: var(--warning-bg);
 }
+
+.success {
+  color: var(--success);
+  background: var(--success-bg);
+}

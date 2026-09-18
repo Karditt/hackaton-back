@@ -1,6 +1,6 @@
-import type { ScenarioSummary } from '../../api';
+import type { OptimizationMode, ScenarioSummary } from '../../api';
 import { Notice } from '../../shared/ui/Notice';
-import { AlphaSlider } from './AlphaSlider';
+import { ModeSelect } from './ModeSelect';
 import { ScenarioSelect } from './ScenarioSelect';
 import styles from './PlanningForm.module.css';
 
@@ -8,8 +8,8 @@ type Props = {
   scenarios: ScenarioSummary[];
   scenarioId: string;
   onScenarioChange: (scenarioId: string) => void;
-  alpha: number;
-  onAlphaChange: (alpha: number) => void;
+  mode: OptimizationMode;
+  onModeChange: (mode: OptimizationMode) => void;
   onSubmit: () => void;
   busy: boolean;
   status: string;
@@ -27,7 +27,7 @@ export function PlanningForm(props: Props) {
         onChange={props.onScenarioChange}
         disabled={busy}
       />
-      <AlphaSlider value={props.alpha} onChange={props.onAlphaChange} disabled={busy} />
+      <ModeSelect value={props.mode} onChange={props.onModeChange} disabled={busy} />
 
       <button className={styles.submit} onClick={props.onSubmit} disabled={busy || !scenarioId}>
         {busy ? 'Считаю…' : 'Рассчитать'}

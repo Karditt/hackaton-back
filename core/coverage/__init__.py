@@ -1,15 +1,27 @@
-"""Покрытие области галсами (E3).
+"""Декомпозиция и покрытие (E3).
 
-Состояние: ЗАГЛУШКА. Галсы строятся параллельными полосами с постоянным
-шагом и обрезаются по рабочей маске — этого достаточно, чтобы конвейер
-собирался и план выглядел осмысленно. Направление выбирается по длинной
-стороне минимального описанного прямоугольника, а НЕ перебором по углу с
-учётом ветра и числа разворотов, как требует E3. Нет декомпозиции области
-на подобласти и нет перекрытия на их стыках. TODO(E3) по коду.
+Порядок по ответам заказчика (№27, №37, №46): маска съёмки делится на
+подобласти (`decompose`), подобласти распределяются по вылетам (E6), и только
+потом каждый борт строит в своей подобласти галсы со своим шагом
+(`CoverageOracle`, `cover_cell`). У самолётного типа на концах галсов —
+защитные зоны манёвра (№38).
+
+Состояние: ЗАГЛУШКА. Подобласти — сетка квадратов; направление галсов одно
+на область и берётся по длинной стороне, а не перебором с учётом ветра.
+TODO(E3) по коду.
 """
 
 from __future__ import annotations
 
-from core.coverage.strips import build_coverage, dominant_azimuth_deg
+from core.coverage.decompose import cell_size_m, decompose
+from core.coverage.oracle import CoverageOracle
+from core.coverage.strips import cover_cell, dominant_azimuth_deg, maneuver_zones
 
-__all__ = ["build_coverage", "dominant_azimuth_deg"]
+__all__ = [
+    "CoverageOracle",
+    "cell_size_m",
+    "cover_cell",
+    "decompose",
+    "dominant_azimuth_deg",
+    "maneuver_zones",
+]

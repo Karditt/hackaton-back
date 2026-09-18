@@ -49,3 +49,39 @@
 .exports {
   margin-top: 16px;
 }
+
+.advice {
+  border-left-color: var(--accent);
+}
+
+.empty {
+  color: var(--muted);
+}
+
+.tableWrap {
+  max-height: 260px;
+  overflow: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.table th,
+.table td {
+  padding: 3px 4px;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.table th {
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  color: var(--muted);
+  font-weight: 600;
+}

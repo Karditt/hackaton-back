@@ -1,9 +1,10 @@
-"""HTTP-интерфейс сервиса.
+"""HTTP-интерфейс сервиса — основной интерфейс по ответу заказчика (№11).
 
-КАРКАС E9. Маршруты соответствуют брифу: сценарии, запуск конвейера фоновой
-задачей, поллинг статуса, доступ к промежуточным стадиям, отдача файлов
-экспорта. Авторизации, ролей и многопользовательского режима нет и не будет —
-они вне объёма проекта (PROJECT_BRIEF.md §3).
+КАРКАС E9. Сценарии (с проверкой на приёме: геометрия, пределы значений —
+№19), запуск конвейера фоновой задачей, поллинг статуса, результат со всеми
+стадиями, расписание, отдача файлов. Описание — OpenAPI по адресу `/docs`
+(№20). Авторизации, ролей и многопользовательского режима нет — заказчик
+подтвердил, что они не нужны (№15).
 
 Ни одного расчёта в этом файле: хендлер валидирует запрос, зовёт `core` и
 сериализует ответ.
@@ -28,7 +29,9 @@ from core.catalog import load_catalog
 from core.errors import CoreError, ScenarioError
 from core.export.geojson import mission_to_geojson
 from core.export.kml import mission_to_kml
-from core.schemas import ExportFormat, PipelineResult, Scenario
+from core.export.schedule import schedule_to_csv
+from core.pipeline import check_scenario
+from core.schemas import ExportFormat, OptimizationMode, PipelineResult, Scenario
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -49,7 +52,8 @@ app = FastAPI(
     version=__version__,
     description=(
         "Тонкий слой поверх ядра `core`. Расчёт идёт фоновой задачей внутри "
-        "процесса, статус опрашивается поллингом."
+        "процесса, статус опрашивается поллингом. Итог расчёта — полный план "
+        "или отчёт о невыполнимости с причинами и рекомендациями."
     ),
 )
 
@@ -115,7 +119,11 @@ def list_vehicles() -> dict[str, Any]:
 
 @app.get("/assumptions", tags=["справочники"])
 def list_assumptions(team_only: bool = False) -> dict[str, Any]:
-    """Реестр допущений — основа раздела «известные ограничения» (E13)."""
+    """Реестр допущений — основа раздела «известные ограничения» (E13).
+
+    `kind`: `measured` — из документа, `customer` — значение заказчика,
+    `team_assumption` — решение команды, `derived` — выведено по формуле.
+    """
     items = assumptions.team_assumptions() if team_only else assumptions.all_assumptions()
     return {
         "assumptions": [
@@ -147,10 +155,16 @@ def list_scenarios() -> dict[str, Any]:
 def create_scenario(scenario: Scenario) -> dict[str, Any]:
     """Сохранить сценарий.
 
-    Валидация целиком лежит на контракте `core/schemas.py`: неизвестное поле
-    или перепутанные местами широта и долгота дадут 422 без единой проверки
-    в этом слое.
+    Форма проверяется контрактом `core/schemas.py` (неизвестное поле,
+    перепутанные широта и долгота, больше 15 бортов — 422). Содержание — ядром
+    на приёме (`core.pipeline.check_scenario`): самопересечение с указанием
+    места, слишком большая область, перекрытие ниже минимума, неизвестный
+    борт — тоже 422, а не сбой расчёта потом (заказчик, №19).
     """
+    try:
+        check_scenario(scenario)
+    except CoreError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
     saved = store.save(scenario)
     return {"id": saved.id, "name": saved.name}
 
@@ -167,6 +181,7 @@ def get_scenario(scenario_id: str) -> Scenario:
 @app.post("/scenarios/{scenario_id}/plan", tags=["расчёт"], status_code=202)
 async def start_planning(
     scenario_id: str,
+    mode: OptimizationMode | None = Query(default=None),
     alpha: float | None = Query(default=None, ge=0.0, le=1.0),
     seed: int | None = Query(default=None),
 ) -> dict[str, Any]:
@@ -174,7 +189,9 @@ async def start_planning(
 
     Args:
         scenario_id: идентификатор сохранённого сценария.
-        alpha: вес makespan в целевой функции, 0..1. Перекрывает сценарий.
+        mode: режим оптимизации — минимум срока или минимум ресурса (№23).
+            Перекрывает сценарий.
+        alpha: вес срока в свёртке для фронта Парето, 0..1. Перекрывает сценарий.
         seed: зерно ГПСЧ. Перекрывает сценарий.
 
     Returns:
@@ -184,7 +201,7 @@ async def start_planning(
         scenario = store.get(scenario_id)
     except ScenarioError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
-    return jobs.submit(scenario, alpha=alpha, seed=seed).public()
+    return jobs.submit(scenario, mode=mode, alpha=alpha, seed=seed).public()
 
 
 @app.get("/jobs", tags=["расчёт"])
@@ -209,16 +226,37 @@ def get_job_result(job_id: str) -> PipelineResult:
     return _finished_job(_job_or_404(job_id)).run.result  # type: ignore[union-attr]
 
 
+@app.get("/jobs/{job_id}/schedule", tags=["расчёт"])
+def get_job_schedule(job_id: str) -> dict[str, Any]:
+    """Расписание вылетов (заказчик, №31).
+
+    У невыполнимого плана расписания нет: `entries` пуст, `status` —
+    `infeasible`, причины — в `/jobs/{id}/result`.
+    """
+    run = _finished_job(_job_or_404(job_id)).run
+    assert run is not None
+    schedule = run.mission.schedule
+    return {
+        "status": run.mission.status.value,
+        "start_time": schedule.start_time.isoformat() if schedule and schedule.start_time else None,
+        "entries": [entry.model_dump(mode="json") for entry in schedule.entries]
+        if schedule
+        else [],
+    }
+
+
 @app.get("/jobs/{job_id}/export", tags=["расчёт"])
 def export_job(
     job_id: str,
     export_format: ExportFormat = Query(default=ExportFormat.GEOJSON, alias="format"),
 ) -> Response:
-    """Отдать полётное задание файлом.
+    """Отдать итог расчёта файлом: полётное задание или отчёт о невыполнимости.
+
+    Формат файлов описан в docs/export_format.md (заказчик, №21).
 
     Args:
         job_id: идентификатор задачи.
-        export_format: `geojson` или `kml`.
+        export_format: `geojson`, `kml` или `schedule` (CSV).
 
     Returns:
         Файл с заголовком вложения, готовый к сохранению.
@@ -226,21 +264,29 @@ def export_job(
     job = _finished_job(_job_or_404(job_id))
     run = job.run
     assert run is not None
+    stem = run.scenario.id
 
     if export_format is ExportFormat.KML:
         buffer = io.BytesIO()
-        mission_to_kml(run.mission, run.scenario, run.work_area.projector).write(
+        mission_to_kml(run.result, run.scenario, run.work_area.projector).write(
             buffer, encoding="utf-8", xml_declaration=True
         )
         return Response(
             content=buffer.getvalue(),
             media_type="application/vnd.google-earth.kml+xml",
-            headers={"Content-Disposition": f'attachment; filename="{run.scenario.id}.kml"'},
+            headers={"Content-Disposition": f'attachment; filename="{stem}.kml"'},
         )
 
-    document = mission_to_geojson(run.mission, run.scenario, run.work_area.projector)
+    if export_format is ExportFormat.SCHEDULE:
+        return Response(
+            content=schedule_to_csv(run.mission, run.scenario),
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{stem}.schedule.csv"'},
+        )
+
+    document = mission_to_geojson(run.result, run.scenario, run.work_area.projector)
     return Response(
         content=json.dumps(document, ensure_ascii=False, indent=2),
         media_type="application/geo+json",
-        headers={"Content-Disposition": f'attachment; filename="{run.scenario.id}.geojson"'},
+        headers={"Content-Disposition": f'attachment; filename="{stem}.geojson"'},
     )

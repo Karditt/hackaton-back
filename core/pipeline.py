@@ -1,12 +1,16 @@
-"""Сборка конвейера: Scenario → SurveyPlan → CoverageSet → Allocation → Mission.
+"""Сборка конвейера по ответам заказчика (PROJECT_BRIEF.md §2).
 
-Каждая стадия — чистое преобразование типизированного входа в типизированный
-выход. Конвейер знает порядок стадий и больше ничего: ни геометрии, ни физики,
-ни оптимизации здесь нет и быть не должно.
+    Scenario → SurveyPlan → Decomposition → Allocation → Coverage
+             → вылеты → Schedule → Validation → Mission → Files
 
-Стадия, работающая на заглушке, обязана сообщить о себе через
-`Mission.stub_stages` и предупреждения — план на заглушках не должен
-выглядеть как настоящий расчёт (AGENT.md §5).
+Область сначала делится на подобласти, подобласти распределяются по вылетам,
+и только потом каждый борт строит галсы в своей подобласти (заказчик, №27,
+№46). Итог — полный план или отчёт о невыполнимости: частичных планов нет
+(инвариант 10), план с нарушением жёсткого правила не выдаётся (инвариант 9).
+
+Конвейер знает порядок стадий и больше ничего: ни геометрии, ни физики, ни
+оптимизации здесь нет и быть не должно. Стадия, работающая на заглушке,
+объявляет себя в `Mission.stub_stages` и предупреждениях (AGENT.md §5).
 """
 
 from __future__ import annotations
@@ -15,45 +19,48 @@ import time
 import uuid
 from dataclasses import dataclass, field
 
-from core import assumptions
+from shapely.ops import unary_union
+
+from core.advise import diagnose, stub_warning
 from core.allocate.baseline import build_baseline_allocation
-from core.allocate.objective import objective_value
+from core.allocate.fleet import FleetInstance, expand_fleet
+from core.allocate.objective import objective_value, resource_s, weighted_value
 from core.catalog import VehicleCatalog, load_catalog
-from core.coverage.strips import build_coverage
-from core.errors import InfeasibleError
-from core.flight.cost import (
-    build_sortie,
-    endurance_limit_s,
-    estimate_sortie_duration_s,
-)
-from core.geo.mask import WorkArea, build_work_area
+from core.coverage.decompose import decompose
+from core.coverage.oracle import CoverageOracle
+from core.deconflict import assign_transit_levels, build_schedule
+from core.errors import GeometryError
+from core.flight.cost import build_sortie, endurance_limit_s
+from core.geo.mask import WorkArea, build_survey_mask, build_work_area
 from core.schemas import (
     Allocation,
     CoverageSet,
+    Decomposition,
     Mission,
     MissionMetrics,
+    MissionStatus,
+    OptimizationMode,
     PipelineResult,
     PlanWarning,
     Scenario,
+    Schedule,
     Severity,
     Sortie,
     Stage,
-    Strip,
     SurveyPlan,
     Vehicle,
 )
 from core.survey.plan import build_survey_plan
+from core.survey.presets import resolve_overlaps
 from core.transit.routing import make_router
-from core.validate.checks import validate_mission
+from core.validate import validate_plan
 
 #: Стадии, работающие на заглушках. Список сокращается по мере закрытия эпиков
 #: и напрямую попадает в `Mission.stub_stages`, KML и GeoJSON.
 STUB_STAGES: tuple[Stage, ...] = (
-    Stage.SURVEY,
+    Stage.DECOMPOSE,
     Stage.COVERAGE,
-    Stage.FLIGHT,
-    Stage.TRANSIT,
-    Stage.VALIDATE,
+    Stage.SCHEDULE,
 )
 
 
@@ -74,7 +81,7 @@ class PlanningRun:
 
     @property
     def mission(self) -> Mission:
-        """Готовый план."""
+        """Итог конвейера: план или отчёт о невыполнимости."""
         return self.result.mission
 
 
@@ -88,19 +95,12 @@ class _Clock:
     def lap(self, stage: str) -> None:
         """Зафиксировать длительность очередной стадии."""
         now = time.perf_counter()
-        self.timings_s[stage] = now - self._started
+        self.timings_s[stage] = self.timings_s.get(stage, 0.0) + now - self._started
         self._started = now
 
 
 def resolve_fleet(scenario: Scenario, catalog: VehicleCatalog) -> dict[str, Vehicle]:
     """Достать из каталога борта, упомянутые во флоте сценария.
-
-    Args:
-        scenario: сценарий.
-        catalog: каталог техники.
-
-    Returns:
-        Борта по идентификаторам.
 
     Raises:
         CatalogError: во флоте указан борт, которого нет в каталоге.
@@ -108,41 +108,138 @@ def resolve_fleet(scenario: Scenario, catalog: VehicleCatalog) -> dict[str, Vehi
     return {unit.vehicle_id: catalog.get(unit.vehicle_id) for unit in scenario.fleet}
 
 
-def _metrics(
-    sorties: list[Sortie], coverage: CoverageSet, alpha: float, vehicles: int
-) -> MissionMetrics:
-    """Посчитать метрики плана.
+def check_scenario(scenario: Scenario, catalog: VehicleCatalog | None = None) -> None:
+    """Проверить сценарий на приёме, до расчёта (заказчик, №19).
 
-    Args:
-        sorties: собранные вылеты.
-        coverage: построенное покрытие.
-        alpha: вес makespan в целевой функции.
-        vehicles: число задействованных физических бортов.
+    Ловит то, что является ошибкой входа, а не невыполнимостью задания:
+    неизвестный борт, некорректную геометрию (самопересечение — с местом),
+    слишком большую область, перекрытие ниже минимума для типа съёмки.
 
-    Returns:
-        Метрики плана.
+    Raises:
+        CatalogError, GeometryError, ScenarioError: с понятным текстом.
     """
+    resolve_fleet(scenario, catalog or load_catalog())
+    build_work_area(scenario)
+    resolve_overlaps(scenario.survey_type, scenario.quality)
+
+
+def _metrics(
+    scenario: Scenario, sorties: list[Sortie], decomposition: Decomposition
+) -> MissionMetrics:
+    """Метрики выполнимого плана."""
     makespan_s = max((sortie.end_time_s() for sortie in sorties), default=0.0)
     total_flight_time_s = sum(sortie.duration_s for sortie in sorties)
-    total_distance_m = sum(sortie.distance_m for sortie in sorties)
-    covered = {strip_id for sortie in sorties for strip_id in sortie.strip_ids}
-
+    cycles = len(sorties)
+    resource = resource_s(total_flight_time_s, cycles)
+    covered = {cell_id for sortie in sorties for cell_id in sortie.cell_ids}
     return MissionMetrics(
         makespan_s=makespan_s,
         total_flight_time_s=total_flight_time_s,
-        total_distance_m=total_distance_m,
+        cycle_count=cycles,
+        resource_s=resource,
+        total_distance_m=sum(sortie.distance_m for sortie in sorties),
         sortie_count=len(sorties),
-        vehicle_count=vehicles,
-        strips_planned=len(coverage.strips),
-        strips_covered=len(covered),
-        objective_value=objective_value(makespan_s, total_flight_time_s, alpha),
-        alpha=alpha,
+        vehicle_count=len({(sortie.vehicle_id, sortie.vehicle_instance) for sortie in sorties}),
+        cells_planned=len(decomposition.cells),
+        cells_covered=len(covered),
+        objective_value=objective_value(scenario.mode, makespan_s, resource),
+        weighted_value=weighted_value(scenario.alpha, makespan_s, resource),
+        mode=scenario.mode,
+        alpha=scenario.alpha,
+        deadline_s=scenario.deadline_s,
+        deadline_met=None if scenario.deadline_s is None else makespan_s <= scenario.deadline_s,
     )
+
+
+def _errors(warnings: list[PlanWarning]) -> list[PlanWarning]:
+    return [warning for warning in warnings if warning.severity is Severity.ERROR]
+
+
+@dataclass
+class _Assembler:
+    """Сборщик итогового `PlanningRun` — выполнимого или нет."""
+
+    scenario: Scenario
+    catalog: VehicleCatalog
+    vehicles: dict[str, Vehicle]
+    work_area: WorkArea
+    survey_plan: SurveyPlan
+    clock: _Clock
+    decomposition: Decomposition | None = None
+    allocation: Allocation | None = None
+    coverage: CoverageSet | None = None
+    warnings: list[PlanWarning] = field(default_factory=list)
+
+    def finish(
+        self,
+        reasons: list[PlanWarning],
+        sorties: list[Sortie] | None = None,
+        schedule: Schedule | None = None,
+        stub_stages: tuple[Stage, ...] = STUB_STAGES,
+    ) -> PlanningRun:
+        scenario = self.scenario
+        feasible = not reasons and bool(sorties)
+        stages = list(stub_stages)
+        recommendations = []
+        mission_warnings = list(self.warnings)
+        if not feasible:
+            recommendations = diagnose(
+                scenario,
+                self.work_area,
+                self.survey_plan,
+                self.decomposition,
+                reasons,
+                self.vehicles,
+            )
+            mission_warnings.append(stub_warning())
+            stages.append(Stage.ADVISE)
+
+        area_center = self.work_area.area.centroid
+        mission = Mission(
+            id=f"mission-{uuid.uuid4().hex[:8]}",
+            scenario_id=scenario.id,
+            crs=self.work_area.crs,
+            origin=self.work_area.projector.xy_to_geo(area_center.x, area_center.y),
+            status=MissionStatus.FEASIBLE if feasible else MissionStatus.INFEASIBLE,
+            sorties=list(sorties or []) if feasible else [],
+            schedule=schedule if feasible else None,
+            metrics=(
+                _metrics(scenario, sorties or [], self.decomposition)
+                if feasible and self.decomposition is not None
+                else None
+            ),
+            reasons=reasons,
+            recommendations=recommendations,
+            warnings=mission_warnings,
+            algorithm=self.allocation.algorithm if self.allocation else "—",
+            mode=scenario.mode,
+            alpha=scenario.alpha,
+            seed=scenario.seed,
+            stub_stages=stages,
+        )
+        result = PipelineResult(
+            scenario_id=scenario.id,
+            crs=self.work_area.crs,
+            survey_plan=self.survey_plan,
+            decomposition=self.decomposition,
+            allocation=self.allocation,
+            coverage=self.coverage,
+            mission=mission,
+            timings_s=self.clock.timings_s,
+        )
+        return PlanningRun(
+            scenario=scenario,
+            result=result,
+            work_area=self.work_area,
+            catalog=self.catalog,
+            vehicles=self.vehicles,
+        )
 
 
 def run_pipeline(
     scenario: Scenario,
     catalog: VehicleCatalog | None = None,
+    mode: OptimizationMode | None = None,
     alpha: float | None = None,
     seed: int | None = None,
 ) -> PlanningRun:
@@ -151,21 +248,25 @@ def run_pipeline(
     Args:
         scenario: сценарий с координатами в WGS84.
         catalog: каталог техники. None — прочитать `data/vehicles.yaml`.
-        alpha: переопределение веса makespan, 0..1. None — взять из сценария.
-        seed: переопределение зерна ГПСЧ. None — взять из сценария.
+        mode: переопределение режима оптимизации. None — из сценария.
+        alpha: переопределение веса срока в свёртке, 0..1. None — из сценария.
+        seed: переопределение зерна ГПСЧ. None — из сценария.
 
     Returns:
-        Прогон: все стадии конвейера плюс рабочая область для экспорта.
+        Прогон: стадии конвейера и итог — план или отчёт о невыполнимости.
 
     Raises:
-        GeometryError: область вырождена или рабочая маска пуста.
-        InfeasibleError: флот непригоден для заданной съёмки.
-        CatalogError: во флоте указан борт вне каталога.
+        GeometryError, ScenarioError, CatalogError: ошибка входа (некорректная
+            геометрия, недопустимые значения, неизвестный борт). Невыполнимость
+            задания — не исключение, а `Mission.status = infeasible`.
     """
-    if alpha is not None:
-        scenario = scenario.model_copy(update={"alpha": alpha})
-    if seed is not None:
-        scenario = scenario.model_copy(update={"seed": seed})
+    overrides = {
+        key: value
+        for key, value in (("mode", mode), ("alpha", alpha), ("seed", seed))
+        if value is not None
+    }
+    if overrides:
+        scenario = scenario.model_copy(update=overrides)
 
     clock = _Clock()
     vehicle_catalog = catalog or load_catalog()
@@ -177,156 +278,117 @@ def run_pipeline(
     survey_plan = build_survey_plan(scenario, vehicles)
     clock.lap("survey")
 
-    coverage = build_coverage(work_area, survey_plan.reference())
-    clock.lap("coverage")
-
-    usable_ids = [params.vehicle_id for params in survey_plan.per_vehicle]
-    strips_by_id = {strip.id: strip for strip in coverage.strips}
-
-    def fits(vehicle: Vehicle, site_id: str, strips: list[Strip]) -> bool:
-        """Помещается ли набор галсов в один вылет борта с указанной площадки.
-
-        Оценка обязана совпадать с итоговым расчётом `build_sortie`, иначе
-        распределение соберёт вылет, который валидатор тут же забракует.
-        Поэтому площадка берётся именно та, с которой борт полетит.
-        """
-        if not strips:
-            return True
-        params = survey_plan.for_vehicle(vehicle.id)
-        duration_s = estimate_sortie_duration_s(
-            vehicle, params, work_area.site(site_id), strips, scenario.wind
-        )
-        return duration_s <= endurance_limit_s(vehicle)
-
-    allocation = build_baseline_allocation(scenario, coverage, vehicles, usable_ids, fits)
-    clock.lap("allocate")
-
-    sorties, flight_warnings = _schedule_with_strips(
-        allocation, work_area, scenario, survey_plan, vehicles, strips_by_id
-    )
-    clock.lap("flight")
-
-    instances = {(sortie.vehicle_id, sortie.vehicle_instance) for sortie in sorties}
-    metrics = _metrics(sorties, coverage, scenario.alpha, len(instances))
-
-    validation_warnings = validate_mission(scenario, coverage, sorties, vehicles)
-    clock.lap("validate")
-
-    mission = Mission(
-        id=f"mission-{uuid.uuid4().hex[:8]}",
-        scenario_id=scenario.id,
-        crs=work_area.crs,
-        origin=work_area.projector.to_geo(work_area.sites[scenario.sites[0].id]),
-        sorties=sorties,
-        metrics=metrics,
-        warnings=[
-            *work_area.warnings,
-            *flight_warnings,
-            *validation_warnings,
-        ],
-        algorithm=allocation.algorithm,
-        alpha=scenario.alpha,
-        seed=scenario.seed,
-        stub_stages=list(STUB_STAGES),
-    )
-
-    if not sorties:
-        mission.warnings.append(
-            PlanWarning(
-                code="pipeline.empty_plan",
-                severity=Severity.ERROR,
-                stage=Stage.ALLOCATE,
-                message="План пуст: ни один вылет не собран. Сценарий невыполним имеющимся флотом",
-            )
-        )
-
-    result = PipelineResult(
-        scenario_id=scenario.id,
-        crs=work_area.crs,
-        survey_plan=survey_plan,
-        coverage=coverage,
-        allocation=allocation,
-        mission=mission,
-        timings_s=clock.timings_s,
-    )
-    return PlanningRun(
+    assembler = _Assembler(
         scenario=scenario,
-        result=result,
-        work_area=work_area,
         catalog=vehicle_catalog,
         vehicles=vehicles,
+        work_area=work_area,
+        survey_plan=survey_plan,
+        clock=clock,
+        warnings=list(work_area.warnings),
     )
+    if not survey_plan.per_vehicle:
+        return assembler.finish(_errors(survey_plan.warnings), stub_stages=())
 
+    altitudes = [params.altitude_agl_m for params in survey_plan.per_vehicle]
+    try:
+        mask, mask_warnings = build_survey_mask(work_area, min(altitudes), max(altitudes))
+    except GeometryError as error:
+        reason = PlanWarning(
+            code="geo.nothing_to_survey",
+            severity=Severity.ERROR,
+            stage=Stage.GEO,
+            message=str(error),
+        )
+        return assembler.finish([reason], stub_stages=())
+    assembler.warnings.extend(mask_warnings)
 
-def _schedule_with_strips(
-    allocation: Allocation,
-    work_area: WorkArea,
-    scenario: Scenario,
-    survey_plan: SurveyPlan,
-    vehicles: dict[str, Vehicle],
-    strips_by_id: dict[str, Strip],
-) -> tuple[list[Sortie], list[PlanWarning]]:
-    """Собрать вылеты по назначениям и расставить их во времени.
+    decomposition = decompose(
+        work_area, mask, survey_plan, vehicles, [site.id for site in scenario.primary_sites()]
+    )
+    assembler.decomposition = decomposition
+    clock.lap("decompose")
 
-    Args:
-        allocation: распределение галсов по вылетам.
-        work_area: рабочая область (площадки, запретные зоны, проекция).
-        scenario: сценарий (ветер).
-        survey_plan: параметры съёмки по бортам.
-        vehicles: каталог бортов.
-        strips_by_id: галсы покрытия по идентификаторам.
+    usable = [params.vehicle_id for params in survey_plan.per_vehicle]
+    instances = expand_fleet(scenario, vehicles, usable)
+    levels, level_warnings = assign_transit_levels(instances, survey_plan, work_area.corridor_max_m)
+    oracle = CoverageOracle(decomposition, survey_plan, vehicles, work_area)
+    router = make_router(work_area)
 
-    Returns:
-        Пара «вылеты, предупреждения».
-    """
-    router = make_router(work_area.no_fly)
-    sorties: list[Sortie] = []
-    warnings: list[PlanWarning] = []
-    busy_until_s: dict[tuple[str, int], float] = {}
-
-    for assignment in allocation.assignments:
-        vehicle = vehicles[assignment.vehicle_id]
-        key = (assignment.vehicle_id, assignment.vehicle_instance)
-        start_s = (
-            assumptions.VEHICLE_PREP_TIME_S
-            if key not in busy_until_s
-            else busy_until_s[key] + vehicle.battery_swap_time_s
+    def make_sortie(
+        instance: FleetInstance,
+        cell_ids: list[str],
+        takeoff_site_id: str,
+        landing_site_id: str,
+        sortie_id: str,
+        trip_index: int,
+    ) -> Sortie:
+        params = survey_plan.for_vehicle(instance.vehicle.id)
+        assert params is not None
+        return build_sortie(
+            sortie_id=sortie_id,
+            vehicle=instance.vehicle,
+            params=params,
+            takeoff_site_id=takeoff_site_id,
+            takeoff_site=work_area.site(takeoff_site_id),
+            landing_site_id=landing_site_id,
+            landing_site=work_area.site(landing_site_id),
+            cells=[oracle.get(cell_id, instance.vehicle.id) for cell_id in cell_ids],
+            transit_altitude_m=levels[instance.key],
+            router=router,
+            own_area=unary_union([oracle.cell_geometry(cell_id) for cell_id in cell_ids]),
+            vehicle_instance=instance.index,
+            trip_index=trip_index,
         )
 
-        try:
-            sortie, sortie_warnings = build_sortie(
-                sortie_id=assignment.sortie_id,
-                vehicle=vehicle,
-                params=survey_plan.for_vehicle(assignment.vehicle_id),
-                site_id=assignment.site_id,
-                site=work_area.site(assignment.site_id),
-                strips=[strips_by_id[strip_id] for strip_id in assignment.strip_ids],
-                wind=scenario.wind,
-                transit=router,
-                start_time_s=start_s,
-                vehicle_instance=assignment.vehicle_instance,
-                trip_index=assignment.trip_index,
-            )
-        except InfeasibleError as error:
-            warnings.append(
-                PlanWarning(
-                    code="flight.infeasible",
-                    severity=Severity.ERROR,
-                    stage=Stage.FLIGHT,
-                    message=f"Вылет {assignment.sortie_id} не собран: {error}",
-                    context={
-                        "sortie_id": assignment.sortie_id,
-                        "vehicle_id": assignment.vehicle_id,
-                    },
-                )
-            )
-            continue
+    def sortie_cost(instance: FleetInstance, site_id: str, cell_ids: list[str]) -> float | None:
+        """Длительность вылета — той же моделью, что собирает итоговый вылет."""
+        probe = make_sortie(instance, cell_ids, site_id, site_id, "probe", 0)
+        if probe.duration_s > endurance_limit_s(instance.vehicle):
+            return None
+        return probe.duration_s
 
-        busy_until_s[key] = sortie.end_time_s()
-        sorties.append(sortie)
-        warnings.extend(sortie_warnings)
+    primary_sites = {site.id: work_area.site(site.id) for site in scenario.primary_sites()}
+    allocation = build_baseline_allocation(
+        scenario,
+        work_area.crs,
+        decomposition.cells,
+        instances,
+        primary_sites,
+        oracle.serviceable,
+        sortie_cost,
+    )
+    assembler.allocation = allocation
+    clock.lap("allocate")
 
-    return sorties, warnings
+    coverage = oracle.coverage_set(allocation)
+    assembler.coverage = coverage
+    clock.lap("coverage")
+
+    by_key = {instance.key: instance for instance in instances}
+    sorties = [
+        make_sortie(
+            by_key[(assignment.vehicle_id, assignment.vehicle_instance)],
+            assignment.cell_ids,
+            assignment.takeoff_site_id,
+            assignment.landing_site_id,
+            assignment.sortie_id,
+            assignment.trip_index,
+        )
+        for assignment in allocation.assignments
+    ]
+    clock.lap("flight")
+
+    sorties, schedule = build_schedule(sorties, vehicles, work_area, scenario, coverage)
+    schedule.warnings[:0] = level_warnings
+    clock.lap("schedule")
+
+    report = validate_plan(scenario, work_area, decomposition, coverage, sorties, vehicles)
+    assembler.warnings.extend(report.warnings)
+    clock.lap("validate")
+
+    reasons = [*_errors(allocation.warnings), *_errors(schedule.warnings), *report.violations]
+    return assembler.finish(reasons, sorties, schedule)
 
 
-__all__ = ["PlanningRun", "STUB_STAGES", "resolve_fleet", "run_pipeline"]
+__all__ = ["PlanningRun", "STUB_STAGES", "check_scenario", "resolve_fleet", "run_pipeline"]

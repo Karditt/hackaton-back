@@ -5,14 +5,19 @@
 работы сразу, поэтому порядок изменения зафиксирован в AGENT.md §4:
 аддитивно → перегенерировать TS-типы → отметить в docs/current_state.md.
 
+Версия 2 — по ответам заказчика (docs/customer_qa.md): мультиполигон области,
+препятствия, коридор высот, зоны с высотами и окнами времени, декомпозиция на
+подобласти, раздельные площадки взлёта и посадки, расписание, статус плана
+«выполним / невыполним» с причинами и рекомендациями.
+
 Две системы координат и почему их две
 -------------------------------------
 Инвариант 1: вся геометрия считается в МЕТРИЧЕСКОЙ проекции, WGS84 живёт
 только на границах системы. Чтобы это нельзя было нарушить незаметно,
 географические и метрические координаты — РАЗНЫЕ ТИПЫ:
 
-* `GeoPoint` / `GeoPolygon`   — WGS84, градусы. Только `Scenario` (вход) и
-  экспорт (выход). Внутри конвейера их быть не должно.
+* `GeoPoint` / `GeoPolygon` / `GeoMultiPolygon` — WGS84, градусы. Только
+  `Scenario` (вход) и экспорт (выход). Внутри конвейера их быть не должно.
 * `MetricPoint` / `MetricPolygon` / `MetricLineString` / `Waypoint` — метры
   в рабочей проекции `CrsInfo`. Всё, что между стадиями.
 
@@ -22,9 +27,10 @@
 Единицы измерения — в именах полей
 ----------------------------------
 Суффикс поля называет единицу: `_m` метры, `_s` секунды, `_mps` м/с,
-`_deg` градусы, `_wh` ватт-часы, `_m2` квадратные метры. Доли (0..1) —
-суффикс `_fraction` или имя `overlap`. Поле без суффикса — не число
-(идентификатор, перечисление, геометрия).
+`_deg` градусы, `_m2` квадратные метры. Доли (0..1) — суффикс `_fraction`
+или имя `overlap`. Поле без суффикса — не число (идентификатор, перечисление,
+геометрия). Все высоты — НАД ПОВЕРХНОСТЬЮ (AGL): их держит автопилот
+(заказчик, №10).
 """
 
 from __future__ import annotations
@@ -35,20 +41,22 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from core import assumptions
+
 # --------------------------------------------------------------------------
 # Перечисления
 # --------------------------------------------------------------------------
 
 
 class VehicleType(str, Enum):
-    """Тип БВС. Определяет кинематику разворота и схему взлёта/посадки."""
+    """Тип БВС. Определяет кинематику разворота и минимум разделения."""
 
     FIXED_WING = "fixed_wing"
     MULTIROTOR = "multirotor"
 
 
 class SurveyType(str, Enum):
-    """Тип съёмки. У каждого — свой пресет сенсорной модели (E2)."""
+    """Тип съёмки. Перекрытия по типам — `data/survey_presets.yaml` (заказчик, №25)."""
 
     RGB = "rgb"
     MULTISPECTRAL = "multispectral"
@@ -70,13 +78,14 @@ class PayloadKind(str, Enum):
 
 
 class FlightPhase(str, Enum):
-    """Фаза полёта. Инвариант 7: время считается по фазам, а не «длина / скорость»."""
+    """Фаза полёта. Инвариант 7: время вылета — сумма фаз."""
 
     TAKEOFF = "takeoff"
     CLIMB = "climb"
     TRANSIT = "transit"
     STRIP = "strip"
     TURN = "turn"
+    HOLD = "hold"  # ожидание: самолёт — круг, мультиротор — зависание (заказчик, №37)
     DESCENT = "descent"
     LANDING = "landing"
 
@@ -85,11 +94,11 @@ class SiteKind(str, Enum):
     """Назначение наземной площадки."""
 
     PRIMARY = "primary"  # штатный взлёт и посадка
-    RESERVE = "reserve"  # запасная площадка, проверяется валидатором (E7)
+    RESERVE = "reserve"  # внештатная посадка и зона ожидания, не для работы (заказчик, №41)
 
 
 class Severity(str, Enum):
-    """Тяжесть предупреждения валидатора."""
+    """Тяжесть предупреждения."""
 
     INFO = "info"
     WARNING = "warning"
@@ -101,27 +110,56 @@ class Stage(str, Enum):
 
     GEO = "geo"
     SURVEY = "survey"
+    DECOMPOSE = "decompose"
     COVERAGE = "coverage"
     FLIGHT = "flight"
     TRANSIT = "transit"
     ALLOCATE = "allocate"
+    SCHEDULE = "schedule"
     VALIDATE = "validate"
+    ADVISE = "advise"
     EXPORT = "export"
 
 
+class OptimizationMode(str, Enum):
+    """Режим оптимизации (заказчик, №23; PROJECT_BRIEF.md §4.3)."""
+
+    MIN_MAKESPAN = "min_makespan"  # кратчайший срок выполнения всех работ
+    MIN_RESOURCE = "min_resource"  # минимум ресурса техники при необязательном дедлайне
+
+
+class MissionStatus(str, Enum):
+    """Итог конвейера. Частичных планов нет (инвариант 10)."""
+
+    FEASIBLE = "feasible"
+    INFEASIBLE = "infeasible"
+
+
+class RecommendationKind(str, Enum):
+    """Что предложить пользователю, если задание невыполнимо (заказчик, №33, №42)."""
+
+    ADD_SITE = "add_site"
+    ADD_VEHICLE = "add_vehicle"
+    ADD_BATTERIES = "add_batteries"
+    OTHER_MODEL = "other_model"
+    WAIT = "wait"
+    RELAX_REQUIREMENT = "relax_requirement"
+
+
 class ExportFormat(str, Enum):
-    """Формат выгрузки полётного задания."""
+    """Формат выгрузки."""
 
     GEOJSON = "geojson"
     KML = "kml"
+    SCHEDULE = "schedule"  # расписание вылетов, CSV
 
 
 class AltitudeMode(str, Enum):
     """Режим высоты в экспорте.
 
     Критично для KML: три режима дают три РАЗНЫХ смысла одной и той же цифры
-    (PROJECT_BRIEF.md §7). Проект работает без ЦМР, поэтому по умолчанию
-    высота относительна точке старта.
+    (PROJECT_BRIEF.md §7). Высоты проекта — над поверхностью (AGL), что
+    соответствует `relativeToGround`.
     """
 
     CLAMP_TO_GROUND = "clampToGround"
@@ -144,6 +182,15 @@ class Model(BaseModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=False)
 
 
+def _nesting_depth(value: Any) -> int:
+    """Глубина вложенности списков до первого скаляра."""
+    depth = 0
+    while isinstance(value, (list, tuple)) and value:
+        depth += 1
+        value = value[0]
+    return depth
+
+
 # --------------------------------------------------------------------------
 # Геометрия: WGS84 (границы системы)
 # --------------------------------------------------------------------------
@@ -159,7 +206,7 @@ class GeoPoint(Model):
 
     lon: float = Field(ge=-180.0, le=180.0, description="Долгота, градусы WGS84")
     lat: float = Field(ge=-90.0, le=90.0, description="Широта, градусы WGS84")
-    alt_m: float | None = Field(default=None, description="Высота, метры (см. AltitudeMode)")
+    alt_m: float | None = Field(default=None, description="Высота над поверхностью, метры")
 
     @model_validator(mode="before")
     @classmethod
@@ -170,6 +217,8 @@ class GeoPoint(Model):
             if len(value) == 3:
                 return {"lon": value[0], "lat": value[1], "alt_m": value[2]}
             raise ValueError("Точка WGS84 записывается как [lon, lat] или [lon, lat, alt_m]")
+        if isinstance(value, dict) and value.get("type") == "Point":
+            return cls._accept_sequence(value.get("coordinates"))
         return value
 
 
@@ -177,8 +226,10 @@ class GeoPolygon(Model):
     """Полигон в WGS84: внешний контур и произвольное число отверстий.
 
     Кольца не требуется замыкать — замыкание доопределяется при переводе в
-    shapely. Принимает компактную запись в виде координат GeoJSON Polygon:
-    `[[[lon, lat], ...], [[lon, lat], ...]]` (первое кольцо — внешнее).
+    shapely. Принимает координаты GeoJSON Polygon `[[[lon, lat], ...], ...]`
+    (первое кольцо — внешнее) и геометрию GeoJSON `{"type": "Polygon", ...}`.
+    Самопересечения отвергаются на приёме (`core.geo`), а не чинятся молча
+    (заказчик, №9, №19).
     """
 
     outer: list[GeoPoint] = Field(min_length=3, description="Внешний контур, WGS84")
@@ -187,11 +238,49 @@ class GeoPolygon(Model):
     @model_validator(mode="before")
     @classmethod
     def _accept_rings(cls, value: Any) -> Any:
+        if isinstance(value, dict) and value.get("type") == "Polygon":
+            value = value.get("coordinates")
         if isinstance(value, (list, tuple)):
             rings = list(value)
             if not rings:
                 raise ValueError("Полигон должен содержать хотя бы внешнее кольцо")
             return {"outer": rings[0], "holes": rings[1:]}
+        return value
+
+
+class GeoMultiPolygon(Model):
+    """Мультиполигон в WGS84 — форма области съёмки (заказчик, №9).
+
+    Принимает: координаты GeoJSON Polygon (одна часть), координаты GeoJSON
+    MultiPolygon (несколько частей), геометрию GeoJSON с полем `type` или
+    явную форму `{"polygons": [...]}`.
+    """
+
+    polygons: list[GeoPolygon] = Field(min_length=1, description="Части мультиполигона")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_geojson(cls, value: Any) -> Any:
+        if isinstance(value, dict) and "type" in value:
+            kind = value.get("type")
+            coordinates = value.get("coordinates")
+            if kind == "Polygon":
+                return {"polygons": [coordinates]}
+            if kind == "MultiPolygon":
+                return {"polygons": list(coordinates or [])}
+            raise ValueError(f"Область съёмки — Polygon или MultiPolygon, получено {kind!r}")
+        if isinstance(value, (list, tuple)):
+            depth = _nesting_depth(value)
+            if depth == 3:
+                return {"polygons": [value]}
+            if depth == 4:
+                return {"polygons": list(value)}
+            if value and isinstance(value[0], dict):
+                return {"polygons": list(value)}
+            raise ValueError(
+                "Ожидались координаты GeoJSON Polygon (три уровня вложенности) "
+                "или MultiPolygon (четыре уровня)"
+            )
         return value
 
 
@@ -247,19 +336,19 @@ class MetricPolygon(Model):
 
 
 class Waypoint(Model):
-    """Точка маршрута: плановое положение, высота и путевая скорость.
+    """Точка маршрута: плановое положение, высота, путевая скорость, время.
 
-    Высота — над точкой взлёта (рельеф не моделируется, см.
-    `core.assumptions.TERRAIN_MODEL`). Именно это значение уходит в KML
-    с режимом `relativeToGround`.
+    Высота — НАД ПОВЕРХНОСТЬЮ (AGL), её держит автопилот (заказчик, №10).
+    Именно это значение уходит в KML с режимом `relativeToGround`.
     """
 
     x_m: float = Field(description="Координата X рабочей проекции, метры")
     y_m: float = Field(description="Координата Y рабочей проекции, метры")
-    alt_m: float = Field(description="Высота над точкой взлёта, метры")
+    alt_m: float = Field(description="Высота над поверхностью (AGL), метры")
     ground_speed_mps: float | None = Field(
         default=None, description="Путевая скорость на подходе к точке, м/с"
     )
+    time_s: float = Field(default=0.0, description="Момент прохождения от начала работ, секунды")
 
 
 # --------------------------------------------------------------------------
@@ -268,20 +357,19 @@ class Waypoint(Model):
 
 
 class PlanWarning(Model):
-    """Предупреждение о плане.
+    """Предупреждение или причина невыполнимости.
 
-    AGENT.md §8: невыполнимый сценарий — это предупреждение или типизированное
-    исключение с объяснением, а не тихий пустой результат. Заглушки стадий
-    обязаны сообщать о себе именно здесь, иначе они «молча выглядят как
-    настоящий расчёт».
+    AGENT.md §8: невыполнимый сценарий — это отчёт с причиной, а не тихий
+    пустой результат. Заглушки стадий обязаны сообщать о себе здесь, иначе они
+    «молча выглядят как настоящий расчёт».
     """
 
-    code: str = Field(description="Машинный код, например 'stub.flight'")
+    code: str = Field(description="Машинный код, например 'validate.nfz'")
     severity: Severity = Severity.WARNING
     stage: Stage
     message: str = Field(description="Человекочитаемое объяснение")
     context: dict[str, str] = Field(
-        default_factory=dict, description="Идентификаторы: sortie_id, vehicle_id, strip_id и т.п."
+        default_factory=dict, description="Идентификаторы: sortie_id, vehicle_id, cell_id и т.п."
     )
     geometry: MetricLineString | None = Field(
         default=None, description="Проблемный участок для подсветки на карте (E11)"
@@ -297,7 +385,9 @@ class Payload(Model):
     """Полезная нагрузка.
 
     Инвариант 6: ни одно число не выдумывается. Оптические параметры, которых
-    нет в официальном документе, остаются `None` и попадают в `gaps`.
+    нет в официальном документе, остаются `None` и попадают в `gaps`. Параметры,
+    выведенные из документированных чисел по формуле, перечислены в
+    `derived_fields`.
     """
 
     id: str
@@ -310,12 +400,21 @@ class Payload(Model):
     image_width_px: int | None = None
     image_height_px: int | None = None
     focal_length_mm: float | None = None
+    fov_horizontal_deg: float | None = Field(
+        default=None, description="Угол поля зрения по ширине кадра, градусы"
+    )
+    fov_vertical_deg: float | None = Field(
+        default=None, description="Угол поля зрения по высоте кадра, градусы"
+    )
     min_shot_interval_s: float | None = Field(
         default=None, description="Минимальный интервал между кадрами, секунды"
     )
     mass_kg: float | None = None
     gaps: list[str] = Field(
         default_factory=list, description="Известные пробелы ТТХ, дословно из каталога"
+    )
+    derived_fields: list[str] = Field(
+        default_factory=list, description="Поля, выведенные по формуле, а не взятые из документа"
     )
 
 
@@ -334,6 +433,9 @@ class Vehicle(Model):
 
     cruise_speed_mps: float = Field(gt=0, description="Крейсерская воздушная скорость, м/с")
     max_speed_mps: float | None = Field(default=None, description="Максимальная скорость, м/с")
+    min_speed_mps: float | None = Field(
+        default=None, description="Минимальная воздушная скорость, м/с (самолётный тип)"
+    )
     endurance_s: float = Field(gt=0, description="Максимальная продолжительность полёта, секунды")
     max_wind_mps: float = Field(gt=0, description="Допустимая скорость ветра, м/с")
     turn_radius_m: float = Field(
@@ -344,11 +446,10 @@ class Vehicle(Model):
     max_altitude_agl_m: float | None = Field(default=None, description="Потолок над землёй, м")
     max_range_m: float | None = Field(default=None, description="Протяжённость маршрута, метры")
 
-    energy_wh: float | None = Field(default=None, description="Энергия АКБ, Вт·ч")
+    energy_wh: float | None = Field(default=None, description="Энергия АКБ, Вт·ч (справочно)")
     battery_reserve_fraction: float = Field(
-        ge=0.0, lt=1.0, description="Неснижаемый резерв заряда, доля 0..1"
+        ge=0.0, lt=1.0, description="Отсечка заряда, доля 0..1 (заказчик, №34)"
     )
-    battery_swap_time_s: float = Field(ge=0, description="Время замены АКБ между вылетами, секунды")
 
     takeoff_mode: str | None = None
     landing_mode: str | None = None
@@ -369,6 +470,10 @@ class Vehicle(Model):
                 return item
         return None
 
+    def is_fixed_wing(self) -> bool:
+        """True — борт самолётного типа."""
+        return self.type is VehicleType.FIXED_WING
+
 
 # --------------------------------------------------------------------------
 # Вход конвейера: Scenario (единственное место, где живёт WGS84 на входе)
@@ -380,10 +485,10 @@ class Wind(Model):
 
     ИНВАРИАНТ 4. `direction_deg` — МЕТЕОРОЛОГИЧЕСКАЯ конвенция: направление,
     ОТКУДА дует. 0° — северный ветер (дует с севера на юг), 90° — восточный.
-    Перепутанный знак даёт зеркальный план и обнаруживается только на демо.
-    Перевод в вектор сноса — `core.flight.wind.wind_vector`, и только там.
+    Перевод в вектор — `core.flight.wind.wind_vector`, и только там.
 
-    Допущение: ветер постоянен по всей области и по высоте (профиля нет).
+    Роль ветра (заказчик, №45): выполнимость — удержит ли борт путевую
+    скорость — и направление галсов. Во время и расход ветер не входит.
     """
 
     speed_mps: float = Field(ge=0.0, description="Скорость ветра, м/с")
@@ -393,7 +498,7 @@ class Wind(Model):
 
 
 class Site(Model):
-    """Наземная площадка взлёта-посадки, WGS84."""
+    """Наземная площадка взлёта-посадки, WGS84. Вместимость не ограничена (№28)."""
 
     id: str
     name: str = ""
@@ -402,25 +507,87 @@ class Site(Model):
 
 
 class NoFlyZone(Model):
-    """Запретная зона, WGS84.
+    """Запретная зона, WGS84: полигон, высотный диапазон и окно действия.
 
-    Высотные границы опциональны: зона без них считается запретной на всех
-    высотах, что консервативнее и безопаснее.
+    Заказчик, №40: зоны ОРВД — пространственно-временные, бывают постоянные
+    (аэродром) и временные. Высоты — над поверхностью. Зона без высот
+    запретна на всех высотах; зона без окна действует всегда.
     """
 
     id: str
     name: str = ""
     polygon: GeoPolygon
-    min_alt_m: float | None = None
-    max_alt_m: float | None = None
+    min_alt_m: float | None = Field(default=None, ge=0, description="Нижняя граница, м AGL")
+    max_alt_m: float | None = Field(default=None, gt=0, description="Верхняя граница, м AGL")
+    active_from: datetime | None = Field(default=None, description="Начало действия, UTC")
+    active_to: datetime | None = Field(default=None, description="Конец действия, UTC")
+
+    @model_validator(mode="after")
+    def _ranges_are_ordered(self) -> NoFlyZone:
+        if (
+            self.min_alt_m is not None
+            and self.max_alt_m is not None
+            and self.min_alt_m >= self.max_alt_m
+        ):
+            raise ValueError(f"Зона {self.id}: нижняя граница не ниже верхней")
+        if (
+            self.active_from is not None
+            and self.active_to is not None
+            and self.active_from >= self.active_to
+        ):
+            raise ValueError(f"Зона {self.id}: окно действия пустое")
+        return self
+
+    def is_permanent(self) -> bool:
+        """True — зона без окна действия."""
+        return self.active_from is None and self.active_to is None
+
+
+class Obstacle(Model):
+    """Высотное препятствие — отдельный входной слой (заказчик, №2, №44).
+
+    Геометрия — точка ИЛИ полигон. Высота — над землёй.
+    """
+
+    id: str
+    name: str = ""
+    position: GeoPoint | None = Field(default=None, description="Точечное препятствие, WGS84")
+    polygon: GeoPolygon | None = Field(default=None, description="Площадное препятствие, WGS84")
+    height_m: float = Field(gt=0, description="Высота над землёй, метры")
+
+    @model_validator(mode="after")
+    def _exactly_one_geometry(self) -> Obstacle:
+        if (self.position is None) == (self.polygon is None):
+            raise ValueError(
+                f"Препятствие {self.id}: нужна ровно одна геометрия — точка или полигон"
+            )
+        return self
+
+
+class AltitudeCorridor(Model):
+    """Коридор высот (заказчик, №10).
+
+    Съёмка ведётся на одной высоте; на перелётах борта разводятся по эшелонам
+    внутри коридора. Пример заказчика: съёмка 150 м, коридор до 700 м.
+    """
+
+    max_altitude_agl_m: float = Field(gt=0, description="Верхняя граница всех высот, м AGL")
 
 
 class QualityRequirement(Model):
-    """Требования к качеству материала — вход сенсорной модели (E2)."""
+    """Требования к качеству — вход сенсорной модели (E2).
+
+    Качество задаётся GSD (заказчик, №26). Перекрытия не обязательны: по
+    умолчанию берутся из конфига типа съёмки `data/survey_presets.yaml` (№25).
+    """
 
     gsd_m: float = Field(gt=0, description="Целевое разрешение на местности, метры на пиксель")
-    forward_overlap: float = Field(ge=0.0, lt=1.0, description="Продольное перекрытие, доля 0..1")
-    side_overlap: float = Field(ge=0.0, lt=1.0, description="Поперечное перекрытие, доля 0..1")
+    forward_overlap: float | None = Field(
+        default=None, ge=0.0, lt=1.0, description="Продольное перекрытие, доля 0..1"
+    )
+    side_overlap: float | None = Field(
+        default=None, ge=0.0, lt=1.0, description="Поперечное перекрытие, доля 0..1"
+    )
 
 
 class FleetUnit(Model):
@@ -434,8 +601,8 @@ class FleetUnit(Model):
     site_id: str | None = Field(
         default=None, description="Приписка к площадке; None — выберет распределение (E6)"
     )
-    battery_sets: int = Field(
-        default=1, ge=1, description="Комплектов АКБ на борт — предел числа вылетов"
+    battery_sets: int | None = Field(
+        default=None, ge=1, description="Предел числа вылетов на борт; None — не ограничено"
     )
 
 
@@ -449,11 +616,13 @@ class Scenario(Model):
     name: str = ""
     description: str = ""
 
-    area: GeoPolygon = Field(description="Область съёмки")
+    area: GeoMultiPolygon = Field(description="Область съёмки: полигон или мультиполигон")
     no_fly_zones: list[NoFlyZone] = Field(default_factory=list)
     airspace_boundary: GeoPolygon | None = Field(
         default=None, description="Граница разрешённого воздушного пространства"
     )
+    obstacles: list[Obstacle] = Field(default_factory=list, description="Высотные препятствия")
+    altitude_corridor: AltitudeCorridor
     sites: list[Site] = Field(min_length=1, description="Площадки взлёта-посадки")
 
     survey_type: SurveyType = SurveyType.RGB
@@ -461,13 +630,26 @@ class Scenario(Model):
     wind: Wind = Field(default_factory=lambda: Wind(speed_mps=0.0, direction_deg=0.0))
     fleet: list[FleetUnit] = Field(min_length=1)
 
+    mode: OptimizationMode = OptimizationMode.MIN_MAKESPAN
     alpha: float = Field(
-        default=0.5,
+        default=assumptions.DEFAULT_ALPHA,
         ge=0.0,
         le=1.0,
-        description="Вес makespan в целевой функции α·makespan + (1−α)·суммарный налёт",
+        description="Вес срока в свёртке α·T + (1−α)·R — для фронта Парето",
     )
-    seed: int = Field(default=42, description="Зерно ГПСЧ: один сценарий + один seed = один план")
+    start_time: datetime | None = Field(
+        default=None, description="Начало работ, UTC. Нужно для окон временных зон"
+    )
+    deadline_s: float | None = Field(
+        default=None, gt=0, description="Ограничение по сроку от начала работ, секунды"
+    )
+    turnaround_s: float | None = Field(
+        default=None, ge=0, description="Межвылетная подготовка, секунды; None — допущение"
+    )
+    seed: int = Field(
+        default=assumptions.DEFAULT_SEED,
+        description="Зерно ГПСЧ: один сценарий + один seed = один план",
+    )
 
     @field_validator("sites")
     @classmethod
@@ -478,22 +660,37 @@ class Scenario(Model):
         return sites
 
     @model_validator(mode="after")
-    def _fleet_refers_to_known_sites(self) -> Scenario:
+    def _consistency(self) -> Scenario:
         known = {site.id for site in self.sites}
         for unit in self.fleet:
             if unit.site_id is not None and unit.site_id not in known:
                 raise ValueError(
                     f"Борт {unit.vehicle_id} приписан к неизвестной площадке {unit.site_id!r}"
                 )
+        if not self.primary_sites():
+            raise ValueError(
+                "Нужна хотя бы одна штатная площадка: резервные для работы не используются "
+                "(заказчик, №41)"
+            )
+        total = sum(unit.count for unit in self.fleet)
+        if total > assumptions.MAX_FLEET_VEHICLES:
+            raise ValueError(
+                f"Во флоте {total} бортов, допустимо не больше "
+                f"{assumptions.MAX_FLEET_VEHICLES} (заказчик, №2, №43)"
+            )
         return self
 
     def primary_sites(self) -> list[Site]:
-        """Штатные площадки взлёта-посадки (без резервных)."""
+        """Штатные площадки взлёта-посадки."""
         return [site for site in self.sites if site.kind is SiteKind.PRIMARY]
+
+    def reserve_sites(self) -> list[Site]:
+        """Резервные площадки: внештатная посадка и зона ожидания."""
+        return [site for site in self.sites if site.kind is SiteKind.RESERVE]
 
 
 # --------------------------------------------------------------------------
-# Стадия 1: SurveyPlan — параметры съёмки
+# Стадия: SurveyPlan — параметры съёмки
 # --------------------------------------------------------------------------
 
 
@@ -504,54 +701,88 @@ class SurveyParams(Model):
     payload_id: str
     survey_type: SurveyType
 
-    altitude_agl_m: float = Field(gt=0, description="Высота съёмки над точкой старта, метры")
+    altitude_agl_m: float = Field(gt=0, description="Высота съёмки над поверхностью, метры")
     gsd_m: float = Field(gt=0, description="Фактическое разрешение на местности, м/пиксель")
     swath_width_m: float = Field(gt=0, description="Ширина полосы захвата, метры")
     strip_spacing_m: float = Field(gt=0, description="Шаг между галсами, метры")
-    survey_speed_mps: float = Field(gt=0, description="Скорость на галсе, м/с")
+    survey_speed_mps: float = Field(
+        gt=0, description="Путевая скорость на галсе — её держит автопилот, м/с"
+    )
+    transit_speed_mps: float = Field(gt=0, description="Путевая скорость на перелёте, м/с")
     forward_overlap: float = Field(ge=0.0, lt=1.0)
     side_overlap: float = Field(ge=0.0, lt=1.0)
     shot_interval_s: float | None = Field(default=None, description="Интервал съёмки, секунды")
 
 
 class SurveyPlan(Model):
-    """Результат сенсорной модели по всему флоту сценария."""
+    """Результат сенсорной модели по всему флоту сценария.
 
-    per_vehicle: list[SurveyParams] = Field(min_length=1)
-    reference_vehicle_id: str = Field(
-        description="Борт, по параметрам которого строится покрытие (см. TODO(E3) в coverage)"
-    )
+    `per_vehicle` может быть пустым: тогда задание невыполнимо, а причины —
+    в `warnings` уровня ERROR.
+    """
+
+    per_vehicle: list[SurveyParams] = Field(default_factory=list)
     warnings: list[PlanWarning] = Field(default_factory=list)
     stub: bool = Field(default=False, description="True — стадия работала на заглушке")
 
-    def for_vehicle(self, vehicle_id: str) -> SurveyParams:
-        """Параметры съёмки конкретного борта; при отсутствии — опорные."""
+    def for_vehicle(self, vehicle_id: str) -> SurveyParams | None:
+        """Параметры съёмки конкретного борта либо None, если борт исключён."""
         for params in self.per_vehicle:
             if params.vehicle_id == vehicle_id:
                 return params
-        return self.reference()
-
-    def reference(self) -> SurveyParams:
-        """Опорный набор параметров, по которому построены галсы."""
-        for params in self.per_vehicle:
-            if params.vehicle_id == self.reference_vehicle_id:
-                return params
-        return self.per_vehicle[0]
+        return None
 
 
 # --------------------------------------------------------------------------
-# Стадия 2: CoverageSet — галсы
+# Стадия: Decomposition — подобласти
+# --------------------------------------------------------------------------
+
+
+class Cell(Model):
+    """Подобласть — единица распределения работ между бортами (E3)."""
+
+    id: str
+    polygon: MetricPolygon
+    area_m2: float = Field(ge=0)
+    centroid: MetricPoint
+    row: int = Field(ge=0, description="Ряд сетки декомпозиции")
+    col: int = Field(ge=0, description="Столбец сетки декомпозиции")
+
+
+class Decomposition(Model):
+    """Рабочая маска, разрезанная на подобласти. Метры (инвариант 1)."""
+
+    crs: CrsInfo
+    cells: list[Cell] = Field(default_factory=list)
+    azimuth_deg: float = Field(ge=0.0, lt=360.0, description="Направление галсов, градусы")
+    cell_size_m: float = Field(gt=0, description="Сторона ячейки сетки, метры")
+    work_area_m2: float = Field(ge=0, description="Площадь рабочей маски, м²")
+    warnings: list[PlanWarning] = Field(default_factory=list)
+    stub: bool = False
+
+    def cell(self, cell_id: str) -> Cell | None:
+        """Подобласть по идентификатору."""
+        for item in self.cells:
+            if item.id == cell_id:
+                return item
+        return None
+
+
+# --------------------------------------------------------------------------
+# Стадия: Coverage — галсы подобластей
 # --------------------------------------------------------------------------
 
 
 class Strip(Model):
-    """Один галс: геометрия в метрах, высота, скорость."""
+    """Один галс: геометрия в метрах, высота, путевая скорость."""
 
     id: str
+    cell_id: str
+    vehicle_id: str
     line: MetricLineString
     length_m: float = Field(ge=0)
     altitude_agl_m: float = Field(gt=0)
-    speed_mps: float = Field(gt=0)
+    speed_mps: float = Field(gt=0, description="Путевая скорость на галсе, м/с")
     azimuth_deg: float = Field(ge=0.0, lt=360.0, description="Направление съёмки, градусы")
 
     def start(self) -> MetricPoint:
@@ -563,49 +794,65 @@ class Strip(Model):
         return self.line.points[-1]
 
 
+class CellCoverage(Model):
+    """Покрытие одной подобласти одним бортом."""
+
+    cell_id: str
+    vehicle_id: str
+    strips: list[Strip] = Field(default_factory=list)
+    maneuver_zones: list[MetricPolygon] = Field(
+        default_factory=list,
+        description="Защитные зоны манёвра на концах галсов, самолётный тип (заказчик, №38)",
+    )
+    covered_area_m2: float = Field(ge=0)
+    serviceable: bool = Field(description="Может ли борт снять подобласть без нарушений")
+    problem: str | None = Field(default=None, description="Почему не может, если не может")
+
+
 class CoverageSet(Model):
-    """Покрытие области галсами. Геометрия — метры (инвариант 1)."""
+    """Покрытие подобластей, распределённых по бортам. Геометрия — метры."""
 
     crs: CrsInfo
-    strips: list[Strip] = Field(default_factory=list)
-    azimuth_deg: float = Field(ge=0.0, lt=360.0, description="Выбранное направление галсов")
+    cells: list[CellCoverage] = Field(default_factory=list)
     work_area_m2: float = Field(ge=0, description="Площадь рабочей маски, м²")
-    covered_area_m2: float = Field(ge=0, description="Площадь, покрытая полосами захвата, м²")
+    covered_area_m2: float = Field(ge=0, description="Площадь, накрытая полосами захвата, м²")
     warnings: list[PlanWarning] = Field(default_factory=list)
     stub: bool = False
 
-    def strip(self, strip_id: str) -> Strip | None:
-        """Галс по идентификатору."""
-        for item in self.strips:
-            if item.id == strip_id:
-                return item
-        return None
+    def strips(self) -> list[Strip]:
+        """Все галсы плана."""
+        return [strip for cell in self.cells for strip in cell.strips]
 
 
 # --------------------------------------------------------------------------
-# Стадия 3: Allocation — распределение галсов по вылетам
+# Стадия: Allocation — подобласти по вылетам
 # --------------------------------------------------------------------------
 
 
 class SortieAssignment(Model):
-    """Назначение: какой борт, с какой площадки, какие галсы и в каком порядке."""
+    """Назначение: борт, площадки взлёта и посадки, подобласти и их порядок."""
 
     sortie_id: str
     vehicle_id: str
     vehicle_instance: int = Field(
         default=0, ge=0, description="Номер экземпляра борта внутри строки флота"
     )
-    site_id: str
-    strip_ids: list[str] = Field(default_factory=list)
+    takeoff_site_id: str
+    landing_site_id: str = Field(description="Может отличаться от площадки взлёта (№29)")
+    cell_ids: list[str] = Field(default_factory=list)
     trip_index: int = Field(default=0, ge=0, description="Номер вылета этого борта, с нуля")
 
 
 class Allocation(Model):
-    """Распределение по флоту — до расчёта стоимости."""
+    """Распределение подобластей по вылетам — до расчёта расписания."""
 
     crs: CrsInfo
     assignments: list[SortieAssignment] = Field(default_factory=list)
+    unassigned_cell_ids: list[str] = Field(
+        default_factory=list, description="Подобласти, которые не взял ни один вылет"
+    )
     algorithm: str = Field(description="Имя алгоритма: baseline / constructive / local_search")
+    mode: OptimizationMode
     alpha: float = Field(ge=0.0, le=1.0)
     seed: int
     warnings: list[PlanWarning] = Field(default_factory=list)
@@ -613,15 +860,15 @@ class Allocation(Model):
 
 
 # --------------------------------------------------------------------------
-# Стадия 4: Mission — готовый план
+# Стадия: вылеты и расписание
 # --------------------------------------------------------------------------
 
 
 class Leg(Model):
     """Участок полёта одной фазы.
 
-    Инвариант 7: `duration_s` НЕ равно `length_m / speed`. Учитываются фаза,
-    ветер, развороты. Как именно — определяет модель полёта (E4).
+    Инвариант 7: вылет — сумма фаз, у каждой своя скорость. На галсе время
+    равно длине, делённой на путевую скорость, которую держит автопилот.
     """
 
     phase: FlightPhase
@@ -629,8 +876,8 @@ class Leg(Model):
     length_m: float = Field(ge=0)
     duration_s: float = Field(ge=0)
     ground_speed_mps: float = Field(ge=0, description="Средняя путевая скорость, м/с")
-    energy_wh: float | None = Field(default=None, description="Израсходованная энергия, Вт·ч")
     strip_id: str | None = Field(default=None, description="Заполняется для фазы STRIP")
+    cell_id: str | None = Field(default=None, description="Подобласть, над которой идёт участок")
 
 
 class Sortie(Model):
@@ -639,17 +886,20 @@ class Sortie(Model):
     id: str
     vehicle_id: str
     vehicle_instance: int = 0
-    site_id: str
+    takeoff_site_id: str
+    landing_site_id: str
     trip_index: int = 0
 
     legs: list[Leg] = Field(default_factory=list)
     start_time_s: float = Field(ge=0, description="Момент взлёта от начала работ, секунды")
     duration_s: float = Field(ge=0, description="Полётное время вылета, секунды")
     distance_m: float = Field(ge=0)
-    energy_wh: float | None = None
-    energy_fraction_used: float | None = Field(
-        default=None, description="Доля израсходованной ёмкости АКБ, 0..1"
+    energy_fraction_used: float = Field(
+        ge=0, description="Доля автономности, израсходованная вылетом (линейная модель, №35)"
     )
+    survey_altitude_m: float = Field(gt=0, description="Высота съёмки, м AGL — одна на вылет")
+    transit_altitude_m: float = Field(gt=0, description="Эшелон перелёта, м AGL")
+    cell_ids: list[str] = Field(default_factory=list)
     strip_ids: list[str] = Field(default_factory=list)
 
     def end_time_s(self) -> float:
@@ -657,37 +907,85 @@ class Sortie(Model):
         return self.start_time_s + self.duration_s
 
 
-class MissionMetrics(Model):
-    """Метрики плана. Ровно то, что оптимизируется и что сравнивается с baseline."""
+class ScheduleEntry(Model):
+    """Строка расписания (заказчик, №31)."""
 
-    makespan_s: float = Field(ge=0, description="Время выполнения всех работ, секунды")
+    sortie_id: str
+    vehicle_id: str
+    vehicle_instance: int
+    trip_index: int
+    takeoff_site_id: str
+    landing_site_id: str
+    start_s: float = Field(ge=0, description="Взлёт от начала работ, секунды")
+    end_s: float = Field(ge=0, description="Посадка от начала работ, секунды")
+    delay_s: float = Field(ge=0, description="Сдвиг старта ради разведения бортов, секунды")
+    transit_altitude_m: float = Field(gt=0)
+
+
+class Schedule(Model):
+    """Расписание вылетов на общей оси времени (E14)."""
+
+    start_time: datetime | None = Field(default=None, description="Начало работ, UTC")
+    entries: list[ScheduleEntry] = Field(default_factory=list)
+    warnings: list[PlanWarning] = Field(default_factory=list)
+    stub: bool = False
+
+
+class Recommendation(Model):
+    """Что добавить, чтобы задание стало выполнимым (заказчик, №33, №42)."""
+
+    kind: RecommendationKind
+    message: str
+    position: MetricPoint | None = Field(
+        default=None, description="Предлагаемое место (например, площадки), метры"
+    )
+    vehicle_id: str | None = None
+
+
+class MissionMetrics(Model):
+    """Метрики плана. Ровно то, что оптимизируется и сравнивается с baseline."""
+
+    makespan_s: float = Field(ge=0, description="T — срок: до посадки последнего борта, секунды")
     total_flight_time_s: float = Field(ge=0, description="Суммарный налёт всех бортов, секунды")
+    cycle_count: int = Field(ge=0, description="Число циклов взлёт-посадка")
+    resource_s: float = Field(ge=0, description="R — ресурс: налёт + τ_цикл × циклы, секунды")
     total_distance_m: float = Field(ge=0)
     sortie_count: int = Field(ge=0)
     vehicle_count: int = Field(ge=0)
-    strips_planned: int = Field(ge=0)
-    strips_covered: int = Field(ge=0)
-    objective_value: float = Field(
-        description=(
-            "α·makespan + (1−α)·суммарный налёт, секунды. Функция зафиксирована (AGENT.md §7)"
-        )
-    )
+    cells_planned: int = Field(ge=0)
+    cells_covered: int = Field(ge=0)
+    objective_value: float = Field(description="Значение критерия выбранного режима, секунды")
+    weighted_value: float = Field(description="α·T + (1−α)·R, секунды — для фронта Парето")
+    mode: OptimizationMode
     alpha: float = Field(ge=0.0, le=1.0)
+    deadline_s: float | None = None
+    deadline_met: bool | None = None
 
 
 class Mission(Model):
-    """Готовое полётное задание группы БВС — выход конвейера."""
+    """Итог конвейера: полный план или отчёт о невыполнимости.
+
+    Инвариант 10: частичных планов нет. У невыполнимого плана `sorties` пуст,
+    а `reasons` и `recommendations` объясняют, чего не хватает.
+    """
 
     id: str
     scenario_id: str
     crs: CrsInfo
     origin: GeoPoint = Field(description="Точка привязки проекции: центр области, WGS84")
+    status: MissionStatus
 
     sorties: list[Sortie] = Field(default_factory=list)
-    metrics: MissionMetrics
+    schedule: Schedule | None = None
+    metrics: MissionMetrics | None = None
+    reasons: list[PlanWarning] = Field(
+        default_factory=list, description="Причины невыполнимости — нарушенные жёсткие правила"
+    )
+    recommendations: list[Recommendation] = Field(default_factory=list)
     warnings: list[PlanWarning] = Field(default_factory=list)
 
     algorithm: str
+    mode: OptimizationMode
     alpha: float = Field(ge=0.0, le=1.0)
     seed: int
     altitude_mode: AltitudeMode = AltitudeMode.RELATIVE_TO_GROUND
@@ -697,6 +995,10 @@ class Mission(Model):
         default_factory=list,
         description="Стадии, отработавшие на заглушке. Непустой список = план не окончательный",
     )
+
+    def is_feasible(self) -> bool:
+        """True — полный план без нарушений жёстких правил."""
+        return self.status is MissionStatus.FEASIBLE
 
     def is_stub(self) -> bool:
         """True, если хотя бы одна стадия конвейера работала на заглушке."""
@@ -711,15 +1013,16 @@ class Mission(Model):
 class PipelineResult(Model):
     """Все промежуточные стадии одного прогона.
 
-    Конвейер отлаживается по стадиям, и любую из них надо уметь показать на
-    карте во время защиты (PROJECT_BRIEF.md §2).
+    Стадии после той, на которой задание оказалось невыполнимым, отсутствуют
+    (None): конвейер останавливается там, где дальше считать не из чего.
     """
 
     scenario_id: str
     crs: CrsInfo
     survey_plan: SurveyPlan
-    coverage: CoverageSet
-    allocation: Allocation
+    decomposition: Decomposition | None = None
+    allocation: Allocation | None = None
+    coverage: CoverageSet | None = None
     mission: Mission
     timings_s: dict[str, float] = Field(
         default_factory=dict, description="Длительность каждой стадии, секунды"
@@ -727,22 +1030,29 @@ class PipelineResult(Model):
 
     def warnings(self) -> list[PlanWarning]:
         """Все предупреждения конвейера, в порядке стадий."""
-        return [
-            *self.survey_plan.warnings,
-            *self.coverage.warnings,
-            *self.allocation.warnings,
-            *self.mission.warnings,
-        ]
+        items: list[PlanWarning] = [*self.survey_plan.warnings]
+        for stage in (self.decomposition, self.allocation, self.coverage):
+            if stage is not None:
+                items.extend(stage.warnings)
+        if self.mission.schedule is not None:
+            items.extend(self.mission.schedule.warnings)
+        items.extend(self.mission.warnings)
+        return items
 
 
 __all__ = [
+    "AltitudeCorridor",
     "AltitudeMode",
     "Allocation",
+    "Cell",
+    "CellCoverage",
     "CoverageSet",
     "CrsInfo",
+    "Decomposition",
     "ExportFormat",
     "FleetUnit",
     "FlightPhase",
+    "GeoMultiPolygon",
     "GeoPoint",
     "GeoPolygon",
     "Leg",
@@ -751,14 +1061,21 @@ __all__ = [
     "MetricPolygon",
     "Mission",
     "MissionMetrics",
+    "MissionStatus",
     "Model",
     "NoFlyZone",
+    "Obstacle",
+    "OptimizationMode",
     "Payload",
     "PayloadKind",
     "PipelineResult",
     "PlanWarning",
     "QualityRequirement",
+    "Recommendation",
+    "RecommendationKind",
     "Scenario",
+    "Schedule",
+    "ScheduleEntry",
     "Severity",
     "Site",
     "SiteKind",

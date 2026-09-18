@@ -1,29 +1,42 @@
-"""Модель полёта (E4): ветер, время и энергия по фазам, выполнимость вылета.
+"""Модель полёта (E4): фазы, время, расход, выполнимость, 4D-траектория.
 
-Состояние смешанное, и это сделано намеренно:
+По ответам заказчика модель упрощена, а не усложнена:
 
-* `core.flight.wind` — РЕАЛИЗОВАНО. Здесь живёт инвариант 4 (метеорологическая
-  конвенция направления ветра) и треугольник скоростей. Ошибка знака в этом
-  месте даёт зеркальный план, поэтому кинематика написана сразу и покрыта
-  тестами.
-* `core.flight.cost` — ЗАГЛУШКА. Фазы полёта разделены, ветер в путевой
-  скорости учтён, энергия считается через среднюю мощность из ёмкости АКБ.
-  Не реализовано: настоящая геометрия разворота, схема «через галс» при
-  узком шаге, зависимость расхода от массы и высоты, снос на посадке.
-  TODO(E4) по коду.
+* `core.flight.wind` — ИНВАРИАНТ 4 (метеоконвенция) и треугольник скоростей.
+  Ветер определяет выполнимость — хватит ли воздушной скорости, чтобы держать
+  заданную путевую (№45), — и не входит во время и расход (№36).
+* `core.flight.cost` — вылет по фазам; на галсе и перелёте время — длина,
+  делённая на путевую скорость, которую держит автопилот; расход линеен по
+  времени, отсечка 20% (№34, №35); эшелон перелёта; разные площадки взлёта и
+  посадки (№29). Разворот самолёта — время по радиусу, петля не строится (№38).
+* `core.flight.track` — 4D-траектория и поиск сближений для расписания и
+  валидатора (№4, №37).
+
+Не реализовано: круг ожидания в воздухе (разведение сейчас — сдвигом старта
+на земле), маршрут захода на посадку самолёта (№30, P2).
 """
 
 from __future__ import annotations
 
-from core.flight.cost import build_sortie, estimate_sortie_duration_s, sortie_is_feasible
-from core.flight.wind import crab_angle_deg, crosswind_mps, ground_speed_mps, wind_vector
+from core.flight.cost import build_sortie, retime_sortie, sortie_is_feasible
+from core.flight.track import build_track, first_conflict
+from core.flight.wind import (
+    crab_angle_deg,
+    crosswind_mps,
+    ground_speed_mps,
+    required_airspeed_mps,
+    wind_vector,
+)
 
 __all__ = [
     "build_sortie",
+    "build_track",
     "crab_angle_deg",
     "crosswind_mps",
-    "estimate_sortie_duration_s",
+    "first_conflict",
     "ground_speed_mps",
+    "required_airspeed_mps",
+    "retime_sortie",
     "sortie_is_feasible",
     "wind_vector",
 ]

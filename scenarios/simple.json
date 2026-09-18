@@ -12,6 +12,7 @@
   ],
   "no_fly_zones": [],
   "airspace_boundary": null,
+  "altitude_corridor": { "max_altitude_agl_m": 700 },
   "sites": [
     {
       "id": "base",

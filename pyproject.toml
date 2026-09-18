@@ -10,17 +10,14 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 
-# Состав зависимостей ограничен разделом 3 PROJECT_BRIEF.md.
-# Добавление чего-либо сверх этого списка — только решением команды (AGENT.md §7).
+# Предпочтительный стек — PROJECT_BRIEF.md §3. Заказчик ограничений не ставит
+# (docs/customer_qa.md, №18); новая зависимость отмечается в current_state.md.
 dependencies = [
     "numpy>=1.26",
     "shapely>=2.0",
     "pyproj>=3.6",
     "pydantic>=2.6",
-    # ОТКЛОНЕНИЕ ОТ БРИФА §3: PyYAML в разрешённом списке не значится, но
-    # data/vehicles.yaml мандирован тем же брифом (§7) и его нужно чем-то читать.
-    # Лицензия MIT, зависимостей нет. Обратный путь — конвертировать каталог в
-    # JSON и убрать зависимость. См. docs/current_state.md §5, долг №11.
+    # Читает data/vehicles.yaml и data/survey_presets.yaml.
     "PyYAML>=6.0",
 ]
 
@@ -51,7 +48,9 @@ packages = [
     "core.flight",
     "core.transit",
     "core.allocate",
+    "core.deconflict",
     "core.validate",
+    "core.advise",
     "core.export",
     "api",
 ]

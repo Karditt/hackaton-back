@@ -5,6 +5,11 @@
 месте, в `wind_vector`, и больше нигде в проекте знак ветра не трогается.
 Перепутанный знак даёт зеркальный план и обнаруживается только на демонстрации.
 
+Роль ветра (заказчик, №45): на галсе автопилот держит ПУТЕВУЮ скорость,
+поэтому ветер не меняет время съёмки, а определяет выполнимость — хватит ли
+борту воздушной скорости (`required_airspeed_mps`). `ground_speed_mps`
+остаётся для случаев, когда задана воздушная скорость, а не путевая.
+
 Система координат: X рабочей проекции на восток, Y на север. Азимут — от
 севера по часовой стрелке, как принято в навигации.
 """
@@ -140,10 +145,30 @@ def ground_speed_mps(course_deg: float, airspeed_mps: float, wind: Wind) -> floa
     return speed
 
 
+def required_airspeed_mps(course_deg: float, ground_speed_mps: float, wind: Wind) -> float:
+    """Воздушная скорость, нужная, чтобы идти курсом с заданной путевой скоростью.
+
+    Треугольник скоростей наоборот: вектор воздушной скорости = вектор путевой
+    минус вектор ветра (куда дует). Против ветра нужно больше, по ветру меньше.
+
+    Args:
+        course_deg: путевой курс, градусы от севера по часовой стрелке.
+        ground_speed_mps: путевая скорость, которую держит автопилот, м/с.
+        wind: ветер, метеорологическая конвенция (откуда дует).
+
+    Returns:
+        Модуль воздушной скорости, м/с.
+    """
+    wind_x, wind_y = wind_vector(wind)
+    course_x, course_y = _course_unit(course_deg)
+    return math.hypot(ground_speed_mps * course_x - wind_x, ground_speed_mps * course_y - wind_y)
+
+
 __all__ = [
     "crab_angle_deg",
     "crosswind_mps",
     "ground_speed_mps",
     "headwind_mps",
+    "required_airspeed_mps",
     "wind_vector",
 ]
