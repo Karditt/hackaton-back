@@ -23,7 +23,14 @@ from core.catalog import load_catalog
 from core.errors import CoreError
 from core.export.writer import export_mission, format_for, output_path_for
 from core.pipeline import PlanningRun, run_pipeline
-from core.schemas import ExportFormat, PipelineResult, PlanWarning, Scenario, Severity
+from core.schemas import (
+    ExportFormat,
+    OptimizationMode,
+    PipelineResult,
+    PlanWarning,
+    Scenario,
+    Severity,
+)
 
 #: Подкоманды, которые не являются путём к сценарию.
 SUBCOMMANDS = ("plan", "export-schema", "assumptions")
@@ -71,23 +78,33 @@ def _print_grouped(label: str, warnings: list[PlanWarning], limit: int = 8) -> N
 def _print_report(run: PlanningRun) -> None:
     """Напечатать краткий отчёт о прогоне."""
     mission = run.mission
-    metrics = mission.metrics
-
-    print(f"  алгоритм        : {mission.algorithm} (α={mission.alpha}, seed={mission.seed})")
+    print(f"  статус          : {'ВЫПОЛНИМ' if mission.is_feasible() else 'НЕВЫПОЛНИМ'}")
+    print(f"  режим           : {mission.mode.value} (α={mission.alpha}, seed={mission.seed})")
+    print(f"  алгоритм        : {mission.algorithm}")
     print(f"  проекция        : EPSG:{mission.crs.epsg} — {mission.crs.name}")
-    print(f"  галсов          : {metrics.strips_covered} из {metrics.strips_planned}")
-    print(f"  вылетов / бортов: {metrics.sortie_count} / {metrics.vehicle_count}")
-    print(f"  makespan        : {metrics.makespan_s / 60:.1f} мин")
-    print(f"  суммарный налёт : {metrics.total_flight_time_s / 60:.1f} мин")
-    print(f"  дистанция       : {metrics.total_distance_m / 1000:.1f} км")
-    print(f"  целевая функция : {metrics.objective_value / 60:.1f} мин")
+
+    metrics = mission.metrics
+    if metrics is not None:
+        print(f"  подобластей     : {metrics.cells_covered} из {metrics.cells_planned}")
+        print(f"  вылетов / бортов: {metrics.sortie_count} / {metrics.vehicle_count}")
+        print(f"  срок (makespan) : {metrics.makespan_s / 60:.1f} мин")
+        print(f"  налёт           : {metrics.total_flight_time_s / 60:.1f} мин")
+        print(f"  ресурс          : {metrics.resource_s / 60:.1f} мин (налёт + циклы)")
+        print(f"  дистанция       : {metrics.total_distance_m / 1000:.1f} км")
+        if metrics.deadline_s is not None:
+            state = "выполнено" if metrics.deadline_met else "НЕ выполнено"
+            print(f"  дедлайн         : {metrics.deadline_s / 3600:.1f} ч — {state}")
+
+    if mission.reasons:
+        print(f"  причин          : {len(mission.reasons)}")
+        _print_grouped("ПРИЧИНА ", mission.reasons)
+    for item in mission.recommendations:
+        print(f"    [СОВЕТ {item.kind.value}] {item.message}")
 
     # PipelineResult.warnings() уже включает предупреждения миссии.
     warnings = run.result.warnings()
-    errors = [item for item in warnings if item.severity is Severity.ERROR]
     alerts = [item for item in warnings if item.severity is Severity.WARNING]
-    print(f"  предупреждений  : {len(alerts)}, ошибок: {len(errors)}")
-    _print_grouped("ОШИБКА  ", errors)
+    print(f"  предупреждений  : {len(alerts)}")
     _print_grouped("ВНИМАНИЕ", alerts)
 
     if mission.is_stub():
@@ -96,24 +113,22 @@ def _print_report(run: PlanningRun) -> None:
 
 
 def _write_outputs(run: PlanningRun, target: Path, batch: bool) -> list[Path]:
-    """Выгрузить план в файлы.
+    """Выгрузить итог в файлы.
 
-    В пакетном режиме и при указании каталога пишутся оба формата сразу:
-    GeoJSON для фронта и KML для стороннего ПО.
+    В пакетном режиме и при указании каталога пишутся все форматы сразу:
+    GeoJSON для фронта, KML для стороннего ПО, расписание в CSV.
     """
     written: list[Path] = []
     projector = run.work_area.projector
 
     directory_mode = batch or target.suffix == ""
     if directory_mode:
-        for export_format in (ExportFormat.GEOJSON, ExportFormat.KML):
+        for export_format in ExportFormat:
             path = output_path_for(target, run.scenario.id, export_format)
-            written.append(
-                export_mission(run.mission, run.scenario, projector, path, export_format)
-            )
+            written.append(export_mission(run.result, run.scenario, projector, path, export_format))
     else:
         written.append(
-            export_mission(run.mission, run.scenario, projector, target, format_for(target))
+            export_mission(run.result, run.scenario, projector, target, format_for(target))
         )
     return written
 
@@ -146,7 +161,10 @@ def command_plan(args: argparse.Namespace) -> int:
         print(f"\n=== {path.name} ===")
         try:
             scenario = load_scenario(path)
-            run = run_pipeline(scenario, catalog=catalog, alpha=args.alpha, seed=args.seed)
+            mode = OptimizationMode(args.mode) if args.mode else None
+            run = run_pipeline(
+                scenario, catalog=catalog, mode=mode, alpha=args.alpha, seed=args.seed
+            )
         except CoreError as error:
             failures += 1
             print(f"  ПРОВАЛ: {error}", file=sys.stderr)
@@ -193,7 +211,10 @@ def command_export_schema(args: argparse.Namespace) -> int:
 
 
 def command_assumptions(args: argparse.Namespace) -> int:
-    """Напечатать реестр допущений — основу раздела «известные ограничения»."""
+    """Напечатать реестр допущений — основу раздела «известные ограничения».
+
+    Знак «!» — допущение команды, «*» — значение заказчика.
+    """
     items = (
         assumptions_module.team_assumptions()
         if args.team_only
@@ -219,13 +240,20 @@ def command_assumptions(args: argparse.Namespace) -> int:
         )
         return 0
 
+    markers = {
+        assumptions_module.Kind.TEAM: "!",
+        assumptions_module.Kind.CUSTOMER: "*",
+    }
     for item in items:
-        marker = "!" if item.is_team_assumption() else " "
+        marker = markers.get(item.kind, " ")
         print(f"{marker} {item.name} = {item.value} [{item.unit}]")
         print(f"    источник: {item.source}")
         if item.rationale:
             print(f"    почему  : {item.rationale}")
-    print(f"\nВсего {len(items)}; знаком ! помечены допущения команды, а не источники.")
+    print(
+        f"\nВсего {len(items)}; «!» — допущение команды, «*» — значение заказчика "
+        "(docs/customer_qa.md)."
+    )
     return 0
 
 
@@ -241,7 +269,12 @@ def build_parser() -> argparse.ArgumentParser:
     plan.add_argument("scenario", nargs="?", help="путь к JSON-сценарию")
     plan.add_argument("-o", "--output", default="out", help="файл или каталог для выгрузки")
     plan.add_argument("--batch", help="каталог со сценариями: прогнать все подряд")
-    plan.add_argument("--alpha", type=float, help="вес makespan 0..1, перекрывает сценарий")
+    plan.add_argument(
+        "--mode",
+        choices=[mode.value for mode in OptimizationMode],
+        help="режим оптимизации, перекрывает сценарий",
+    )
+    plan.add_argument("--alpha", type=float, help="вес срока в свёртке 0..1 (фронт Парето)")
     plan.add_argument("--seed", type=int, help="зерно ГПСЧ, перекрывает сценарий")
     plan.add_argument("--vehicles", help="путь к каталогу техники вместо data/vehicles.yaml")
     plan.add_argument("--dump-stages", help="каталог для выгрузки промежуточных стадий")

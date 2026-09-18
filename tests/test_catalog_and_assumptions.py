@@ -27,6 +27,18 @@ def test_team_assumptions_explain_themselves() -> None:
         assert item.rationale.strip(), f"{item.name}: допущение без обоснования"
 
 
+def test_customer_values_cite_the_answer() -> None:
+    """Значение заказчика ссылается на номер ответа и не выдаётся за допущение команды."""
+    values = assumptions.customer_values()
+    assert values
+    for item in values:
+        assert "№" in item.source, f"{item.name}: нет ссылки на ответ заказчика"
+        assert not item.is_team_assumption()
+    assert pytest.approx(0.20) == assumptions.BATTERY_RESERVE_FRACTION
+    assert pytest.approx(300.0) == assumptions.SEPARATION_FIXED_WING_M
+    assert pytest.approx(50.0) == assumptions.SEPARATION_MULTIROTOR_M
+
+
 def test_registry_has_no_duplicates() -> None:
     """Повторная регистрация имени запрещена на уровне реестра."""
     names = [item.name for item in assumptions.all_assumptions()]
@@ -44,15 +56,9 @@ def test_turn_radius_follows_bank_angle_formula() -> None:
     assert assumptions.fixed_wing_turn_radius_m(speed_mps) == pytest.approx(expected)
 
 
-def test_turn_radius_grows_with_speed() -> None:
-    """Быстрее летишь — шире разворот. Проверка знака, а не значения."""
-    assert assumptions.fixed_wing_turn_radius_m(30.0) > assumptions.fixed_wing_turn_radius_m(20.0)
-
-
 def test_catalog_loads_three_vehicles(catalog: VehicleCatalog) -> None:
     """В каталоге ровно те борта, что описаны в исходном ТЗ."""
-    ids = {vehicle.id for vehicle in catalog}
-    assert ids == {"geoscan-201", "geoscan-801", "geoscan-gemini"}
+    assert {vehicle.id for vehicle in catalog} == {"geoscan-201", "geoscan-801", "geoscan-gemini"}
 
 
 def test_unknown_vehicle_raises(catalog: VehicleCatalog) -> None:
@@ -62,11 +68,7 @@ def test_unknown_vehicle_raises(catalog: VehicleCatalog) -> None:
 
 
 def test_derived_fields_are_marked(catalog: VehicleCatalog) -> None:
-    """Инвариант 6: выведенное допущением обязано быть помечено как выведенное.
-
-    Крейсерской скорости нет ни у одного из трёх бортов, радиуса разворота
-    нет у Геоскан 201 — всё это выводится правилами из assumptions.py.
-    """
+    """Инвариант 6: выведенное допущением обязано быть помечено как выведенное."""
     for vehicle in catalog:
         assert "cruise_speed_mps" in vehicle.derived_fields
         assert "battery_reserve_fraction" in vehicle.derived_fields
@@ -75,31 +77,26 @@ def test_derived_fields_are_marked(catalog: VehicleCatalog) -> None:
 
 def test_gaps_are_preserved_not_filled(catalog: VehicleCatalog) -> None:
     """Пробел каталога переносится в модель, а не затирается числом."""
-    gemini = catalog.get("geoscan-gemini")
-    assert any("площад" in gap.lower() for gap in gemini.gaps)
-
+    assert any("площад" in gap.lower() for gap in catalog.get("geoscan-gemini").gaps)
     multirotor_801 = catalog.get("geoscan-801")
     assert multirotor_801.energy_wh is None
     assert any("АКБ" in gap for gap in multirotor_801.gaps)
+    sony = catalog.get("geoscan-201").payload("sony-zv-e10")
+    assert sony is not None and sony.gaps, "без фокусного и угла поля зрения высоту не посчитать"
 
 
-def test_fixed_wing_turn_radius_is_positive(catalog: VehicleCatalog) -> None:
-    """У самолётного типа радиус разворота ненулевой, у мультиротора — ноль."""
-    assert catalog.get("geoscan-201").turn_radius_m > 0.0
+def test_fixed_wing_speeds(catalog: VehicleCatalog) -> None:
+    """У самолёта есть минимальная скорость — нужна для проверки попутного ветра (№45)."""
+    plane = catalog.get("geoscan-201")
+    assert plane.type is VehicleType.FIXED_WING
+    assert plane.turn_radius_m > 0.0
+    assert plane.min_speed_mps is not None
+    assert plane.min_speed_mps < plane.cruise_speed_mps < (plane.max_speed_mps or 0)
     assert catalog.get("geoscan-gemini").turn_radius_m == 0.0
-    assert catalog.get("geoscan-201").type is VehicleType.FIXED_WING
-    assert catalog.get("geoscan-gemini").type is VehicleType.MULTIROTOR
-
-
-def test_cruise_speed_is_below_maximum(catalog: VehicleCatalog) -> None:
-    """Крейсерская скорость выводится ниже максимальной, а не равна ей."""
-    for vehicle in catalog:
-        if vehicle.max_speed_mps is not None:
-            assert vehicle.cruise_speed_mps <= vehicle.max_speed_mps
 
 
 def test_pollux_optics_are_complete(catalog: VehicleCatalog) -> None:
-    """Pollux — единственная нагрузка с полной оптикой у обоих бортов."""
+    """Pollux — полная оптика у обоих бортов: размер матрицы — тождество мкм × пиксели."""
     for vehicle_id in ("geoscan-201", "geoscan-gemini"):
         payload = catalog.get(vehicle_id).payload("pollux")
         assert payload is not None

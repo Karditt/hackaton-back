@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 from pathlib import Path
 from typing import Any
@@ -66,11 +67,43 @@ def _first(seq: Any, index: int) -> float | None:
     return None
 
 
+def _megapixels(raw: dict[str, Any]) -> float | None:
+    """Число мегапикселей кадра. Диапазон сводится к одной границе по правилу реестра."""
+    value = raw.get("resolution_mp")
+    if isinstance(value, (list, tuple)) and value:
+        numbers = [float(item) for item in value]
+        return min(numbers) if assumptions.CAMERA_MEGAPIXELS_PICK == "min" else max(numbers)
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
+def _aspect_ratio(
+    fov_h: float | None, fov_v: float | None, sensor_w: float | None, sensor_h: float | None
+) -> float | None:
+    """Соотношение сторон кадра «ширина / высота».
+
+    По углам поля зрения: tg(θг/2) / tg(θв/2) — центральная проекция, в которой
+    ширина кадра на местности пропорциональна тангенсу половины угла. Иначе по
+    размерам матрицы.
+    """
+    if fov_h and fov_v:
+        return math.tan(math.radians(fov_h) / 2.0) / math.tan(math.radians(fov_v) / 2.0)
+    if sensor_w and sensor_h:
+        return sensor_w / sensor_h
+    return None
+
+
 def _payload(raw: dict[str, Any]) -> Payload:
     """Собрать модель нагрузки из записи каталога.
 
     Размер матрицы восстанавливается из размера пикселя и разрешения, если
     он не указан напрямую: это тождество (мм = мкм × пиксели), а не допущение.
+
+    Размер кадра в пикселях, если документ даёт только мегапиксели, выводится
+    как ширина = √(Мп · 10⁶ · k), высота = ширина / k, где k — соотношение
+    сторон по углам поля зрения или по матрице. Такие поля перечисляются в
+    `derived_fields` (инвариант 6: вывод по формуле, а не выдумка).
 
     Args:
         raw: словарь одной записи `payloads:`.
@@ -86,6 +119,19 @@ def _payload(raw: dict[str, Any]) -> Payload:
     sensor_mm = raw.get("sensor_mm")
     sensor_width_mm = _first(sensor_mm, 0)
     sensor_height_mm = _first(sensor_mm, 1)
+
+    fov_h = raw.get("fov_horizontal_deg")
+    fov_v = raw.get("fov_vertical_deg")
+    fov_h = float(fov_h) if fov_h is not None else None
+    fov_v = float(fov_v) if fov_v is not None else None
+
+    derived: list[str] = []
+    megapixels = _megapixels(raw)
+    aspect = _aspect_ratio(fov_h, fov_v, sensor_width_mm, sensor_height_mm)
+    if width_px is None and megapixels and aspect:
+        width_px = float(round(math.sqrt(megapixels * 1.0e6 * aspect)))
+        height_px = float(round(width_px / aspect))
+        derived.extend(["image_width_px", "image_height_px"])
 
     pixel_size_um = raw.get("pixel_size_um")
     if sensor_width_mm is None and pixel_size_um and width_px and height_px:
@@ -108,8 +154,11 @@ def _payload(raw: dict[str, Any]) -> Payload:
     gaps: list[str] = []
     if focal_gap:
         gaps.append(focal_gap)
-    if sensor_width_mm is None:
-        gaps.append("размер матрицы не указан в источнике — GSD по этой нагрузке не считается")
+    if fov_h is None and (focal_length_mm is None or sensor_width_mm is None):
+        gaps.append(
+            "нет ни угла поля зрения, ни пары «фокусное расстояние + размер матрицы» — "
+            "высоту съёмки по GSD посчитать не из чего"
+        )
     if width_px is None:
         gaps.append("разрешение в пикселях не указано в источнике")
 
@@ -128,8 +177,11 @@ def _payload(raw: dict[str, Any]) -> Payload:
         image_width_px=int(width_px) if width_px else None,
         image_height_px=int(height_px) if height_px else None,
         focal_length_mm=focal_length_mm,
+        fov_horizontal_deg=fov_h,
+        fov_vertical_deg=fov_v,
         mass_kg=_value(raw.get("mass_kg")),
         gaps=gaps,
+        derived_fields=derived,
     )
 
 
@@ -183,9 +235,10 @@ def _turn_radius(
 ) -> float:
     """Минимальный радиус разворота, метры.
 
-    У Геоскан 201 параметра нет в предоставленной выдержке руководства — это
-    пробел, блокирующий E4. Закрывается выводом из скорости и допустимого
-    крена (`assumptions.fixed_wing_turn_radius_m`), а не выдуманным числом.
+    У Геоскан 201 параметра нет в предоставленной выдержке руководства.
+    Закрывается выводом из скорости и допустимого крена
+    (`assumptions.fixed_wing_turn_radius_m`), а не выдуманным числом. Нужен для
+    ширины зоны манёвра и времени разворота.
     """
     radius, gap = _node(raw.get("turn_radius_m"))
     if radius is not None:
@@ -239,7 +292,8 @@ def _vehicle(raw: dict[str, Any]) -> Vehicle:
 
     payloads = [_payload(item) for item in raw.get("payloads", [])]
 
-    derived.extend(["battery_reserve_fraction", "battery_swap_time_s"])
+    # Отсечка заряда — значение заказчика (№34), а не ТТХ производителя.
+    derived.append("battery_reserve_fraction")
 
     return Vehicle(
         id=raw["id"],
@@ -248,6 +302,7 @@ def _vehicle(raw: dict[str, Any]) -> Vehicle:
         cruise_speed_mps=cruise_mps,
         max_speed_mps=_value(raw.get("airspeed_max_mps"))
         or _value(raw.get("max_horizontal_speed_mps")),
+        min_speed_mps=_value(raw.get("airspeed_min_mps")),
         endurance_s=float(endurance_s),
         max_wind_mps=float(max_wind_mps),
         turn_radius_m=turn_radius_m,
@@ -256,7 +311,6 @@ def _vehicle(raw: dict[str, Any]) -> Vehicle:
         max_range_m=_value(raw.get("max_range_m")),
         energy_wh=energy_wh,
         battery_reserve_fraction=assumptions.BATTERY_RESERVE_FRACTION,
-        battery_swap_time_s=assumptions.BATTERY_SWAP_TIME_S,
         takeoff_mode=_value(raw.get("takeoff_mode")),
         landing_mode=_value(raw.get("landing_mode")),
         payloads=payloads,

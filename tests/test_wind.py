@@ -16,6 +16,7 @@ from core.flight.wind import (
     crosswind_mps,
     ground_speed_mps,
     headwind_mps,
+    required_airspeed_mps,
     wind_vector,
 )
 from core.schemas import Wind
@@ -87,3 +88,16 @@ def test_calm_air_ground_speed_equals_airspeed() -> None:
     calm = Wind(speed_mps=0.0, direction_deg=0.0)
     for course in (0.0, 45.0, 137.0, 270.0, 359.0):
         assert ground_speed_mps(course, 12.0, calm) == pytest.approx(12.0)
+
+
+def test_headwind_needs_more_airspeed_to_hold_ground_speed() -> None:
+    """№45: автопилот держит путевую скорость — против ветра нужна большая воздушная."""
+    wind = Wind(speed_mps=5.0, direction_deg=0.0)  # северный: дует на юг
+    assert required_airspeed_mps(0.0, 10.0, wind) == pytest.approx(15.0)  # на север — против
+    assert required_airspeed_mps(180.0, 10.0, wind) == pytest.approx(5.0)  # на юг — по ветру
+
+
+def test_crosswind_airspeed_is_the_hypotenuse() -> None:
+    """Боковой ветер: воздушная скорость — гипотенуза путевой и ветра."""
+    wind = Wind(speed_mps=6.0, direction_deg=270.0)
+    assert required_airspeed_mps(0.0, 8.0, wind) == pytest.approx(10.0)

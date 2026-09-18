@@ -11,8 +11,14 @@ export type {
   FlightPhase,
   Mission,
   MissionMetrics,
+  MissionStatus,
+  OptimizationMode,
   PipelineResult,
   PlanWarning,
+  Recommendation,
+  RecommendationKind,
+  Schedule,
+  ScheduleEntry,
   Severity,
 } from '../types/schema';
 
@@ -31,6 +37,8 @@ export type JobStatus = {
   created_at: string;
   finished_at: string | null;
   mission_id: string | null;
+  /** Итог расчёта: `feasible` или `infeasible`; невыполнимость — не сбой задачи. */
+  mission_status: string | null;
 };
 
 export type GeoJsonFeature = {
@@ -39,7 +47,7 @@ export type GeoJsonFeature = {
   properties: Record<string, unknown>;
 };
 
-/** Выгрузка плана в WGS84 по RFC 7946 — её строит `core/export`, фронт только рисует. */
+/** Выгрузка в WGS84 по RFC 7946 — её строит `core/export`, фронт только рисует. */
 export type GeoJsonDocument = {
   type: 'FeatureCollection';
   features: GeoJsonFeature[];

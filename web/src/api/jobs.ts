@@ -7,12 +7,22 @@
  */
 
 import { API_BASE, request } from './http';
-import type { GeoJsonDocument, JobStatus, PipelineResult } from './types';
+import type { GeoJsonDocument, JobStatus, OptimizationMode, PipelineResult } from './types';
 
-export type ExportFormat = 'geojson' | 'kml';
+/** Форматы выгрузки: полётное задание или отчёт, расписание — CSV (docs/export_format.md). */
+export type ExportFormat = 'geojson' | 'kml' | 'schedule';
 
-export async function startPlanning(scenarioId: string, alpha: number): Promise<JobStatus> {
-  const query = new URLSearchParams({ alpha: String(alpha) });
+/**
+ * Поставить сценарий в расчёт.
+ *
+ * @param scenarioId идентификатор сохранённого сценария
+ * @param mode режим оптимизации: минимум срока или минимум ресурса (заказчик, №23)
+ */
+export async function startPlanning(
+  scenarioId: string,
+  mode: OptimizationMode,
+): Promise<JobStatus> {
+  const query = new URLSearchParams({ mode });
   return request<JobStatus>(`/scenarios/${encodeURIComponent(scenarioId)}/plan?${query}`, {
     method: 'POST',
   });
@@ -27,7 +37,7 @@ export async function getResult(jobId: string): Promise<PipelineResult> {
   return request<PipelineResult>(`/jobs/${jobId}/result`);
 }
 
-/** Выгрузка плана в GeoJSON — её же рисует карта. */
+/** Выгрузка в GeoJSON — её же рисует карта: план или отчёт о невыполнимости. */
 export async function fetchMissionGeoJson(jobId: string): Promise<GeoJsonDocument> {
   return request<GeoJsonDocument>(`/jobs/${jobId}/export?format=geojson`);
 }

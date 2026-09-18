@@ -20,7 +20,7 @@ from typing import Any
 
 from core.errors import CoreError
 from core.pipeline import PlanningRun, run_pipeline
-from core.schemas import Scenario
+from core.schemas import OptimizationMode, Scenario
 
 
 class JobState(str, Enum):
@@ -56,6 +56,7 @@ class Job:
             "created_at": self.created_at.isoformat(),
             "finished_at": self.finished_at.isoformat() if self.finished_at else None,
             "mission_id": self.run.mission.id if self.run else None,
+            "mission_status": self.run.mission.status.value if self.run else None,
         }
 
 
@@ -82,7 +83,11 @@ class JobRegistry:
         return sorted(self._jobs.values(), key=lambda job: job.created_at, reverse=True)
 
     def submit(
-        self, scenario: Scenario, alpha: float | None = None, seed: int | None = None
+        self,
+        scenario: Scenario,
+        mode: OptimizationMode | None = None,
+        alpha: float | None = None,
+        seed: int | None = None,
     ) -> Job:
         """Поставить сценарий в расчёт.
 
@@ -95,7 +100,8 @@ class JobRegistry:
 
         Args:
             scenario: сценарий.
-            alpha: вес makespan, перекрывает сценарий.
+            mode: режим оптимизации, перекрывает сценарий.
+            alpha: вес срока в свёртке, перекрывает сценарий.
             seed: зерно ГПСЧ, перекрывает сценарий.
 
         Returns:
@@ -103,18 +109,28 @@ class JobRegistry:
         """
         job = Job(id=f"job-{uuid.uuid4().hex[:8]}", scenario_id=scenario.id)
         self._jobs[job.id] = job
-        task = asyncio.create_task(self._execute(job, scenario, alpha, seed))
+        task = asyncio.create_task(self._execute(job, scenario, mode, alpha, seed))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         return job
 
     async def _execute(
-        self, job: Job, scenario: Scenario, alpha: float | None, seed: int | None
+        self,
+        job: Job,
+        scenario: Scenario,
+        mode: OptimizationMode | None,
+        alpha: float | None,
+        seed: int | None,
     ) -> None:
-        """Выполнить расчёт и записать результат в задачу."""
+        """Выполнить расчёт и записать результат в задачу.
+
+        Невыполнимое задание — не сбой: задача завершается состоянием DONE, а
+        статус плана `infeasible` и причины лежат в результате. FAILED — только
+        ошибка входа или внутренняя ошибка.
+        """
         job.state = JobState.RUNNING
         try:
-            run = await asyncio.to_thread(run_pipeline, scenario, None, alpha, seed)
+            run = await asyncio.to_thread(run_pipeline, scenario, None, mode, alpha, seed)
         except CoreError as error:
             job.state = JobState.FAILED
             job.error = str(error)

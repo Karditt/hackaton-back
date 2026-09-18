@@ -1,21 +1,38 @@
 import type { PipelineResult } from '../../api';
-import { kilometres, minutes } from '../../shared/format';
+import { hours, kilometres, minutes } from '../../shared/format';
 import styles from './result.module.css';
 
 type Props = { result: PipelineResult };
 
+const MODE_LABEL: Record<string, string> = {
+  min_makespan: 'минимум срока',
+  min_resource: 'минимум ресурса',
+};
+
+/** Метрики выполнимого плана (PROJECT_BRIEF.md §4.3). */
 export function MetricsList({ result }: Props) {
   const { mission, crs } = result;
-  const { metrics } = mission;
+  const metrics = mission.metrics;
+  if (!metrics) return null;
+
   const rows: [label: string, value: string][] = [
+    ['Режим', MODE_LABEL[metrics.mode] ?? metrics.mode],
     ['Алгоритм', mission.algorithm],
-    ['Время работ (makespan)', minutes(metrics.makespan_s)],
-    ['Суммарный налёт', minutes(metrics.total_flight_time_s)],
-    ['Дистанция', kilometres(metrics.total_distance_m)],
+    ['Срок (makespan)', hours(metrics.makespan_s)],
+    ['Ресурс: налёт + циклы', hours(metrics.resource_s)],
+    ['Суммарный налёт', hours(metrics.total_flight_time_s)],
+    ['Циклов взлёт-посадка', String(metrics.cycle_count)],
     ['Вылетов / бортов', `${metrics.sortie_count} / ${metrics.vehicle_count}`],
-    ['Галсов покрыто', `${metrics.strips_covered} из ${metrics.strips_planned}`],
+    ['Подобластей снято', `${metrics.cells_covered} из ${metrics.cells_planned}`],
+    ['Дистанция', kilometres(metrics.total_distance_m)],
     ['Проекция', `EPSG:${crs.epsg}`],
   ];
+  if (metrics.deadline_s != null) {
+    rows.push([
+      'Ограничение по сроку',
+      `${minutes(metrics.deadline_s)} — ${metrics.deadline_met ? 'укладываемся' : 'не укладываемся'}`,
+    ]);
+  }
 
   return (
     <dl className={styles.metrics}>

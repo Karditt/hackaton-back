@@ -1,38 +1,118 @@
-"""Рабочая маска области: где вообще разрешено летать и снимать.
-
-Маска — это область съёмки, из которой вычтены забуференные запретные зоны и
-которая обрезана по границе разрешённого воздушного пространства. Дальше по
-конвейеру галсы строятся только внутри маски.
+"""Рабочая область: сценарий в метрах, зоны, препятствия, коридор, маска съёмки.
 
 Вся геометрия здесь — метры (инвариант 1).
+
+Запретные зоны — пространственно-временные (заказчик, №40): полигон, высотный
+диапазон над поверхностью и окно действия. Высотные препятствия — отдельный
+слой (№2). Маска съёмки — область, из которой вычтено то, что мешает снимать
+на высоте съёмки: постоянные зоны этого высотного диапазона и препятствия
+выше высоты съёмки за вычетом запаса. Временные зоны из маски не вычитаются:
+под ними снимать надо, но вне окна действия — это забота расписания (E14).
 """
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 from shapely.geometry import MultiPolygon, Point, Polygon
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 
 from core import assumptions
-from core.errors import GeometryError
-from core.geo.project import Projector
-from core.schemas import CrsInfo, MetricPoint, PlanWarning, Scenario, Severity, Site, Stage
+from core.errors import GeometryError, ScenarioError
+from core.geo.crs import pick_working_crs
+from core.geo.project import Projector, polygons_of
+from core.schemas import (
+    CrsInfo,
+    MetricPoint,
+    NoFlyZone,
+    PlanWarning,
+    Scenario,
+    Severity,
+    Stage,
+)
+
+_M2_PER_KM2 = 1.0e6
+
+
+def as_utc(moment: datetime) -> datetime:
+    """Момент времени с часовым поясом; время без пояса считается UTC."""
+    return moment if moment.tzinfo is not None else moment.replace(tzinfo=timezone.utc)
+
+
+@dataclass(frozen=True)
+class ZoneArea:
+    """Запретная зона в метрах, с высотами и окном действия."""
+
+    id: str
+    name: str
+    footprint: BaseGeometry
+    """Полигон зоны, метры."""
+    buffered: BaseGeometry
+    """Полигон с буфером безопасности `NFZ_BUFFER_M`, метры."""
+    inner: BaseGeometry
+    """Буфер, уменьшенный на допуск касания — для проверок пересечения."""
+    min_alt_m: float
+    max_alt_m: float
+    active_from_s: float
+    """Начало действия от начала работ, секунды; −∞ — действует всегда."""
+    active_to_s: float
+    """Конец действия от начала работ, секунды; +∞ — действует всегда."""
+
+    @property
+    def permanent(self) -> bool:
+        """True — зона без окна действия."""
+        return math.isinf(self.active_from_s) and math.isinf(self.active_to_s)
+
+    def blocks_altitude(self, low_m: float, high_m: float) -> bool:
+        """Запрещает ли зона полёт в диапазоне высот [low, high], метры AGL."""
+        return low_m < self.max_alt_m and high_m > self.min_alt_m
+
+    def active_during(self, start_s: float, end_s: float) -> bool:
+        """Действует ли зона хотя бы часть интервала [start, end], секунды."""
+        return start_s < self.active_to_s and end_s > self.active_from_s
+
+
+@dataclass(frozen=True)
+class ObstacleArea:
+    """Высотное препятствие в метрах."""
+
+    id: str
+    name: str
+    footprint: BaseGeometry
+    """Точка или полигон препятствия, метры."""
+    buffered: BaseGeometry
+    """Препятствие с горизонтальным буфером `OBSTACLE_BUFFER_M`, метры."""
+    inner: BaseGeometry
+    """Буфер, уменьшенный на допуск касания — для проверок пересечения."""
+    height_m: float
+
+    @property
+    def safe_altitude_m(self) -> float:
+        """Высота, выше которой пролёт над препятствием безопасен, м AGL."""
+        return self.height_m + assumptions.OBSTACLE_VERTICAL_CLEARANCE_M
+
+    def blocks_altitude(self, low_m: float) -> bool:
+        """Мешает ли препятствие полёту на высоте от `low_m` и выше."""
+        return low_m < self.safe_altitude_m
 
 
 @dataclass
 class WorkArea:
-    """Геометрия сценария, переведённая в метры и подготовленная к покрытию."""
+    """Геометрия сценария, переведённая в метры."""
 
     crs: CrsInfo
     projector: Projector
     area: BaseGeometry
-    """Исходная область съёмки, метры."""
-    mask: BaseGeometry
-    """Рабочая маска: область минус запретные зоны, обрезанная по воздушному пространству."""
-    no_fly: BaseGeometry
-    """Объединение забуференных запретных зон, метры. Пустая геометрия, если зон нет."""
+    """Исходная область съёмки (полигон или мультиполигон), метры."""
+    airspace: BaseGeometry | None
+    """Граница разрешённого воздушного пространства, метры. None — не задана."""
+    zones: list[ZoneArea]
+    obstacles: list[ObstacleArea]
+    corridor_max_m: float
+    """Верхняя граница коридора высот, м AGL."""
     sites: dict[str, MetricPoint] = field(default_factory=dict)
     """Площадки взлёта-посадки в метрах, по идентификаторам."""
     warnings: list[PlanWarning] = field(default_factory=list)
@@ -41,11 +121,6 @@ class WorkArea:
     def area_m2(self) -> float:
         """Площадь исходной области съёмки, м²."""
         return float(self.area.area)
-
-    @property
-    def mask_m2(self) -> float:
-        """Площадь рабочей маски, м²."""
-        return float(self.mask.area)
 
     def site(self, site_id: str) -> MetricPoint:
         """Площадка по идентификатору, метры.
@@ -58,6 +133,36 @@ class WorkArea:
         except KeyError as exc:
             raise GeometryError(f"Площадка {site_id!r} отсутствует в сценарии") from exc
 
+    def zones_blocking(
+        self, low_m: float, high_m: float, permanent_only: bool, inner: bool = False
+    ) -> BaseGeometry:
+        """Объединение забуференных зон, запрещающих высоты [low, high].
+
+        Args:
+            low_m: нижняя граница диапазона высот, м AGL.
+            high_m: верхняя граница диапазона высот, м AGL.
+            permanent_only: True — только зоны без окна действия.
+            inner: True — буфер за вычетом допуска касания (для проверок).
+
+        Returns:
+            Геометрия в метрах; пустая, если таких зон нет.
+        """
+        parts = [
+            zone.inner if inner else zone.buffered
+            for zone in self.zones
+            if zone.blocks_altitude(low_m, high_m) and (zone.permanent or not permanent_only)
+        ]
+        return unary_union(parts) if parts else Polygon()
+
+    def obstacles_blocking(self, low_m: float, inner: bool = False) -> BaseGeometry:
+        """Объединение забуференных препятствий, мешающих полёту на высоте `low_m`."""
+        parts = [
+            item.inner if inner else item.buffered
+            for item in self.obstacles
+            if item.blocks_altitude(low_m)
+        ]
+        return unary_union(parts) if parts else Polygon()
+
 
 def _as_polygonal(geometry: BaseGeometry, what: str) -> BaseGeometry:
     """Оставить от геометрии только полигональную часть.
@@ -65,72 +170,186 @@ def _as_polygonal(geometry: BaseGeometry, what: str) -> BaseGeometry:
     Разность полигонов может дать коллекцию с обрывками линий на общих
     границах — такие обрывки не имеют площади и мешают дальнейшим операциям.
     """
-    if geometry.is_empty:
-        raise GeometryError(f"{what}: после вычитания не осталось площади")
-    if isinstance(geometry, (Polygon, MultiPolygon)):
-        return geometry
-    parts = [geom for geom in getattr(geometry, "geoms", []) if isinstance(geom, Polygon)]
+    parts = polygons_of(geometry)
     if not parts:
-        raise GeometryError(f"{what}: результат не содержит полигонов")
+        raise GeometryError(f"{what}: не осталось площади")
     return MultiPolygon(parts) if len(parts) > 1 else parts[0]
 
 
-def build_work_area(scenario: Scenario, buffer_m: float | None = None) -> WorkArea:
-    """Перевести сценарий в метры и построить рабочую маску.
+def _zone_window_s(
+    zone: NoFlyZone, start_time: datetime | None, warnings: list[PlanWarning]
+) -> tuple[float, float]:
+    """Окно действия зоны в секундах от начала работ.
 
-    Порядок операций: проекция → буфер вокруг запретных зон → вычитание →
-    обрезка по воздушному пространству.
+    Без времени начала работ окно не с чем сопоставить. Тогда зона считается
+    действующей всегда — это консервативно и безопасно, но пользователь
+    предупреждается.
+    """
+    if zone.is_permanent():
+        return -math.inf, math.inf
+    if start_time is None:
+        warnings.append(
+            PlanWarning(
+                code="geo.temporal_zone_without_start",
+                severity=Severity.WARNING,
+                stage=Stage.GEO,
+                message=(
+                    f"Зона {zone.id!r} временная, но время начала работ не задано — "
+                    "зона считается действующей всегда. Укажите start_time сценария"
+                ),
+                context={"zone_id": zone.id},
+            )
+        )
+        return -math.inf, math.inf
+    origin = as_utc(start_time)
+    start = (
+        -math.inf
+        if zone.active_from is None
+        else (as_utc(zone.active_from) - origin).total_seconds()
+    )
+    end = math.inf if zone.active_to is None else (as_utc(zone.active_to) - origin).total_seconds()
+    return start, end
 
-    TODO(E1): высотные границы запретных зон (`min_alt_m` / `max_alt_m`)
-    игнорируются — зона считается запретной на всех высотах. Это
-    консервативно и потому безопасно, но отрезает допустимые пролёты сверху.
+
+def build_work_area(scenario: Scenario) -> WorkArea:
+    """Перевести сценарий в метры и проверить геометрию входа.
 
     Args:
         scenario: сценарий с координатами в WGS84.
-        buffer_m: буфер вокруг запретных зон, метры. None — значение из
-            `assumptions.NFZ_BUFFER_M`.
 
     Returns:
-        Подготовленная рабочая область.
+        Рабочая область: область, зоны, препятствия, коридор, площадки.
 
     Raises:
-        GeometryError: область вырождена либо рабочая маска пуста.
+        GeometryError: геометрия некорректна (самопересечение и т.п.) —
+            с указанием места.
+        ScenarioError: область больше допустимой (заказчик, №19).
     """
-    buffer = assumptions.NFZ_BUFFER_M if buffer_m is None else buffer_m
-
-    anchor_points = list(scenario.area.outer)
+    anchor_points = [point for polygon in scenario.area.polygons for point in polygon.outer]
     anchor_points.extend(site.position for site in scenario.sites)
     for zone in scenario.no_fly_zones:
         anchor_points.extend(zone.polygon.outer)
 
-    from core.geo.crs import pick_working_crs  # локальный импорт: избегаем цикла
-
     crs, _origin = pick_working_crs(anchor_points)
     projector = Projector(crs)
-
-    area = projector.polygon_to_metric(scenario.area)
     warnings: list[PlanWarning] = []
 
-    zones = [projector.polygon_to_metric(zone.polygon) for zone in scenario.no_fly_zones]
-    no_fly: BaseGeometry = (
-        unary_union([zone.buffer(buffer) for zone in zones]) if zones else Polygon()
+    area = projector.multipolygon_to_metric(scenario.area, "Область съёмки")
+    area_km2 = area.area / _M2_PER_KM2
+    if area_km2 > assumptions.MAX_SURVEY_AREA_KM2:
+        raise ScenarioError(
+            f"Область съёмки {area_km2:.0f} км² больше допустимых "
+            f"{assumptions.MAX_SURVEY_AREA_KM2:.0f} км². Проверьте единицы и координаты"
+        )
+
+    zones: list[ZoneArea] = []
+    for zone in scenario.no_fly_zones:
+        footprint = projector.polygon_to_metric(zone.polygon, f"Запретная зона {zone.id!r}")
+        active_from_s, active_to_s = _zone_window_s(zone, scenario.start_time, warnings)
+        buffered = footprint.buffer(assumptions.NFZ_BUFFER_M)
+        zones.append(
+            ZoneArea(
+                id=zone.id,
+                name=zone.name,
+                footprint=footprint,
+                buffered=buffered,
+                inner=buffered.buffer(-assumptions.BOUNDARY_TOLERANCE_M),
+                min_alt_m=zone.min_alt_m if zone.min_alt_m is not None else 0.0,
+                max_alt_m=zone.max_alt_m if zone.max_alt_m is not None else math.inf,
+                active_from_s=active_from_s,
+                active_to_s=active_to_s,
+            )
+        )
+
+    obstacles: list[ObstacleArea] = []
+    for obstacle in scenario.obstacles:
+        if obstacle.polygon is not None:
+            footprint: BaseGeometry = projector.polygon_to_metric(
+                obstacle.polygon, f"Препятствие {obstacle.id!r}"
+            )
+        else:
+            assert obstacle.position is not None
+            point = projector.to_metric(obstacle.position)
+            footprint = Point(point.x_m, point.y_m)
+        buffered = footprint.buffer(assumptions.OBSTACLE_BUFFER_M)
+        obstacles.append(
+            ObstacleArea(
+                id=obstacle.id,
+                name=obstacle.name,
+                footprint=footprint,
+                buffered=buffered,
+                inner=buffered.buffer(-assumptions.BOUNDARY_TOLERANCE_M),
+                height_m=obstacle.height_m,
+            )
+        )
+
+    airspace = (
+        projector.polygon_to_metric(scenario.airspace_boundary, "Граница воздушного пространства")
+        if scenario.airspace_boundary is not None
+        else None
     )
 
-    mask: BaseGeometry = area
-    if not no_fly.is_empty:
-        mask = _as_polygonal(mask.difference(no_fly), "Запретные зоны накрывают область съёмки")
+    sites: dict[str, MetricPoint] = {}
+    for site in scenario.sites:
+        point = projector.to_metric(site.position)
+        sites[site.id] = point
+        warnings.extend(_check_site(site.id, point, zones, airspace))
 
-    if scenario.airspace_boundary is not None:
-        airspace = projector.polygon_to_metric(scenario.airspace_boundary)
+    return WorkArea(
+        crs=crs,
+        projector=projector,
+        area=area,
+        airspace=airspace,
+        zones=zones,
+        obstacles=obstacles,
+        corridor_max_m=scenario.altitude_corridor.max_altitude_agl_m,
+        sites=sites,
+        warnings=warnings,
+    )
+
+
+def build_survey_mask(
+    work_area: WorkArea, low_alt_m: float, high_alt_m: float
+) -> tuple[BaseGeometry, list[PlanWarning]]:
+    """Маска съёмки: где можно снимать на высотах [low, high].
+
+    Порядок: область → минус постоянные зоны этого диапазона высот → минус
+    препятствия выше `low` с запасом → пересечение с разрешённым пространством.
+
+    Args:
+        work_area: рабочая область в метрах.
+        low_alt_m: нижняя высота съёмки флота, м AGL.
+        high_alt_m: верхняя высота съёмки флота, м AGL.
+
+    Returns:
+        Пара «маска в метрах, предупреждения».
+
+    Raises:
+        GeometryError: снимать негде — маска пуста.
+    """
+    warnings: list[PlanWarning] = []
+    mask: BaseGeometry = work_area.area
+
+    zones = work_area.zones_blocking(low_alt_m, high_alt_m, permanent_only=True)
+    if not zones.is_empty:
+        mask = _as_polygonal(mask.difference(zones), "Запретные зоны накрывают область съёмки")
+
+    obstacles = work_area.obstacles_blocking(low_alt_m)
+    if not obstacles.is_empty:
         mask = _as_polygonal(
-            mask.intersection(airspace),
+            mask.difference(obstacles), "Высотные препятствия накрывают область съёмки"
+        )
+
+    if work_area.airspace is not None:
+        mask = _as_polygonal(
+            mask.intersection(work_area.airspace),
             "Граница воздушного пространства не пересекается с областью съёмки",
         )
 
     if mask.area <= assumptions.GEOMETRY_TOLERANCE_M**2:
-        raise GeometryError("Рабочая маска пуста: снимать негде")
+        raise GeometryError("Маска съёмки пуста: снимать негде")
 
-    lost_fraction = 1.0 - mask.area / area.area if area.area > 0 else 0.0
+    lost_fraction = 1.0 - mask.area / work_area.area_m2 if work_area.area_m2 > 0 else 0.0
     if lost_fraction > 0.0:
         warnings.append(
             PlanWarning(
@@ -138,48 +357,54 @@ def build_work_area(scenario: Scenario, buffer_m: float | None = None) -> WorkAr
                 severity=Severity.INFO,
                 stage=Stage.GEO,
                 message=(
-                    f"Запретные зоны и границы воздушного пространства отсекли "
-                    f"{lost_fraction * 100:.1f}% площади съёмки "
-                    f"(буфер вокруг запретных зон {buffer:.0f} м)"
+                    f"Запретные зоны, препятствия и граница воздушного пространства "
+                    f"исключили из съёмки {lost_fraction * 100:.1f}% области (буфер вокруг "
+                    f"зон {assumptions.NFZ_BUFFER_M:.0f} м, вокруг препятствий "
+                    f"{assumptions.OBSTACLE_BUFFER_M:.0f} м)"
                 ),
             )
         )
-
-    sites: dict[str, MetricPoint] = {}
-    for site in scenario.sites:
-        point = projector.to_metric(site.position)
-        sites[site.id] = point
-        warnings.extend(_check_site(site, point, no_fly))
-
-    return WorkArea(
-        crs=crs,
-        projector=projector,
-        area=area,
-        mask=mask,
-        no_fly=no_fly,
-        sites=sites,
-        warnings=warnings,
-    )
+    return mask, warnings
 
 
-def _check_site(site: Site, point: MetricPoint, no_fly: BaseGeometry) -> list[PlanWarning]:
-    """Проверить, что площадка не оказалась внутри запретной зоны."""
-    if no_fly.is_empty:
-        return []
-    if not no_fly.contains(Point(point.x_m, point.y_m)):
-        return []
-    return [
-        PlanWarning(
-            code="geo.site_in_nfz",
-            severity=Severity.ERROR,
-            stage=Stage.GEO,
-            message=(
-                f"Площадка {site.id!r} находится внутри запретной зоны "
-                "(с учётом буфера безопасности) — взлёт с неё недопустим"
-            ),
-            context={"site_id": site.id},
+def _check_site(
+    site_id: str, point: MetricPoint, zones: list[ZoneArea], airspace: BaseGeometry | None
+) -> list[PlanWarning]:
+    """Предупредить, если площадка внутри запретной зоны или вне пространства."""
+    here = Point(point.x_m, point.y_m)
+    warnings: list[PlanWarning] = []
+    for zone in zones:
+        if zone.min_alt_m <= 0.0 and zone.buffered.contains(here):
+            warnings.append(
+                PlanWarning(
+                    code="geo.site_in_nfz",
+                    severity=Severity.ERROR,
+                    stage=Stage.GEO,
+                    message=(
+                        f"Площадка {site_id!r} внутри запретной зоны {zone.id!r} (с учётом "
+                        "буфера) — взлёт и посадка с неё нарушат зону"
+                    ),
+                    context={"site_id": site_id, "zone_id": zone.id},
+                )
+            )
+    if airspace is not None and not airspace.contains(here):
+        warnings.append(
+            PlanWarning(
+                code="geo.site_outside_airspace",
+                severity=Severity.ERROR,
+                stage=Stage.GEO,
+                message=f"Площадка {site_id!r} вне разрешённого воздушного пространства",
+                context={"site_id": site_id},
+            )
         )
-    ]
+    return warnings
 
 
-__all__ = ["WorkArea", "build_work_area"]
+__all__ = [
+    "ObstacleArea",
+    "WorkArea",
+    "ZoneArea",
+    "as_utc",
+    "build_survey_mask",
+    "build_work_area",
+]
