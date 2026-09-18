@@ -148,7 +148,8 @@ core/   чистый Python, ноль веб-зависимостей, собс�
 | [`AGENT.md`](AGENT.md) | Правила разработки, карта репозитория, чек-лист инвариантов |
 | [`PROJECT_BRIEF.md`](PROJECT_BRIEF.md) | Источник истины по архитектуре и ограничениям |
 | [`docs/current_state.md`](docs/current_state.md) | **Живой** статус: что работает, что заглушка |
-| [`docs/epics.md`](docs/epics.md) | Состав работ E0–E13 |
+| [`docs/epics.md`](docs/epics.md) | Состав работ E0–E15 |
+| [`docs/customer_qa.md`](docs/customer_qa.md) | Ответы заказчика на вопросы команды |
 | [`docs/architecture.md`](docs/architecture.md) | Обоснование решений |
 | [`docs/external_sources.md`](docs/external_sources.md) | ТТХ, подложка, спецификации форматов |
 
