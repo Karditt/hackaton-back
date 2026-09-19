@@ -111,8 +111,13 @@ def test_pass_next_to_tall_obstacle_is_caught(runs: dict[str, PlanningRun]) -> N
     run = runs["demo_100km2"]
     mast = next(item for item in run.work_area.obstacles if item.id == "mast-north")
     sorties = list(run.mission.sorties)
-    sorties[0] = _with_waypoint_at(
-        sorties[0], FlightPhase.STRIP, mast.footprint.centroid.x, mast.footprint.centroid.y
+    # Самолёт снимает выше мачты с запасом и пролетает над ней законно — берётся
+    # вылет, который снимает ниже её безопасной высоты.
+    index = next(
+        i for i, sortie in enumerate(sorties) if sortie.survey_altitude_m < mast.safe_altitude_m
+    )
+    sorties[index] = _with_waypoint_at(
+        sorties[index], FlightPhase.STRIP, mast.footprint.centroid.x, mast.footprint.centroid.y
     )
     assert "validate.obstacle" in _check(run, sorties)
 

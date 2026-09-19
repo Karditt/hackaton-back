@@ -68,13 +68,33 @@ def _first(seq: Any, index: int) -> float | None:
 
 
 def _megapixels(raw: dict[str, Any]) -> float | None:
-    """Число мегапикселей кадра. Диапазон сводится к одной границе по правилу реестра."""
+    """Число мегапикселей кадра.
+
+    Raises:
+        CatalogError: в записи диапазон мегапикселей. Это две камеры под одним
+            именем (например, Riebo R4 и R6) — их нужно разнести по разным
+            записям, а не выбирать границу за пользователя.
+    """
     value = raw.get("resolution_mp")
-    if isinstance(value, (list, tuple)) and value:
-        numbers = [float(item) for item in value]
-        return min(numbers) if assumptions.CAMERA_MEGAPIXELS_PICK == "min" else max(numbers)
+    if isinstance(value, (list, tuple)):
+        raise CatalogError(
+            f"Нагрузка {raw.get('id')!r}: диапазон мегапикселей {value} — "
+            "разнесите камеры по отдельным записям"
+        )
     if isinstance(value, (int, float)):
         return float(value)
+    return None
+
+
+def _sensor_by_format(raw: dict[str, Any]) -> tuple[float, float] | None:
+    """Размер матрицы по названию формата, мм × мм, если документ даёт только формат.
+
+    Формат «полный кадр» — это определение размера (36 × 24 мм), а не
+    допущение; остальные форматы без размеров не восстанавливаются.
+    """
+    if raw.get("sensor_format") == "full_frame":
+        width_mm, height_mm = assumptions.FULL_FRAME_SENSOR_MM
+        return float(width_mm), float(height_mm)
     return None
 
 
@@ -99,11 +119,16 @@ def _payload(raw: dict[str, Any]) -> Payload:
 
     Размер матрицы восстанавливается из размера пикселя и разрешения, если
     он не указан напрямую: это тождество (мм = мкм × пиксели), а не допущение.
+    Если документ называет только формат «полный кадр», размер берётся по
+    определению формата и помечается в `derived_fields`.
 
     Размер кадра в пикселях, если документ даёт только мегапиксели, выводится
     как ширина = √(Мп · 10⁶ · k), высота = ширина / k, где k — соотношение
     сторон по углам поля зрения или по матрице. Такие поля перечисляются в
     `derived_fields` (инвариант 6: вывод по формуле, а не выдумка).
+
+    Отвергнутые командой значения документа (ключ `rejected:` в каталоге —
+    например, углы обзора Riebo, несовместимые с фокусным) не читаются.
 
     Args:
         raw: словарь одной записи `payloads:`.
@@ -116,16 +141,22 @@ def _payload(raw: dict[str, Any]) -> Payload:
     width_px = _first(resolution_px, 0)
     height_px = _first(resolution_px, 1)
 
+    derived: list[str] = []
+    gaps: list[str] = []
+
     sensor_mm = raw.get("sensor_mm")
     sensor_width_mm = _first(sensor_mm, 0)
     sensor_height_mm = _first(sensor_mm, 1)
+    by_format = _sensor_by_format(raw)
+    if sensor_width_mm is None and by_format is not None:
+        sensor_width_mm, sensor_height_mm = by_format
+        derived.extend(["sensor_width_mm", "sensor_height_mm"])
 
     fov_h = raw.get("fov_horizontal_deg")
     fov_v = raw.get("fov_vertical_deg")
     fov_h = float(fov_h) if fov_h is not None else None
     fov_v = float(fov_v) if fov_v is not None else None
 
-    derived: list[str] = []
     megapixels = _megapixels(raw)
     aspect = _aspect_ratio(fov_h, fov_v, sensor_width_mm, sensor_height_mm)
     if width_px is None and megapixels and aspect:
@@ -138,7 +169,7 @@ def _payload(raw: dict[str, Any]) -> Payload:
         sensor_width_mm = width_px * float(pixel_size_um) * _MM_PER_UM
         sensor_height_mm = height_px * float(pixel_size_um) * _MM_PER_UM
 
-    focal = raw.get("focal_length_mm")
+    focal, focal_gap = _node(raw.get("focal_length_mm"))
     if isinstance(focal, (list, tuple)):
         # Зум-объектив: фиксированного фокусного нет. Для фотограмметрии это
         # пробел, а не параметр — см. payload_note у Геоскан 801.
@@ -149,11 +180,9 @@ def _payload(raw: dict[str, Any]) -> Payload:
         )
     else:
         focal_length_mm = float(focal) if focal is not None else None
-        focal_gap = None
 
-    gaps: list[str] = []
     if focal_gap:
-        gaps.append(focal_gap)
+        gaps.append(f"focal_length_mm: {focal_gap.strip()}")
     if fov_h is None and (focal_length_mm is None or sensor_width_mm is None):
         gaps.append(
             "нет ни угла поля зрения, ни пары «фокусное расстояние + размер матрицы» — "
@@ -190,8 +219,9 @@ def _cruise_speed(
 ) -> float:
     """Крейсерская скорость борта, м/с.
 
-    Паспортного значения нет ни у одного из трёх бортов, поэтому скорость
-    выводится по правилу из `core.assumptions` и помечается как производная.
+    Если производитель называет крейсерскую скорость (Геоскан Lite, 201 Термо),
+    берётся она. Иначе скорость выводится по правилу из `core.assumptions` и
+    помечается как производная.
 
     Args:
         raw: запись борта в каталоге.
@@ -285,7 +315,7 @@ def _vehicle(raw: dict[str, Any]) -> Vehicle:
     if energy_wh is None and "battery" not in raw:
         gaps.append("battery: сведения об АКБ в источнике отсутствуют")
 
-    for key in ("max_payload_mass_kg", "survey_area_per_sortie_km2"):
+    for key in ("max_payload_mass_kg", "survey_area_per_sortie"):
         _, gap = _node(raw.get(key))
         if gap:
             gaps.append(f"{key}: {gap.strip()}")
