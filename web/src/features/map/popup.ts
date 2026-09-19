@@ -9,7 +9,7 @@ type Properties = Record<string, unknown>;
 
 const LEG_ROWS: [label: string, key: string][] = [
   ['вылет', 'sortie_id'],
-  ['борт', 'vehicle_id'],
+  ['борт', 'board_id'],
   ['фаза', 'phase'],
   ['подобласть', 'cell_id'],
   ['длина, м', 'length_m'],
@@ -31,6 +31,14 @@ const KIND_TITLE: Record<string, string> = {
   recommended_site: 'Предлагаемая площадка',
 };
 
+const KEYPOINT_ROWS: [label: string, key: string][] = [
+  ['борт', 'board_id'],
+  ['вылет', 'sortie_id'],
+  ['высота AGL, м', 'altitude_m'],
+  ['время', 'time'],
+  ['от начала, с', 'time_s'],
+];
+
 function rows(properties: Properties, keys: [string, string][]): string {
   return keys
     .filter(([, key]) => properties[key] !== undefined && properties[key] !== null)
@@ -45,6 +53,9 @@ export function describeFeature(properties: Properties): string {
   if (kind === 'leg') {
     return rows(properties, LEG_ROWS);
   }
+  if (kind === 'keypoint') {
+    return `<b>${escapeHtml(properties.title ?? 'Ключевая точка')}</b><br/>${rows(properties, KEYPOINT_ROWS)}`;
+  }
   const title = `<b>${escapeHtml(KIND_TITLE[kind] ?? kind)}</b>`;
   const details = rows(properties, [
     ['имя', 'name'],
@@ -55,7 +66,7 @@ export function describeFeature(properties: Properties): string {
     ['действует с', 'active_from'],
     ['действует до', 'active_to'],
     ['вылет', 'sortie_id'],
-    ['борт', 'vehicle_id'],
+    ['борт', 'board_id'],
     ['', 'message'],
   ]);
   return details ? `${title}<br/>${details}` : title;

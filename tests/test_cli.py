@@ -49,6 +49,23 @@ def test_batch_writes_every_format_for_every_scenario(tmp_path: Path) -> None:
     for path in SCENARIOS_DIR.glob("*.json"):
         for suffix in (".geojson", ".kml", ".schedule.csv"):
             assert (tmp_path / f"{path.stem}{suffix}").is_file()
+    # Задание каждого борта — отдельным KML; у невыполнимого плана их нет.
+    assert {path.name for path in tmp_path.glob("simple.*_*.kml")} == {
+        "simple.geoscan-gemini_1.kml",
+        "simple.geoscan-gemini_2.kml",
+    }
+    assert not list(tmp_path.glob("nasty.*_*.kml"))
+
+
+def test_single_board_file(tmp_path: Path) -> None:
+    """`--board` пишет в файл задание одного борта."""
+    output = tmp_path / "gemini1.kml"
+    code = main(
+        [str(SCENARIOS_DIR / "simple.json"), "-o", str(output), "--board", "geoscan-gemini_1"]
+    )
+    assert code == 0
+    text = output.read_text(encoding="utf-8")
+    assert "geoscan-gemini #1" in text and "geoscan-gemini_2" not in text
 
 
 def test_export_schema_produces_valid_json(tmp_path: Path) -> None:

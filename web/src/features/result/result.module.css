@@ -50,6 +50,11 @@
   margin-top: 16px;
 }
 
+.boardLinks {
+  margin-top: 4px;
+  font-size: 12px;
+}
+
 .advice {
   border-left-color: var(--accent);
 }

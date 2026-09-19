@@ -44,6 +44,10 @@ class InfeasibleError(CoreError):
     """
 
 
+class ExportError(CoreError):
+    """Запрошенную выгрузку собрать нельзя: например, борта с таким именем в плане нет."""
+
+
 class StageNotImplementedError(CoreError):
     """Стадия конвейера ещё не реализована и заглушки для неё нет.
 
@@ -55,6 +59,7 @@ class StageNotImplementedError(CoreError):
 __all__ = [
     "CatalogError",
     "CoreError",
+    "ExportError",
     "GeometryError",
     "InfeasibleError",
     "ScenarioError",

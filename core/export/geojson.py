@@ -3,7 +3,12 @@
 Координаты — WGS84 в порядке [долгота, широта, высота], как требует
 спецификация. Высота третьим элементом — над поверхностью (AGL); GeoJSON
 собственного режима высоты не имеет, поэтому режим продублирован в свойствах
-коллекции. Структура файла описана в docs/export_format.md (заказчик, №21).
+коллекции. Внешние кольца полигонов — против часовой стрелки, отверстия — по
+часовой (RFC 7946 §3.1.6). Структура файла описана в docs/export_format.md
+(заказчик, №21).
+
+Файл собирается на весь план или на один борт (`board`): тогда в нём только
+вылеты, ключевые точки и подобласти этого борта, а слои сценария — целиком.
 
 Невыполнимый план выгружается как отчёт: контекстные слои, места нарушений
 (`kind: violation`), предлагаемые места площадок (`kind: recommended_site`),
@@ -14,14 +19,21 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from core.geo.mask import as_utc
+from core.export.boards import (
+    Board,
+    KeyPoint,
+    select_boards,
+    sortie_board_id,
+    sortie_keypoints,
+)
+from core.export.common import oriented_rings, utc_time
+from core.export.schedule import schedule_rows
 from core.geo.project import Projector
 from core.schemas import (
-    CoverageSet,
     GeoPolygon,
     Leg,
     MetricLineString,
@@ -32,32 +44,24 @@ from core.schemas import (
     Sortie,
 )
 
-
-def iso_time(start_time: datetime | None, offset_s: float) -> str | None:
-    """Абсолютное время UTC в ISO 8601, если известно начало работ."""
-    if start_time is None:
-        return None
-    return (as_utc(start_time) + timedelta(seconds=offset_s)).isoformat()
+#: Версия формата выгрузки (docs/export_format.md). Меняется при изменении
+#: состава признаков или свойств.
+FORMAT_VERSION = "geoscan-planner/3"
 
 
 def _rings(polygon: GeoPolygon) -> list[list[list[float]]]:
-    result = []
-    for ring in [polygon.outer, *polygon.holes]:
-        coords = [[point.lon, point.lat] for point in ring]
-        if coords[0] != coords[-1]:
-            coords.append(coords[0])
-        result.append(coords)
-    return result
+    rings = oriented_rings(
+        [(point.lon, point.lat) for point in ring] for ring in [polygon.outer, *polygon.holes]
+    )
+    return [[list(point) for point in ring] for ring in rings]
 
 
 def _metric_rings(polygon: MetricPolygon, projector: Projector) -> list[list[list[float]]]:
-    result = []
-    for ring in [polygon.outer, *polygon.holes]:
-        coords = [list(item) for item in projector.coords_to_geo((p.x_m, p.y_m) for p in ring)]
-        if coords and coords[0] != coords[-1]:
-            coords.append(coords[0])
-        result.append(coords)
-    return result
+    rings = oriented_rings(
+        projector.coords_to_geo((point.x_m, point.y_m) for point in ring)
+        for ring in [polygon.outer, *polygon.holes]
+    )
+    return [[list(point) for point in ring] for ring in rings]
 
 
 def _line_coords(line: MetricLineString, projector: Projector) -> list[list[float]]:
@@ -73,8 +77,9 @@ def _leg_feature(
         geo = projector.xy_to_geo(waypoint.x_m, waypoint.y_m)
         coords.append([geo.lon, geo.lat, round(waypoint.alt_m, 1)])
 
-    # Наземные и вертикальные фазы вырождаются в точку: LineString из двух
-    # одинаковых координат невалиден по RFC 7946 и ломает часть просмотрщиков.
+    # Наземные и вертикальные фазы вырождаются в точку на карте: LineString,
+    # чьи точки различаются только высотой, большинство просмотрщиков рисует
+    # точкой нулевой длины. Их моменты — в ключевых точках (`kind: keypoint`).
     unique = {(round(item[0], 9), round(item[1], 9)) for item in coords}
     if len(unique) < 2:
         return None
@@ -87,6 +92,7 @@ def _leg_feature(
         "properties": {
             "kind": "leg",
             "sortie_id": sortie.id,
+            "board_id": sortie_board_id(sortie),
             "vehicle_id": sortie.vehicle_id,
             "vehicle_instance": sortie.vehicle_instance,
             "trip_index": sortie.trip_index,
@@ -101,8 +107,34 @@ def _leg_feature(
             "altitude_m": round(leg.waypoints[0].alt_m, 1),
             "start_s": round(start_s, 1),
             "end_s": round(end_s, 1),
-            "start_time": iso_time(start_time, start_s),
-            "end_time": iso_time(start_time, end_s),
+            "start_time": utc_time(start_time, start_s),
+            "end_time": utc_time(start_time, end_s),
+        },
+    }
+
+
+def _keypoint_feature(
+    sortie: Sortie, point: KeyPoint, projector: Projector, start_time: datetime | None
+) -> dict[str, Any]:
+    """Ключевая точка вылета → Feature с геометрией Point и высотой."""
+    geo = projector.xy_to_geo(point.x_m, point.y_m)
+    return {
+        "type": "Feature",
+        "geometry": {"type": "Point", "coordinates": [geo.lon, geo.lat, round(point.alt_m, 1)]},
+        "properties": {
+            "kind": "keypoint",
+            "keypoint": point.kind.value,
+            "title": point.title,
+            "sortie_id": sortie.id,
+            "board_id": sortie_board_id(sortie),
+            "vehicle_id": sortie.vehicle_id,
+            "vehicle_instance": sortie.vehicle_instance,
+            "trip_index": sortie.trip_index,
+            "cell_id": point.cell_id,
+            "site_id": point.site_id,
+            "altitude_m": round(point.alt_m, 1),
+            "time_s": round(point.time_s, 1),
+            "time": utc_time(start_time, point.time_s),
         },
     }
 
@@ -130,8 +162,8 @@ def _context_features(scenario: Scenario) -> list[dict[str, Any]]:
                     "name": zone.name,
                     "min_alt_m": zone.min_alt_m,
                     "max_alt_m": zone.max_alt_m,
-                    "active_from": zone.active_from.isoformat() if zone.active_from else None,
-                    "active_to": zone.active_to.isoformat() if zone.active_to else None,
+                    "active_from": utc_time(zone.active_from, 0.0),
+                    "active_to": utc_time(zone.active_to, 0.0),
                 },
             }
         )
@@ -183,20 +215,25 @@ def _context_features(scenario: Scenario) -> list[dict[str, Any]]:
     return features
 
 
-def _cell_features(result: PipelineResult, projector: Projector) -> list[dict[str, Any]]:
-    """Подобласти вылетов и зоны манёвра — «линии и полигоны» (№21)."""
+def _cell_features(
+    result: PipelineResult, boards: list[Board], projector: Projector
+) -> list[dict[str, Any]]:
+    """Подобласти вылетов и зоны манёвра выбранных бортов — «линии и полигоны» (№21)."""
     decomposition = result.decomposition
-    coverage: CoverageSet | None = result.coverage
+    coverage = result.coverage
     if decomposition is None or coverage is None:
         return []
-    owner = {
-        cell_id: (assignment.sortie_id, assignment.vehicle_id)
-        for assignment in (result.allocation.assignments if result.allocation else [])
-        for cell_id in assignment.cell_ids
+    owner: dict[str, Sortie] = {
+        cell_id: sortie
+        for board in boards
+        for sortie in board.sorties
+        for cell_id in sortie.cell_ids
     }
     features: list[dict[str, Any]] = []
     for cell in decomposition.cells:
-        sortie_id, vehicle_id = owner.get(cell.id, (None, None))
+        sortie = owner.get(cell.id)
+        if sortie is None:
+            continue
         features.append(
             {
                 "type": "Feature",
@@ -207,13 +244,17 @@ def _cell_features(result: PipelineResult, projector: Projector) -> list[dict[st
                 "properties": {
                     "kind": "survey_cell",
                     "cell_id": cell.id,
-                    "sortie_id": sortie_id,
-                    "vehicle_id": vehicle_id,
+                    "sortie_id": sortie.id,
+                    "board_id": sortie_board_id(sortie),
+                    "vehicle_id": sortie.vehicle_id,
                     "area_m2": round(cell.area_m2, 1),
                 },
             }
         )
     for item in coverage.cells:
+        sortie = owner.get(item.cell_id)
+        if sortie is None or sortie.vehicle_id != item.vehicle_id:
+            continue
         for zone in item.maneuver_zones:
             features.append(
                 {
@@ -222,6 +263,8 @@ def _cell_features(result: PipelineResult, projector: Projector) -> list[dict[st
                     "properties": {
                         "kind": "maneuver_zone",
                         "cell_id": item.cell_id,
+                        "sortie_id": sortie.id,
+                        "board_id": sortie_board_id(sortie),
                         "vehicle_id": item.vehicle_id,
                     },
                 }
@@ -264,7 +307,7 @@ def _report_features(mission: Mission, projector: Projector) -> list[dict[str, A
 
 
 def mission_to_geojson(
-    result: PipelineResult, scenario: Scenario, projector: Projector
+    result: PipelineResult, scenario: Scenario, projector: Projector, board: str | None = None
 ) -> dict[str, Any]:
     """Собрать FeatureCollection: полётное задание или отчёт о невыполнимости.
 
@@ -272,19 +315,30 @@ def mission_to_geojson(
         result: все стадии прогона (нужны подобласти и зоны манёвра).
         scenario: исходный сценарий (контекстные слои).
         projector: преобразователь рабочей проекции в WGS84.
+        board: идентификатор борта (`board_id`) — задание одного борта;
+            None — весь план.
 
     Returns:
         Словарь GeoJSON FeatureCollection, готовый к сериализации.
+
+    Raises:
+        ExportError: борта с таким идентификатором в плане нет.
     """
     mission = result.mission
+    boards = select_boards(mission, board)
     features: list[dict[str, Any]] = []
     if mission.is_feasible():
-        for sortie in mission.sorties:
-            for leg in sortie.legs:
-                feature = _leg_feature(sortie, leg, projector, scenario.start_time)
-                if feature is not None:
-                    features.append(feature)
-        features.extend(_cell_features(result, projector))
+        for item in boards:
+            for sortie in item.sorties:
+                for leg in sortie.legs:
+                    feature = _leg_feature(sortie, leg, projector, scenario.start_time)
+                    if feature is not None:
+                        features.append(feature)
+                features.extend(
+                    _keypoint_feature(sortie, point, projector, scenario.start_time)
+                    for point in sortie_keypoints(sortie)
+                )
+        features.extend(_cell_features(result, boards, projector))
     features.extend(_report_features(mission, projector))
     features.extend(_context_features(scenario))
 
@@ -294,24 +348,23 @@ def mission_to_geojson(
         # Сторонние члены коллекции: RFC 7946 их допускает, а без них статус,
         # метрики и режим высоты теряются при выгрузке.
         "properties": {
-            "format": "geoscan-planner/2",
+            "format": FORMAT_VERSION,
             "mission_id": mission.id,
             "scenario_id": mission.scenario_id,
             "status": mission.status.value,
+            "board_id": board,
             "algorithm": mission.algorithm,
             "mode": mission.mode.value,
             "alpha": mission.alpha,
             "seed": mission.seed,
             "altitude_mode": mission.altitude_mode.value,
             "altitude_reference": "AGL",
-            "start_time": scenario.start_time.isoformat() if scenario.start_time else None,
+            "time_reference": "utc" if scenario.start_time is not None else "relative",
+            "start_time": utc_time(scenario.start_time, 0.0),
             "crs": {"epsg_working": mission.crs.epsg, "name": mission.crs.name},
             "metrics": mission.metrics.model_dump(mode="json") if mission.metrics else None,
-            "schedule": (
-                [entry.model_dump(mode="json") for entry in mission.schedule.entries]
-                if mission.schedule
-                else []
-            ),
+            "boards": [item.summary() for item in boards],
+            "schedule": [row.as_dict() for row in schedule_rows(mission, scenario, board)],
             "reasons": [
                 reason.model_dump(mode="json", exclude={"geometry"}) for reason in mission.reasons
             ],
@@ -328,8 +381,17 @@ def mission_to_geojson(
     }
 
 
+def geojson_to_text(document: dict[str, Any]) -> str:
+    """Сериализовать FeatureCollection: UTF-8 без экранирования кириллицы."""
+    return json.dumps(document, ensure_ascii=False, indent=2)
+
+
 def write_geojson(
-    result: PipelineResult, scenario: Scenario, projector: Projector, path: Path
+    result: PipelineResult,
+    scenario: Scenario,
+    projector: Projector,
+    path: Path,
+    board: str | None = None,
 ) -> Path:
     """Записать GeoJSON на диск.
 
@@ -338,14 +400,15 @@ def write_geojson(
         scenario: исходный сценарий.
         projector: преобразователь рабочей проекции в WGS84.
         path: путь файла.
+        board: идентификатор борта; None — весь план.
 
     Returns:
         Путь записанного файла.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    document = mission_to_geojson(result, scenario, projector)
-    path.write_text(json.dumps(document, ensure_ascii=False, indent=2), encoding="utf-8")
+    document = mission_to_geojson(result, scenario, projector, board)
+    path.write_text(geojson_to_text(document), encoding="utf-8")
     return path
 
 
-__all__ = ["iso_time", "mission_to_geojson", "write_geojson"]
+__all__ = ["FORMAT_VERSION", "geojson_to_text", "mission_to_geojson", "write_geojson"]

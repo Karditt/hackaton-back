@@ -76,7 +76,11 @@ export function ResultPanel({ run }: Props) {
         <WarningsList warnings={warnings} />
       </Section>
 
-      <ExportLinks jobId={run.jobId} feasible={feasible} />
+      <ExportLinks
+        jobId={run.jobId}
+        feasible={feasible}
+        boards={run.document.properties?.boards ?? []}
+      />
     </>
   );
 }

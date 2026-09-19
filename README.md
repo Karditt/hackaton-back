@@ -47,8 +47,18 @@ pip install -e ".[dev]"
 python -m core.cli scenarios/demo_100km2.json -o out/
 ```
 
-В каталог `out/` пишутся `<сценарий>.geojson`, `.kml` и `.schedule.csv`.
+В каталог `out/` пишется комплект: `<сценарий>.geojson`, `.kml` и
+`.schedule.csv` на весь план и `<сценарий>.<борт>.kml` — индивидуальное
+полётное задание каждого борта: вылеты, ключевые точки, трек для шкалы
+времени Google Earth, расписание. Задание одного борта в файл:
+
+```bash
+python -m core.cli scenarios/simple.json -o out/gemini1.kml --board geoscan-gemini_1
+```
+
 Режим оптимизации переключается ключом `--mode min_makespan|min_resource`.
+Что лежит в файлах и как их читать без нашего кода —
+[`docs/export_format.md`](docs/export_format.md).
 
 Прогон на всех тестовых сценариях сразу:
 
@@ -133,7 +143,7 @@ core/   чистый Python, ноль веб-зависимостей, собс�
 | `core/deconflict/` | Эшелоны перелёта, расписание, разведение бортов |
 | `core/validate/` | Краш-тест готового плана |
 | `core/advise/` | Причины невыполнимости и рекомендации |
-| `core/export/` | GeoJSON, KML, расписание CSV |
+| `core/export/` | GeoJSON, KML, расписание CSV; обзор плана и задание каждого борта |
 | `api/` | FastAPI: сценарии с проверкой на приёме, фоновый расчёт, поллинг, выгрузка |
 | `web/` | Карта маршрутов, метрики, расписание, отчёт о невыполнимости, выгрузка |
 | `data/vehicles.yaml` | ТТХ БВС из официальных документов, с источником у каждого параметра |
@@ -179,7 +189,7 @@ core/   чистый Python, ноль веб-зависимостей, собс�
 | [`docs/current_state.md`](docs/current_state.md) | **Живой** статус: что работает, что заглушка |
 | [`docs/epics.md`](docs/epics.md) | Состав работ E0–E15 |
 | [`docs/architecture.md`](docs/architecture.md) | Обоснование решений, черновик алгоритма |
-| [`docs/export_format.md`](docs/export_format.md) | Формат выгрузки: GeoJSON, KML, расписание CSV |
+| [`docs/export_format.md`](docs/export_format.md) | Формат выгрузки: GeoJSON, KML, расписание CSV, задания бортов |
 | [`docs/external_sources.md`](docs/external_sources.md) | ТТХ, подложка, рельеф, спецификации форматов |
 
 ## Лицензии и источники данных

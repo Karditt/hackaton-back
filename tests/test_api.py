@@ -5,8 +5,10 @@
 
 from __future__ import annotations
 
+import io
 import json
 import time
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -111,6 +113,31 @@ def test_schedule_and_exports(client) -> None:
     assert kml.text.lstrip().startswith("<?xml")
     csv = client.get(f"/jobs/{job_id}/export", params={"format": "schedule"})
     assert csv.text.startswith("sortie_id,")
+
+
+def test_board_export_and_package(client) -> None:
+    """ТЗ: задание на каждый борт — параметром `board` и архивом всего комплекта."""
+    job_id = client.post("/scenarios/simple/plan").json()["id"]
+    _wait_for_job(client, job_id)
+
+    boards = client.get(f"/jobs/{job_id}/export").json()["properties"]["boards"]
+    board = boards[0]["board_id"]
+    kml = client.get(f"/jobs/{job_id}/export", params={"format": "kml", "board": board})
+    assert kml.status_code == 200
+    assert f"simple.{board}.kml" in kml.headers["content-disposition"]
+    assert boards[0]["label"] in kml.text
+
+    unknown = client.get(f"/jobs/{job_id}/export", params={"format": "kml", "board": "nope_1"})
+    assert unknown.status_code == 404
+    assert board in unknown.json()["detail"]
+
+    package = client.get(f"/jobs/{job_id}/package")
+    assert package.status_code == 200
+    assert package.headers["content-type"] == "application/zip"
+    with zipfile.ZipFile(io.BytesIO(package.content)) as archive:
+        names = set(archive.namelist())
+    assert {"simple.kml", "simple.geojson", "simple.schedule.csv"} <= names
+    assert {f"simple.{item['board_id']}.kml" for item in boards} <= names
 
 
 def test_unknown_scenario_is_404(client) -> None:
