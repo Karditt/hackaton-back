@@ -12,8 +12,6 @@
 
 from __future__ import annotations
 
-import io
-import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -26,9 +24,10 @@ from api.jobs import Job, JobRegistry, JobState
 from api.storage import ScenarioStore
 from core import __version__, assumptions
 from core.catalog import load_catalog
-from core.errors import CoreError, ScenarioError
-from core.export.geojson import mission_to_geojson
-from core.export.kml import mission_to_kml
+from core.errors import CoreError, ExportError, ScenarioError
+from core.export.geojson import geojson_to_text, mission_to_geojson
+from core.export.kml import kml_to_bytes, mission_to_kml
+from core.export.package import file_stem, mission_zip
 from core.export.schedule import schedule_to_csv
 from core.pipeline import check_scenario
 from core.schemas import ExportFormat, OptimizationMode, PipelineResult, Scenario
@@ -245,10 +244,20 @@ def get_job_schedule(job_id: str) -> dict[str, Any]:
     }
 
 
+def _attachment(name: str) -> dict[str, str]:
+    """Заголовок вложения: браузер сохраняет ответ файлом с этим именем."""
+    return {"Content-Disposition": f'attachment; filename="{name}"'}
+
+
 @app.get("/jobs/{job_id}/export", tags=["расчёт"])
 def export_job(
     job_id: str,
     export_format: ExportFormat = Query(default=ExportFormat.GEOJSON, alias="format"),
+    board: str | None = Query(
+        default=None,
+        description="Борт, например `geoscan-gemini_1` — его индивидуальное задание. "
+        "Список бортов — свойство `boards` выгрузки GeoJSON",
+    ),
 ) -> Response:
     """Отдать итог расчёта файлом: полётное задание или отчёт о невыполнимости.
 
@@ -257,36 +266,53 @@ def export_job(
     Args:
         job_id: идентификатор задачи.
         export_format: `geojson`, `kml` или `schedule` (CSV).
+        board: идентификатор борта — задание одного борта; без него — весь план.
 
     Returns:
-        Файл с заголовком вложения, готовый к сохранению.
+        Файл с заголовком вложения, готовый к сохранению. Неизвестный борт —
+        404 со списком бортов плана.
     """
     job = _finished_job(_job_or_404(job_id))
     run = job.run
     assert run is not None
-    stem = run.scenario.id
+    projector = run.work_area.projector
+    stem = file_stem(run.scenario.id, board)
 
-    if export_format is ExportFormat.KML:
-        buffer = io.BytesIO()
-        mission_to_kml(run.result, run.scenario, run.work_area.projector).write(
-            buffer, encoding="utf-8", xml_declaration=True
-        )
-        return Response(
-            content=buffer.getvalue(),
-            media_type="application/vnd.google-earth.kml+xml",
-            headers={"Content-Disposition": f'attachment; filename="{stem}.kml"'},
-        )
-
-    if export_format is ExportFormat.SCHEDULE:
-        return Response(
-            content=schedule_to_csv(run.mission, run.scenario),
-            media_type="text/csv; charset=utf-8",
-            headers={"Content-Disposition": f'attachment; filename="{stem}.schedule.csv"'},
-        )
-
-    document = mission_to_geojson(run.result, run.scenario, run.work_area.projector)
+    try:
+        if export_format is ExportFormat.KML:
+            return Response(
+                content=kml_to_bytes(mission_to_kml(run.result, run.scenario, projector, board)),
+                media_type="application/vnd.google-earth.kml+xml",
+                headers=_attachment(f"{stem}.kml"),
+            )
+        if export_format is ExportFormat.SCHEDULE:
+            return Response(
+                content=schedule_to_csv(run.mission, run.scenario, board),
+                media_type="text/csv; charset=utf-8",
+                headers=_attachment(f"{stem}.schedule.csv"),
+            )
+        document = mission_to_geojson(run.result, run.scenario, projector, board)
+    except ExportError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
     return Response(
-        content=json.dumps(document, ensure_ascii=False, indent=2),
+        content=geojson_to_text(document),
         media_type="application/geo+json",
-        headers={"Content-Disposition": f'attachment; filename="{stem}.geojson"'},
+        headers=_attachment(f"{stem}.geojson"),
+    )
+
+
+@app.get("/jobs/{job_id}/package", tags=["расчёт"])
+def export_package(job_id: str) -> Response:
+    """Весь комплект файлов расчёта одним архивом ZIP.
+
+    Внутри — то же, что CLI пишет в каталог: обзорные GeoJSON и KML,
+    расписание CSV и KML с индивидуальным заданием каждого борта
+    (docs/export_format.md §1). У невыполнимого плана — только отчёт.
+    """
+    run = _finished_job(_job_or_404(job_id)).run
+    assert run is not None
+    return Response(
+        content=mission_zip(run.result, run.scenario, run.work_area.projector),
+        media_type="application/zip",
+        headers=_attachment(f"{file_stem(run.scenario.id)}.zip"),
     )

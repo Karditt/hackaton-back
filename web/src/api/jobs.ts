@@ -42,9 +42,22 @@ export async function fetchMissionGeoJson(jobId: string): Promise<GeoJsonDocumen
   return request<GeoJsonDocument>(`/jobs/${jobId}/export?format=geojson`);
 }
 
-/** Ссылка на выгрузку. Скачивание — задача браузера, не приложения. */
-export function exportUrl(jobId: string, format: ExportFormat): string {
-  return `${API_BASE}/jobs/${jobId}/export?format=${format}`;
+/**
+ * Ссылка на выгрузку. Скачивание — задача браузера, не приложения.
+ *
+ * @param board идентификатор борта — его индивидуальное задание; без него — весь план
+ */
+export function exportUrl(jobId: string, format: ExportFormat, board?: string): string {
+  const query = new URLSearchParams({ format });
+  if (board) {
+    query.set('board', board);
+  }
+  return `${API_BASE}/jobs/${jobId}/export?${query}`;
+}
+
+/** Весь комплект файлов расчёта одним архивом ZIP: обзор и задания бортов. */
+export function packageUrl(jobId: string): string {
+  return `${API_BASE}/jobs/${jobId}/package`;
 }
 
 /**

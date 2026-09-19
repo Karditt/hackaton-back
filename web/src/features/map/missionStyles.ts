@@ -39,6 +39,18 @@ export const POINT_MARKERS: Record<string, L.CircleMarkerOptions> = {
     fillOpacity: 0.9,
     dashArray: '3 3',
   },
+  keypoint: { radius: 3, weight: 1, color: '#111827', fillColor: '#ffffff', fillOpacity: 1 },
+};
+
+/**
+ * Заливка ключевой точки по её виду (`keypoint` в GeoJSON) — те же цвета, что
+ * у стилей ключевых точек в KML (core/export/kml.py).
+ */
+export const KEYPOINT_FILL: Record<string, string> = {
+  takeoff: '#16a34a',
+  survey_start: '#dc2626',
+  survey_end: '#7f1d1d',
+  landing: '#1d4ed8',
 };
 
 export const DEFAULT_MARKER: L.CircleMarkerOptions = {

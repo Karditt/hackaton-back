@@ -42,6 +42,7 @@ def export_mission(
     projector: Projector,
     path: Path,
     export_format: ExportFormat | None = None,
+    board: str | None = None,
 ) -> Path:
     """Выгрузить итог конвейера в файл.
 
@@ -51,16 +52,20 @@ def export_mission(
         projector: преобразователь рабочей проекции в WGS84.
         path: путь выходного файла.
         export_format: формат. None — определить по расширению пути.
+        board: идентификатор борта — задание одного борта; None — весь план.
 
     Returns:
         Путь записанного файла.
+
+    Raises:
+        ExportError: борта с таким идентификатором в плане нет.
     """
     chosen = export_format or format_for(path)
     if chosen is ExportFormat.KML:
-        return write_kml(result, scenario, projector, path)
+        return write_kml(result, scenario, projector, path, board)
     if chosen is ExportFormat.SCHEDULE:
-        return write_schedule(result.mission, scenario, path)
-    return write_geojson(result, scenario, projector, path)
+        return write_schedule(result.mission, scenario, path, board)
+    return write_geojson(result, scenario, projector, path, board)
 
 
 __all__ = [

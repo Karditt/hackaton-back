@@ -4,6 +4,7 @@
 репозитория целиком, всё, что здесь описано, обязано продолжать работать.
 
     python -m core.cli scenarios/simple.json -o out/mission.geojson
+    python -m core.cli scenarios/simple.json -o out/gemini1.kml --board geoscan-gemini_1
     python -m core.cli --batch scenarios/ -o out/
     python -m core.cli export-schema -o web/src/types/schema.json
     python -m core.cli assumptions
@@ -21,10 +22,10 @@ from pydantic import ValidationError
 from core import assumptions as assumptions_module
 from core.catalog import load_catalog
 from core.errors import CoreError
-from core.export.writer import export_mission, format_for, output_path_for
+from core.export.package import write_mission_files
+from core.export.writer import export_mission, format_for
 from core.pipeline import PlanningRun, run_pipeline
 from core.schemas import (
-    ExportFormat,
     OptimizationMode,
     PipelineResult,
     PlanWarning,
@@ -112,25 +113,19 @@ def _print_report(run: PlanningRun) -> None:
         print(f"  ЗАГЛУШКИ        : {stages} — план не является окончательным расчётом")
 
 
-def _write_outputs(run: PlanningRun, target: Path, batch: bool) -> list[Path]:
+def _write_outputs(run: PlanningRun, target: Path, batch: bool, board: str | None) -> list[Path]:
     """Выгрузить итог в файлы.
 
-    В пакетном режиме и при указании каталога пишутся все форматы сразу:
-    GeoJSON для фронта, KML для стороннего ПО, расписание в CSV.
+    В пакетном режиме и при указании каталога пишется весь комплект:
+    GeoJSON для фронта, KML для стороннего ПО, расписание в CSV и KML с
+    заданием каждого борта (docs/export_format.md §1). Путь к файлу — один
+    файл по расширению; с `board` — задание одного борта.
     """
-    written: list[Path] = []
     projector = run.work_area.projector
-
     directory_mode = batch or target.suffix == ""
     if directory_mode:
-        for export_format in ExportFormat:
-            path = output_path_for(target, run.scenario.id, export_format)
-            written.append(export_mission(run.result, run.scenario, projector, path, export_format))
-    else:
-        written.append(
-            export_mission(run.result, run.scenario, projector, target, format_for(target))
-        )
-    return written
+        return write_mission_files(run.result, run.scenario, projector, target)
+    return [export_mission(run.result, run.scenario, projector, target, format_for(target), board)]
 
 
 def _dump_stages(run: PlanningRun, directory: Path) -> Path:
@@ -171,7 +166,7 @@ def command_plan(args: argparse.Namespace) -> int:
             continue
 
         _print_report(run)
-        for written in _write_outputs(run, target, bool(args.batch)):
+        for written in _write_outputs(run, target, bool(args.batch), args.board):
             print(f"  записано        : {written}")
         if args.dump_stages:
             print(f"  стадии          : {_dump_stages(run, Path(args.dump_stages))}")
@@ -267,7 +262,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     plan = subparsers.add_parser("plan", help="прогнать конвейер (команда по умолчанию)")
     plan.add_argument("scenario", nargs="?", help="путь к JSON-сценарию")
-    plan.add_argument("-o", "--output", default="out", help="файл или каталог для выгрузки")
+    plan.add_argument(
+        "-o",
+        "--output",
+        default="out",
+        help="каталог (весь комплект файлов) или файл (формат по расширению)",
+    )
+    plan.add_argument(
+        "--board",
+        help="в файл — задание одного борта, например geoscan-gemini_1 (docs/export_format.md)",
+    )
     plan.add_argument("--batch", help="каталог со сценариями: прогнать все подряд")
     plan.add_argument(
         "--mode",

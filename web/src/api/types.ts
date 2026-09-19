@@ -47,9 +47,24 @@ export type GeoJsonFeature = {
   properties: Record<string, unknown>;
 };
 
+/**
+ * Борт плана — свойство `boards` выгрузки GeoJSON (`core/export/boards.py`,
+ * `Board.summary()`). По `board_id` скачивается его индивидуальное задание.
+ */
+export type BoardSummary = {
+  board_id: string;
+  label: string;
+  vehicle_id: string;
+  vehicle_instance: number;
+  sortie_count: number;
+  flight_time_s: number;
+  first_takeoff_s: number;
+  last_landing_s: number;
+};
+
 /** Выгрузка в WGS84 по RFC 7946 — её строит `core/export`, фронт только рисует. */
 export type GeoJsonDocument = {
   type: 'FeatureCollection';
   features: GeoJsonFeature[];
-  properties?: Record<string, unknown>;
+  properties?: Record<string, unknown> & { boards?: BoardSummary[] };
 };
