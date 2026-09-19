@@ -44,7 +44,7 @@ def test_health_reports_catalog(client) -> None:
     """Живость сервиса включает доступность каталога техники."""
     payload = client.get("/health").json()
     assert payload["status"] == "ok"
-    assert payload["vehicles_in_catalog"] == 3
+    assert payload["vehicles_in_catalog"] == 6
 
 
 def test_scenarios_are_seeded(client) -> None:
@@ -136,5 +136,9 @@ def test_assumptions_endpoint_exposes_sources(client) -> None:
 def test_vehicles_endpoint_exposes_gaps(client) -> None:
     """Пробелы и выведенные поля ТТХ отдаются наружу, а не скрываются."""
     vehicles = {vehicle["id"]: vehicle for vehicle in client.get("/vehicles").json()["vehicles"]}
-    assert vehicles["geoscan-801"]["energy_wh"] is None
+    assert vehicles["geoscan-801"]["gaps"]
     assert vehicles["geoscan-201"]["derived_fields"]
+    thermal = next(
+        payload for payload in vehicles["geoscan-201-t"]["payloads"] if payload["id"] == "vlm640-t"
+    )
+    assert thermal["focal_length_mm"] is None and thermal["gaps"]

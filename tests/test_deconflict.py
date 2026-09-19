@@ -14,12 +14,25 @@ _WALL = [[30.305, 59.880], [30.315, 59.880], [30.315, 59.920], [30.305, 59.920]]
 
 
 def test_each_vehicle_gets_its_own_transit_level(runs: dict[str, PlanningRun]) -> None:
-    """№10: пока эшелонов в коридоре хватает, у каждого борта — свой."""
+    """№10: пока эшелонов под потолком борта хватает, у каждого борта — свой.
+
+    В демо самолёт снимает на ~456 м, эшелоны начинаются выше, и шести Gemini
+    с потолком 500 м над землёй достаётся один эшелон на всех. Делёж эшелона
+    обязан быть объявлен: таких бортов разводит расписание.
+    """
     run = runs["demo_100km2"]
     levels: dict[tuple[str, int], float] = {}
     for sortie in run.mission.sorties:
         levels[(sortie.vehicle_id, sortie.vehicle_instance)] = sortie.transit_altitude_m
-    assert len(set(levels.values())) == len(levels)
+    unrestricted = {
+        key: level
+        for key, level in levels.items()
+        if run.vehicles[key[0]].max_altitude_agl_m is None
+    }
+    assert len(unrestricted) >= 2
+    assert len(set(unrestricted.values())) == len(unrestricted)
+    if len(set(levels.values())) < len(levels):
+        assert "deconflict.levels_shared" in {w.code for w in run.result.warnings()}
 
 
 def test_schedule_lists_every_sortie(run: PlanningRun) -> None:

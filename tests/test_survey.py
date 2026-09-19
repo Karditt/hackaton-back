@@ -33,11 +33,27 @@ def test_gemini_pf1b_altitude_is_physical() -> None:
 
 
 def test_riebo_frame_size_is_derived_and_marked(catalog: VehicleCatalog) -> None:
-    """Riebo R4/R6: пиксели выводятся из 45 Мп и соотношения сторон по углам — и помечаются."""
-    riebo = catalog.get("geoscan-201").payload("riebo-r4-r6")
+    """Riebo R4: пиксели выводятся из 45 Мп и сторон полного кадра 3:2 — и помечаются."""
+    riebo = catalog.get("geoscan-201").payload("riebo-r4")
     assert riebo is not None
     assert riebo.image_width_px == pytest.approx(math.sqrt(45e6 * 1.5), rel=0.01)
     assert {"image_width_px", "image_height_px"} <= set(riebo.derived_fields)
+
+
+def test_riebo_altitude_follows_focal_length_not_rejected_fov(catalog: VehicleCatalog) -> None:
+    """Riebo: высота по фокусному 40 мм и полному кадру; углы 89,84° документа отвергнуты.
+
+    По углам вышло бы в 2,2 раза ниже: 2·tg(44,92°) ≈ 1,99 против 36 / 40 = 0,9.
+    """
+    riebo = catalog.get("geoscan-201").payload("riebo-r4")
+    assert riebo is not None
+    assert riebo.fov_horizontal_deg is None
+    assert riebo.focal_length_mm == pytest.approx(40.0)
+    assert riebo.sensor_width_mm == pytest.approx(36.0)
+    assert {"sensor_width_mm", "sensor_height_mm"} <= set(riebo.derived_fields)
+    expected_m = 0.05 * riebo.image_width_px * 40.0 / 36.0
+    assert altitude_for_gsd(riebo, 0.05) == pytest.approx(expected_m)
+    assert 450.0 < altitude_for_gsd(riebo, 0.05) < 460.0
 
 
 def test_presets_cover_every_survey_type_with_sources() -> None:
@@ -76,7 +92,7 @@ def test_fixed_wing_has_no_speed_in_strong_wind(catalog: VehicleCatalog) -> None
     assert lower > upper
     scenario = small_scenario(
         wind={"speed_mps": 11.0, "direction_deg": 90.0},
-        fleet=[{"vehicle_id": "geoscan-201", "payload_id": "riebo-r4-r6"}],
+        fleet=[{"vehicle_id": "geoscan-201", "payload_id": "riebo-r4"}],
     )
     plan = build_survey_plan(scenario, {plane.id: plane})
     assert not plan.per_vehicle

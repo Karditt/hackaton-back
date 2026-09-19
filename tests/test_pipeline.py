@@ -174,7 +174,7 @@ def test_vehicle_takes_off_where_it_landed(run: PlanningRun) -> None:
 
 
 def test_demo_uses_fixed_wing_and_excludes_inspection_drone(runs: dict[str, PlanningRun]) -> None:
-    """Демо: самолёт снимает RGB (оптика Riebo выведена), инспекционный 801 исключён."""
+    """Демо: самолёт снимает RGB (кадр Riebo выведен из Мп и формата), 801 исключён."""
     run = runs["demo_100km2"]
     vehicles = {sortie.vehicle_id for sortie in run.mission.sorties}
     assert "geoscan-201" in vehicles
