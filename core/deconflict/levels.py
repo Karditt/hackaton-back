@@ -49,20 +49,8 @@ def assign_transit_levels(
                 ),
             )
         )
-    elif len(levels) < len(instances):
-        warnings.append(
-            PlanWarning(
-                code="deconflict.levels_shared",
-                severity=Severity.WARNING,
-                stage=Stage.SCHEDULE,
-                message=(
-                    f"Эшелонов в коридоре {len(levels)}, бортов {len(instances)}: часть бортов "
-                    "делит эшелон, их разводит расписание"
-                ),
-            )
-        )
-
     assigned: dict[tuple[str, int], float] = {}
+    on_level: dict[float, list[FleetInstance]] = {}
     used: dict[float, int] = {level: 0 for level in levels}
     # Борта с низким потолком — первыми: им доступно меньше эшелонов.
     order = sorted(instances, key=lambda item: item.vehicle.max_altitude_agl_m or corridor_max_m)
@@ -91,7 +79,65 @@ def assign_transit_levels(
         level = min(allowed, key=lambda item: (used[item], item))
         used[level] += 1
         assigned[instance.key] = level
+        on_level.setdefault(level, []).append(instance)
+
+    warnings.extend(_shared_level_warnings(on_level, levels, len(instances), corridor_max_m))
     return assigned, warnings
+
+
+def _shared_level_warnings(
+    on_level: dict[float, list[FleetInstance]],
+    levels: list[float],
+    fleet_size: int,
+    corridor_max_m: float,
+) -> list[PlanWarning]:
+    """Предупреждения о делёже эшелона — по факту назначения.
+
+    Считать по числу эшелонов в коридоре нельзя: под низким потолком борта
+    делят эшелон, даже когда в коридоре эшелонов больше, чем бортов. Поэтому —
+    по одному предупреждению на каждый эшелон, который достался нескольким
+    бортам, с их списком и причиной.
+
+    Args:
+        on_level: борта по назначенным эшелонам, м AGL.
+        levels: все эшелоны коридора, м AGL.
+        fleet_size: число бортов флота.
+        corridor_max_m: верхняя граница коридора, м AGL.
+
+    Returns:
+        Предупреждения `deconflict.levels_shared`.
+    """
+    warnings: list[PlanWarning] = []
+    for level, group in sorted(on_level.items()):
+        if len(group) < 2:
+            continue
+        group = sorted(group, key=lambda item: item.key)
+        ceiling = min(item.vehicle.max_altitude_agl_m or corridor_max_m for item in group)
+        if ceiling < corridor_max_m:
+            room = sum(1 for item in levels if item <= ceiling)
+            reason = (
+                f"под их потолком {ceiling:.0f} м помещается {room} из {len(levels)} "
+                "эшелонов коридора"
+            )
+        else:
+            reason = f"эшелонов в коридоре {len(levels)} на {fleet_size} бортов"
+        warnings.append(
+            PlanWarning(
+                code="deconflict.levels_shared",
+                severity=Severity.WARNING,
+                stage=Stage.SCHEDULE,
+                message=(
+                    f"Эшелон {level:.0f} м делят {len(group)} бортов "
+                    f"({', '.join(item.label for item in group)}): {reason} — их разводит "
+                    "расписание"
+                ),
+                context={
+                    "level_m": f"{level:.0f}",
+                    "board_ids": ",".join(item.board_id for item in group),
+                },
+            )
+        )
+    return warnings
 
 
 __all__ = ["assign_transit_levels"]

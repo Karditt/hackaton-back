@@ -31,7 +31,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable
 
-from core.allocate.fleet import FleetInstance
+from core.allocate.fleet import FleetInstance, sortie_id
 from core.schemas import (
     Allocation,
     Cell,
@@ -152,7 +152,7 @@ class _Packer:
         site_id = self.site_of[instance.key]
         self.assignments.append(
             SortieAssignment(
-                sortie_id=f"{instance.vehicle.id}-{instance.index}-t{trip}",
+                sortie_id=sortie_id(instance.vehicle.id, instance.index, trip),
                 vehicle_id=instance.vehicle.id,
                 vehicle_instance=instance.index,
                 takeoff_site_id=site_id,

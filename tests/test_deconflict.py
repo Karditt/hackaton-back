@@ -31,8 +31,27 @@ def test_each_vehicle_gets_its_own_transit_level(runs: dict[str, PlanningRun]) -
     }
     assert len(unrestricted) >= 2
     assert len(set(unrestricted.values())) == len(unrestricted)
-    if len(set(levels.values())) < len(levels):
-        assert "deconflict.levels_shared" in {w.code for w in run.result.warnings()}
+
+
+def test_shared_level_warning_names_the_boards(runs: dict[str, PlanningRun]) -> None:
+    """Долг №35: делёж эшелона объявляется по факту — по предупреждению на эшелон.
+
+    Раньше предупреждение считало эшелоны коридора («8 эшелонов на 9 бортов»),
+    хотя шесть Gemini под потолком 500 м делили один эшелон.
+    """
+    run = runs["demo_100km2"]
+    boards: dict[float, set[str]] = {}
+    for sortie in run.mission.sorties:
+        board = f"{sortie.vehicle_id}_{sortie.vehicle_instance + 1}"
+        boards.setdefault(round(sortie.transit_altitude_m), set()).add(board)
+    shared = {level: names for level, names in boards.items() if len(names) > 1}
+    assert shared, "в демо Gemini делят эшелон — предупреждению есть что сказать"
+    warned = {
+        int(w.context["level_m"]): set(w.context["board_ids"].split(","))
+        for w in run.result.warnings()
+        if w.code == "deconflict.levels_shared"
+    }
+    assert warned == shared
 
 
 def test_schedule_lists_every_sortie(run: PlanningRun) -> None:

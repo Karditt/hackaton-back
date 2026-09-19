@@ -99,6 +99,7 @@ def health() -> dict[str, Any]:
         "version": __version__,
         "vehicles_in_catalog": vehicles,
         "scenarios_stored": len(store.list_ids()),
+        "scenarios_rejected": len(store.rejected),
     }
 
 
@@ -141,12 +142,18 @@ def list_assumptions(team_only: bool = False) -> dict[str, Any]:
 
 @app.get("/scenarios", tags=["сценарии"])
 def list_scenarios() -> dict[str, Any]:
-    """Список сохранённых сценариев."""
+    """Список сохранённых сценариев.
+
+    `rejected` — файлы хранилища, которые не прочитались по контракту (например,
+    сценарии контракта v1 без `altitude_corridor`), с причиной: они не
+    пропускаются молча.
+    """
     return {
         "scenarios": [
             {"id": scenario_id, "name": store.get(scenario_id).name}
             for scenario_id in store.list_ids()
-        ]
+        ],
+        "rejected": store.list_rejected(),
     }
 
 

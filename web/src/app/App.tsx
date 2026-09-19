@@ -20,7 +20,7 @@ import styles from './App.module.css';
 const DEFAULT_MODE: OptimizationMode = 'min_makespan';
 
 export default function App() {
-  const { scenarios, error: loadError } = useScenarios();
+  const { scenarios, rejected, error: loadError } = useScenarios();
   const [chosenScenarioId, setChosenScenarioId] = useState('');
   const [mode, setMode] = useState<OptimizationMode>(DEFAULT_MODE);
 
@@ -34,6 +34,7 @@ export default function App() {
         <AppHeader />
         <PlanningForm
           scenarios={scenarios}
+          rejected={rejected}
           scenarioId={scenarioId}
           onScenarioChange={setChosenScenarioId}
           mode={mode}
