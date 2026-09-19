@@ -6,7 +6,8 @@
 * борт — физический экземпляр модели из флота: пара (модель, номер экземпляра).
   Его идентификатор `board_id` — `<модель>_<номер с единицы>`, например
   `geoscan-gemini_3`: так же борт подписан в интерфейсе («geoscan-gemini #3»),
-  и так же называется его файл задания;
+  и так же называется его файл задания. Определение одно на весь проект —
+  `core.allocate.fleet.board_id`: из него же строится `sortie_id` вылета;
 * ключевые точки вылета — границы этапов полёта, которые называл заказчик
   (№30: взлёт, перелёт, площадная съёмка, посадка): взлёт, начало и конец
   съёмки каждой подобласти, посадка. Время точек взлёта и посадки совпадает с
@@ -20,21 +21,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+from core.allocate.fleet import board_id
 from core.errors import ExportError
 from core.schemas import FlightPhase, Mission, Sortie
-
-
-def board_id(vehicle_id: str, vehicle_instance: int) -> str:
-    """Идентификатор борта: `<модель>_<номер экземпляра с единицы>`.
-
-    Args:
-        vehicle_id: модель из каталога.
-        vehicle_instance: номер экземпляра внутри модели, с нуля.
-
-    Returns:
-        Например, `geoscan-gemini_3` для третьего Gemini.
-    """
-    return f"{vehicle_id}_{vehicle_instance + 1}"
 
 
 def board_label(vehicle_id: str, vehicle_instance: int) -> str:

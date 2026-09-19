@@ -16,6 +16,7 @@ import pytest
 fastapi_testclient = pytest.importorskip("fastapi.testclient")
 
 from api.main import app, store  # noqa: E402
+from api.storage import ScenarioStore  # noqa: E402
 from tests.conftest import SCENARIOS_DIR  # noqa: E402
 
 
@@ -53,6 +54,26 @@ def test_scenarios_are_seeded(client) -> None:
     """На чистой машине в интерфейсе сразу есть тестовые сценарии."""
     ids = {item["id"] for item in client.get("/scenarios").json()["scenarios"]}
     assert {"simple", "medium", "nasty", "demo_100km2"} <= ids
+
+
+def test_unreadable_stored_scenarios_are_reported(tmp_path: Path, client) -> None:
+    """Долг №28: сценарий старого контракта и битый файл не пропускаются молча."""
+    old = _simple()
+    old["id"] = "old-v1"
+    del old["altitude_corridor"]
+    (tmp_path / "old-v1.json").write_text(json.dumps(old), encoding="utf-8")
+    (tmp_path / "broken.json").write_text("{", encoding="utf-8")
+    (tmp_path / "good.json").write_text(json.dumps(_simple()), encoding="utf-8")
+
+    fresh = ScenarioStore(tmp_path)
+    assert fresh.list_ids() == ["simple"]
+    reasons = {item["file"].split("/")[-1]: item["reason"] for item in fresh.list_rejected()}
+    assert set(reasons) == {"old-v1.json", "broken.json"}
+    assert "altitude_corridor" in reasons["old-v1.json"] and "v1" in reasons["old-v1.json"]
+
+    listing = client.get("/scenarios").json()
+    assert listing["rejected"] == store.list_rejected()
+    assert client.get("/health").json()["scenarios_rejected"] == len(store.rejected)
 
 
 def test_contract_violation_is_422(client) -> None:

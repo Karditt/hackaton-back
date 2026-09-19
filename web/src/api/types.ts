@@ -25,6 +25,9 @@ export type {
 /** Элемент списка `GET /scenarios`. */
 export type ScenarioSummary = { id: string; name: string };
 
+/** Файл хранилища, не прочитанный по контракту, — `GET /scenarios`, поле `rejected`. */
+export type RejectedScenario = { file: string; reason: string };
+
 export type JobState = 'pending' | 'running' | 'done' | 'failed';
 
 /** Статус фоновой задачи — `api/jobs.py`, `Job.public()`. */
