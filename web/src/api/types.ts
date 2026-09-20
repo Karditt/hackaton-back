@@ -8,18 +8,27 @@
  */
 
 export type {
+  AltitudeCorridor,
+  FleetUnit,
   FlightPhase,
   Mission,
   MissionMetrics,
   MissionStatus,
   OptimizationMode,
+  Payload,
   PipelineResult,
   PlanWarning,
+  QualityRequirement,
   Recommendation,
   RecommendationKind,
+  Scenario,
   Schedule,
   ScheduleEntry,
   Severity,
+  Site,
+  SurveyType,
+  Vehicle,
+  Wind,
 } from '../types/schema';
 
 /** Элемент списка `GET /scenarios`. */

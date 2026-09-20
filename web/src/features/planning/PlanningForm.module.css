@@ -60,3 +60,119 @@ fieldset.field {
 .option input {
   margin-right: 6px;
 }
+
+/* Панель параметров сценария (E10). Геометрия здесь не правится — №8, №12. */
+
+.params {
+  margin-bottom: 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+
+.summary {
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+}
+
+.params > .field:first-of-type {
+  margin-top: 12px;
+}
+
+.badge {
+  margin-left: 8px;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--warning);
+  background: var(--warning-bg);
+  border-radius: 999px;
+}
+
+input.control,
+select.control {
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  font: inherit;
+  box-sizing: border-box;
+}
+
+.pairGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 400;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+.number {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  padding: 5px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  font: inherit;
+  color: var(--text);
+}
+
+.fleetRow {
+  margin-bottom: 10px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+
+.fleetRow .control {
+  margin-top: 6px;
+  font-size: 12px;
+}
+
+.fleetGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 8px;
+  align-items: center;
+  margin-top: 6px;
+}
+
+.rowButton {
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.rowButton:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.linkButton {
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  text-decoration: underline;
+  cursor: pointer;
+}

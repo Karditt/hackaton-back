@@ -5,8 +5,10 @@ import type { PlanningRun } from '../planning';
 import { ExportLinks } from './ExportLinks';
 import { MetricsList } from './MetricsList';
 import { RecommendationsList } from './RecommendationsList';
+import { ScheduleGantt } from './ScheduleGantt';
 import { ScheduleTable } from './ScheduleTable';
 import { WarningsList } from './WarningsList';
+import styles from './result.module.css';
 
 type Props = { run: PlanningRun };
 
@@ -32,6 +34,7 @@ export function ResultPanel({ run }: Props) {
   const feasible = mission.status === 'feasible';
   const warnings = collectWarnings(result);
   const stubStages = mission.stub_stages ?? [];
+  const boards = run.document.properties?.boards ?? [];
 
   return (
     <>
@@ -62,7 +65,11 @@ export function ResultPanel({ run }: Props) {
 
       {feasible && mission.schedule && (
         <Section title={`Расписание (${mission.schedule.entries?.length ?? 0})`}>
-          <ScheduleTable schedule={mission.schedule} />
+          <ScheduleGantt schedule={mission.schedule} boards={boards} />
+          <details className={styles.tableToggle}>
+            <summary>показать таблицей</summary>
+            <ScheduleTable schedule={mission.schedule} />
+          </details>
         </Section>
       )}
 
@@ -76,11 +83,7 @@ export function ResultPanel({ run }: Props) {
         <WarningsList warnings={warnings} />
       </Section>
 
-      <ExportLinks
-        jobId={run.jobId}
-        feasible={feasible}
-        boards={run.document.properties?.boards ?? []}
-      />
+      <ExportLinks jobId={run.jobId} feasible={feasible} boards={boards} />
     </>
   );
 }

@@ -31,6 +31,7 @@ from core.schemas import (
     PlanWarning,
     Scenario,
     Severity,
+    Vehicle,
 )
 
 #: Подкоманды, которые не являются путём к сценарию.
@@ -179,6 +180,12 @@ def command_export_schema(args: argparse.Namespace) -> int:
 
     AGENT.md §4: после ЛЮБОЙ правки `core/schemas.py` эта команда прогоняется
     заново, иначе типы фронта расходятся с ядром молча.
+
+    Корни выгрузки — то, что фронт получает от API целиком: сценарий
+    (`GET /scenarios/{id}`), результат прогона (`GET /jobs/{id}/result`) и
+    борт каталога (`GET /vehicles`). `Vehicle` не достижим из первых двух,
+    поэтому назван отдельно: иначе типы каталога пришлось бы писать руками,
+    что запрещено (AGENT.md §2).
     """
     schema = {
         "$schema": "http://json-schema.org/draft-07/schema#",
@@ -188,11 +195,12 @@ def command_export_schema(args: argparse.Namespace) -> int:
         "properties": {
             "scenario": {"$ref": "#/definitions/Scenario"},
             "pipelineResult": {"$ref": "#/definitions/PipelineResult"},
+            "vehicle": {"$ref": "#/definitions/Vehicle"},
         },
         "definitions": {},
     }
 
-    for model in (Scenario, PipelineResult):
+    for model in (Scenario, PipelineResult, Vehicle):
         model_schema = model.model_json_schema(ref_template="#/definitions/{model}")
         schema["definitions"].update(model_schema.pop("$defs", {}))
         schema["definitions"][model.__name__] = model_schema
