@@ -122,6 +122,46 @@ def test_pass_next_to_tall_obstacle_is_caught(runs: dict[str, PlanningRun]) -> N
     assert "validate.obstacle" in _check(run, sorties)
 
 
+def _moved(sortie: Sortie, dx_m: float) -> Sortie:
+    """Копия вылета, вся траектория которого сдвинута по x на `dx_m` метров."""
+    legs = [
+        leg.model_copy(
+            update={
+                "waypoints": [
+                    waypoint.model_copy(update={"x_m": waypoint.x_m + dx_m})
+                    for waypoint in leg.waypoints
+                ]
+            }
+        )
+        for leg in sortie.legs
+    ]
+    return sortie.model_copy(
+        update={"id": f"{sortie.id}-twin", "vehicle_instance": 99, "legs": legs}
+    )
+
+
+def test_converging_maneuver_zones_are_caught(runs: dict[str, PlanningRun]) -> None:
+    """Долг №27: траектории разведены, а зоны манёвра сходятся — нарушение (№37, №38).
+
+    Разворот в траектории — отрезок между концами соседних галсов, но самолёт
+    вправе крутить петлю где угодно внутри своей зоны манёвра. Здесь второй
+    самолёт снимает ту же подобласть в то же время, а его траектория отнесена
+    далеко: проверка траекторий молчит, проверка зон — нет.
+    """
+    run = runs["demo_100km2"]
+    assert run.result.coverage is not None
+    with_zones = {cell.cell_id for cell in run.result.coverage.cells if cell.maneuver_zones}
+    plane = next(
+        sortie
+        for sortie in run.mission.sorties
+        if run.vehicles[sortie.vehicle_id].is_fixed_wing()
+        and with_zones.intersection(sortie.cell_ids)
+    )
+    codes = _check(run, [*run.mission.sorties, _moved(plane, dx_m=1500.0)])
+    assert "validate.maneuver_separation" in codes
+    assert "validate.separation" not in codes
+
+
 def test_unholdable_ground_speed_is_caught(runs: dict[str, PlanningRun]) -> None:
     """Путевая скорость на галсе, которую борт не удержит против ветра, — нарушение (№45)."""
     run = runs["simple"]
