@@ -18,13 +18,12 @@ import math
 from dataclasses import dataclass
 
 from shapely.geometry import LineString, Point
-from shapely.ops import unary_union
 
 from core import assumptions
 from core.flight.cost import retime_sortie
+from core.flight.maneuver import ManeuverWindow, maneuver_overlap, maneuver_windows
 from core.flight.track import Track, build_track, first_conflict
 from core.geo.mask import WorkArea, ZoneArea
-from core.geo.project import polygon_to_shapely
 from core.schemas import (
     CoverageSet,
     FlightPhase,
@@ -69,28 +68,13 @@ def _temporal_crossings(
             if zone.blocks_altitude(low, high) and shape.intersects(zone.inner):
                 windows.append(_ZoneWindow(zone, leg.waypoints[0].time_s, leg.waypoints[-1].time_s))
 
-    if coverage is None:
-        return windows
     # Зона манёвра самолёта занята всё время съёмки своей подобласти.
-    for item in coverage.cells:
-        if item.vehicle_id != sortie.vehicle_id or item.cell_id not in sortie.cell_ids:
-            continue
-        if not item.maneuver_zones:
-            continue
-        times = [
-            waypoint.time_s
-            for leg in sortie.legs
-            if leg.cell_id == item.cell_id
-            for waypoint in leg.waypoints
-        ]
-        if not times:
-            continue
-        footprint = unary_union([polygon_to_shapely(zone) for zone in item.maneuver_zones])
+    for item in maneuver_windows(sortie, coverage, is_fixed_wing=True):
         for zone in temporal:
             if zone.blocks_altitude(
                 sortie.survey_altitude_m, sortie.survey_altitude_m
-            ) and footprint.intersects(zone.inner):
-                windows.append(_ZoneWindow(zone, min(times), max(times)))
+            ) and item.footprint.intersects(zone.inner):
+                windows.append(_ZoneWindow(zone, item.from_s, item.to_s))
     return windows
 
 
@@ -133,6 +117,7 @@ def build_schedule(
     order = sorted(range(len(sorties)), key=lambda index: (sorties[index].trip_index, index))
     ready_at: dict[tuple[str, int], float] = {}
     placed_tracks: list[Track] = []
+    placed_zones: list[ManeuverWindow] = []
     placed: dict[int, Sortie] = {}
     entries: list[ScheduleEntry] = []
     warnings: list[PlanWarning] = []
@@ -143,6 +128,7 @@ def build_schedule(
         key = (sortie.vehicle_id, sortie.vehicle_instance)
         ready_s = ready_at.get(key, assumptions.VEHICLE_PREP_TIME_S)
         track = build_track(sortie, vehicle.is_fixed_wing())
+        zones = maneuver_windows(sortie, coverage, vehicle.is_fixed_wing())
         windows = _temporal_crossings(sortie, work_area.zones, coverage)
 
         start_s = ready_s
@@ -158,6 +144,12 @@ def build_schedule(
             if any(first_conflict(candidate, other) for other in placed_tracks):
                 start_s += assumptions.SCHEDULE_SHIFT_STEP_S
                 continue
+            # Зона манёвра занята всё время съёмки подобласти, а не только
+            # когда через неё идёт линия маршрута (долг №27).
+            moved = [zone.shifted(start_s) for zone in zones]
+            if any(maneuver_overlap(zone, other) for zone in moved for other in placed_zones):
+                start_s += assumptions.SCHEDULE_SHIFT_STEP_S
+                continue
             resolved = True
             break
 
@@ -169,8 +161,8 @@ def build_schedule(
                     stage=Stage.SCHEDULE,
                     message=(
                         f"Вылет {sortie.id}: за {assumptions.SCHEDULE_MAX_DELAY_S / 3600:.0f} ч "
-                        "сдвигов старта не нашлось окна без сближений с другими бортами и без "
-                        "временных запретных зон"
+                        "сдвигов старта не нашлось окна без сближений с другими бортами (включая "
+                        "зоны манёвра) и без временных запретных зон"
                     ),
                     context={"sortie_id": sortie.id, "vehicle_id": sortie.vehicle_id},
                 )
@@ -180,6 +172,7 @@ def build_schedule(
         scheduled = retime_sortie(sortie, start_s)
         placed[index] = scheduled
         placed_tracks.append(track.shifted(start_s))
+        placed_zones.extend(zone.shifted(start_s) for zone in zones)
         ready_at[key] = scheduled.end_time_s() + turnaround_s
         entries.append(
             ScheduleEntry(

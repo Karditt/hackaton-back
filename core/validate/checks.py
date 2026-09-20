@@ -20,14 +20,13 @@ from dataclasses import dataclass, field
 
 from shapely.geometry import LineString, Point
 from shapely.geometry.base import BaseGeometry
-from shapely.ops import unary_union
 
 from core import assumptions
 from core.flight.cost import sortie_is_feasible
+from core.flight.maneuver import ManeuverWindow, maneuver_overlap, maneuver_windows
 from core.flight.track import build_track, first_conflict
 from core.flight.wind import required_airspeed_mps
 from core.geo.mask import WorkArea
-from core.geo.project import polygon_to_shapely
 from core.schemas import (
     CoverageSet,
     Decomposition,
@@ -168,31 +167,13 @@ def _course_deg(x0: float, y0: float, x1: float, y1: float) -> float:
     return math.degrees(math.atan2(x1 - x0, y1 - y0)) % 360.0
 
 
-def _maneuver_footprints(
-    sortie: Sortie, coverage: CoverageSet
-) -> list[tuple[str, BaseGeometry, float, float]]:
-    """Зоны манёвра вылета: (подобласть, геометрия, начало и конец съёмки подобласти)."""
-    by_cell = {
-        cell.cell_id: cell
-        for cell in coverage.cells
-        if cell.vehicle_id == sortie.vehicle_id and cell.maneuver_zones
-    }
-    items = []
-    for cell_id in sortie.cell_ids:
-        cell = by_cell.get(cell_id)
-        if cell is None:
-            continue
-        times = [
-            waypoint.time_s
-            for leg in sortie.legs
-            if leg.cell_id == cell_id
-            for waypoint in leg.waypoints
-        ]
-        if not times:
-            continue
-        shape = unary_union([polygon_to_shapely(zone) for zone in cell.maneuver_zones])
-        items.append((cell_id, shape, min(times), max(times)))
-    return items
+def _maneuver_footprints(sortie: Sortie, coverage: CoverageSet) -> list[ManeuverWindow]:
+    """Зоны манёвра вылета с временем съёмки подобласти.
+
+    Зоны манёвра строятся только самолётному типу (№38), поэтому минимум
+    разделения у окна — самолётный; у мультиротора список пуст.
+    """
+    return maneuver_windows(sortie, coverage, is_fixed_wing=True)
 
 
 def _check_zones(
@@ -237,24 +218,24 @@ def _check_zones(
                     )
         if coverage is None:
             continue
-        for cell_id, footprint, start, end in _maneuver_footprints(sortie, coverage):
+        for window in _maneuver_footprints(sortie, coverage):
             for zone in work_area.zones:
                 if zone.id in reported:
                     continue
                 if (
                     zone.blocks_altitude(sortie.survey_altitude_m, sortie.survey_altitude_m)
-                    and zone.active_during(start, end)
-                    and footprint.intersects(zone.inner)
+                    and zone.active_during(window.from_s, window.to_s)
+                    and window.footprint.intersects(zone.inner)
                 ):
                     reported.add(zone.id)
                     items.append(
                         _violation(
                             "validate.maneuver_zone",
-                            f"Вылет {sortie.id}: зона манёвра самолёта в подобласти {cell_id} "
-                            f"задевает запретную зону {zone.id!r}",
+                            f"Вылет {sortie.id}: зона манёвра самолёта в подобласти "
+                            f"{window.cell_id} задевает запретную зону {zone.id!r}",
                             sortie_id=sortie.id,
                             zone_id=zone.id,
-                            cell_id=cell_id,
+                            cell_id=window.cell_id,
                         )
                     )
     return items
@@ -291,22 +272,22 @@ def _check_obstacles(
                     )
         if coverage is None:
             continue
-        for cell_id, footprint, _start, _end in _maneuver_footprints(sortie, coverage):
+        for window in _maneuver_footprints(sortie, coverage):
             for obstacle in work_area.obstacles:
                 if obstacle.id in reported:
                     continue
-                if obstacle.blocks_altitude(sortie.survey_altitude_m) and footprint.intersects(
-                    obstacle.inner
-                ):
+                if obstacle.blocks_altitude(
+                    sortie.survey_altitude_m
+                ) and window.footprint.intersects(obstacle.inner):
                     reported.add(obstacle.id)
                     items.append(
                         _violation(
                             "validate.maneuver_zone",
-                            f"Вылет {sortie.id}: зона манёвра самолёта в подобласти {cell_id} "
-                            f"задевает препятствие {obstacle.id!r}",
+                            f"Вылет {sortie.id}: зона манёвра самолёта в подобласти "
+                            f"{window.cell_id} задевает препятствие {obstacle.id!r}",
                             sortie_id=sortie.id,
                             obstacle_id=obstacle.id,
-                            cell_id=cell_id,
+                            cell_id=window.cell_id,
                         )
                     )
     return items
@@ -335,15 +316,15 @@ def _check_airspace(
                 break
         if coverage is None:
             continue
-        for cell_id, footprint, _start, _end in _maneuver_footprints(sortie, coverage):
-            if not footprint.within(allowed):
+        for window in _maneuver_footprints(sortie, coverage):
+            if not window.footprint.within(allowed):
                 items.append(
                     _violation(
                         "validate.maneuver_zone",
-                        f"Вылет {sortie.id}: зона манёвра в подобласти {cell_id} выходит за "
-                        "границу разрешённого воздушного пространства",
+                        f"Вылет {sortie.id}: зона манёвра в подобласти {window.cell_id} выходит "
+                        "за границу разрешённого воздушного пространства",
                         sortie_id=sortie.id,
-                        cell_id=cell_id,
+                        cell_id=window.cell_id,
                     )
                 )
                 break
@@ -412,6 +393,59 @@ def _check_separation(sorties: list[Sortie], vehicles: dict[str, Vehicle]) -> li
                     ),
                     sortie_id=first.sortie_id,
                     other_sortie_id=second.sortie_id,
+                )
+            )
+    return items
+
+
+def _check_maneuver_separation(
+    sorties: list[Sortie], coverage: CoverageSet | None, vehicles: dict[str, Vehicle]
+) -> list[PlanWarning]:
+    """Зоны манёвра разных вылетов друг относительно друга (долг №27, №37).
+
+    Траекторий тут мало: разворот в траектории — отрезок между концами
+    соседних галсов, а самолёт вправе крутить петлю где угодно внутри своей
+    зоны (№38). Два самолёта, снимающие соседние подобласти на одной высоте в
+    одно время, могут разойтись отрезками и сойтись на развороте.
+    """
+    windows: list[ManeuverWindow] = []
+    for sortie in sorties:
+        vehicle = vehicles[sortie.vehicle_id]
+        windows.extend(maneuver_windows(sortie, coverage, vehicle.is_fixed_wing()))
+    windows.sort(key=lambda item: item.from_s)
+
+    items: list[PlanWarning] = []
+    reported: set[tuple[str, str]] = set()
+    for index, first in enumerate(windows):
+        for second in windows[index + 1 :]:
+            if second.from_s >= first.to_s:
+                break
+            if first.sortie_id == second.sortie_id:
+                continue
+            pair = tuple(sorted((first.sortie_id, second.sortie_id)))
+            if pair in reported:
+                continue
+            overlap = maneuver_overlap(first, second)
+            if overlap is None:
+                continue
+            reported.add(pair)
+            items.append(
+                _violation(
+                    "validate.maneuver_separation",
+                    f"Зоны манёвра сходятся: {first.sortie_id} (подобласть {first.cell_id}) и "
+                    f"{second.sortie_id} (подобласть {second.cell_id}) заняты вместе с "
+                    f"{overlap.from_s / 60:.1f} по {overlap.to_s / 60:.1f} мин от начала работ "
+                    f"на {overlap.distance_m:.0f} м друг от друга при минимуме "
+                    f"{overlap.required_m:.0f} м и разнице высот {overlap.vertical_m:.0f} м",
+                    MetricLineString(
+                        points=[
+                            MetricPoint(x_m=overlap.x_m - 1.0, y_m=overlap.y_m),
+                            MetricPoint(x_m=overlap.x_m + 1.0, y_m=overlap.y_m),
+                        ]
+                    ),
+                    sortie_id=first.sortie_id,
+                    other_sortie_id=second.sortie_id,
+                    cell_id=first.cell_id,
                 )
             )
     return items
@@ -537,6 +571,7 @@ def validate_plan(
     report.violations.extend(_check_airspace(work_area, sorties, coverage))
     report.violations.extend(_check_altitudes(work_area, sorties))
     report.violations.extend(_check_separation(sorties, vehicles))
+    report.violations.extend(_check_maneuver_separation(sorties, coverage, vehicles))
     report.violations.extend(_check_continuity(sorties))
     report.violations.extend(_check_deadline(scenario, sorties))
     report.warnings.extend(_derived_specs(vehicles, sorties))
