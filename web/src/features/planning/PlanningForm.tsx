@@ -1,7 +1,15 @@
-import type { OptimizationMode, RejectedScenario, ScenarioSummary } from '../../api';
+import type {
+  OptimizationMode,
+  RejectedScenario,
+  Scenario,
+  ScenarioSummary,
+  Vehicle,
+} from '../../api';
 import { Notice } from '../../shared/ui/Notice';
 import { ModeSelect } from './ModeSelect';
+import { ScenarioOptionsForm } from './ScenarioOptionsForm';
 import { ScenarioSelect } from './ScenarioSelect';
+import type { ScenarioOptions } from './scenarioOptions';
 import styles from './PlanningForm.module.css';
 
 type Props = {
@@ -12,6 +20,13 @@ type Props = {
   onScenarioChange: (scenarioId: string) => void;
   mode: OptimizationMode;
   onModeChange: (mode: OptimizationMode) => void;
+  /** Выбранный сценарий целиком; null — ещё не загружен. */
+  scenario: Scenario | null;
+  options: ScenarioOptions | null;
+  onOptionsChange: (options: ScenarioOptions) => void;
+  onOptionsReset: () => void;
+  optionsEdited: boolean;
+  vehicles: Vehicle[];
   onSubmit: () => void;
   busy: boolean;
   status: string;
@@ -20,7 +35,7 @@ type Props = {
 
 /** Параметры расчёта и кнопка запуска. */
 export function PlanningForm(props: Props) {
-  const { busy, scenarioId } = props;
+  const { busy, scenarioId, scenario, options } = props;
   return (
     <div>
       <ScenarioSelect
@@ -37,7 +52,24 @@ export function PlanningForm(props: Props) {
       )}
       <ModeSelect value={props.mode} onChange={props.onModeChange} disabled={busy} />
 
-      <button className={styles.submit} onClick={props.onSubmit} disabled={busy || !scenarioId}>
+      {scenario && options && (
+        <ScenarioOptionsForm
+          scenario={scenario}
+          options={options}
+          onChange={props.onOptionsChange}
+          onReset={props.onOptionsReset}
+          edited={props.optionsEdited}
+          vehicles={props.vehicles}
+          disabled={busy}
+        />
+      )}
+
+      <button
+        className={styles.submit}
+        onClick={props.onSubmit}
+        // Пока параметры не загружены, расчёт ушёл бы без правок панели.
+        disabled={busy || !scenarioId || options === null}
+      >
         {busy ? 'Считаю…' : 'Рассчитать'}
       </button>
 

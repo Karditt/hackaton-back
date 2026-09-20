@@ -78,6 +78,16 @@ def test_export_schema_produces_valid_json(tmp_path: Path) -> None:
     )
 
 
+def test_export_schema_includes_vehicle_catalog(tmp_path: Path) -> None:
+    """Борт каталога — тоже корень выгрузки: панель параметров веба набирает флот из
+    `GET /vehicles`, а типы контракта руками не пишутся (AGENT.md §2)."""
+    output = tmp_path / "schema.json"
+    assert main(["export-schema", "-o", str(output)]) == 0
+    schema = json.loads(output.read_text(encoding="utf-8"))
+    assert schema["properties"]["vehicle"] == {"$ref": "#/definitions/Vehicle"}
+    assert {"Vehicle", "Payload"} <= set(schema["definitions"])
+
+
 def test_assumptions_json_separates_customer_values(capsys: pytest.CaptureFixture[str]) -> None:
     """Реестр допущений: у каждого числа источник; значения заказчика помечены отдельно."""
     assert main(["assumptions", "--json"]) == 0

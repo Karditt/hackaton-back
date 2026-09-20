@@ -9,6 +9,9 @@
     },
     "pipelineResult": {
       "$ref": "#/definitions/PipelineResult"
+    },
+    "vehicle": {
+      "$ref": "#/definitions/Vehicle"
     }
   },
   "definitions": {
@@ -1982,6 +1985,371 @@
         "mission"
       ],
       "title": "PipelineResult",
+      "type": "object"
+    },
+    "Payload": {
+      "additionalProperties": false,
+      "description": "Полезная нагрузка.\n\nИнвариант 6: ни одно число не выдумывается. Оптические параметры, которых\nнет в официальном документе, остаются `None` и попадают в `gaps`. Параметры,\nвыведенные из документированных чисел по формуле, перечислены в\n`derived_fields`.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/definitions/PayloadKind"
+        },
+        "source": {
+          "description": "Документ и страница — обязательно (инвариант 6)",
+          "title": "Source",
+          "type": "string"
+        },
+        "sensor_width_mm": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sensor Width Mm"
+        },
+        "sensor_height_mm": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sensor Height Mm"
+        },
+        "image_width_px": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Image Width Px"
+        },
+        "image_height_px": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Image Height Px"
+        },
+        "focal_length_mm": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Focal Length Mm"
+        },
+        "fov_horizontal_deg": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Угол поля зрения по ширине кадра, градусы",
+          "title": "Fov Horizontal Deg"
+        },
+        "fov_vertical_deg": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Угол поля зрения по высоте кадра, градусы",
+          "title": "Fov Vertical Deg"
+        },
+        "min_shot_interval_s": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Минимальный интервал между кадрами, секунды",
+          "title": "Min Shot Interval S"
+        },
+        "mass_kg": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mass Kg"
+        },
+        "gaps": {
+          "description": "Известные пробелы ТТХ, дословно из каталога",
+          "items": {
+            "type": "string"
+          },
+          "title": "Gaps",
+          "type": "array"
+        },
+        "derived_fields": {
+          "description": "Поля, выведенные по формуле, а не взятые из документа",
+          "items": {
+            "type": "string"
+          },
+          "title": "Derived Fields",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "kind",
+        "source"
+      ],
+      "title": "Payload",
+      "type": "object"
+    },
+    "PayloadKind": {
+      "description": "Класс полезной нагрузки. Основа матрицы совместимости «борт × нагрузка» (E2).",
+      "enum": [
+        "rgb",
+        "multispectral",
+        "ir",
+        "lidar",
+        "geophysical",
+        "inspection_rgb",
+        "gimbal"
+      ],
+      "title": "PayloadKind",
+      "type": "string"
+    },
+    "VehicleType": {
+      "description": "Тип БВС. Определяет кинематику разворота и минимум разделения.",
+      "enum": [
+        "fixed_wing",
+        "multirotor"
+      ],
+      "title": "VehicleType",
+      "type": "string"
+    },
+    "Vehicle": {
+      "additionalProperties": false,
+      "description": "Борт.\n\nЗначения приходят из `data/vehicles.yaml`. Там, где производитель параметр\nне публикует, подставляется допущение из `core.assumptions` — и такая\nподстановка ОБЯЗАТЕЛЬНО перечислена в `derived_fields`, чтобы отличать\nТТХ от решения команды.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#/definitions/VehicleType"
+        },
+        "cruise_speed_mps": {
+          "description": "Крейсерская воздушная скорость, м/с",
+          "exclusiveMinimum": 0,
+          "title": "Cruise Speed Mps",
+          "type": "number"
+        },
+        "max_speed_mps": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Максимальная скорость, м/с",
+          "title": "Max Speed Mps"
+        },
+        "min_speed_mps": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Минимальная воздушная скорость, м/с (самолётный тип)",
+          "title": "Min Speed Mps"
+        },
+        "endurance_s": {
+          "description": "Максимальная продолжительность полёта, секунды",
+          "exclusiveMinimum": 0,
+          "title": "Endurance S",
+          "type": "number"
+        },
+        "max_wind_mps": {
+          "description": "Допустимая скорость ветра, м/с",
+          "exclusiveMinimum": 0,
+          "title": "Max Wind Mps",
+          "type": "number"
+        },
+        "turn_radius_m": {
+          "description": "Минимальный радиус разворота, метры (0 — мультиротор)",
+          "minimum": 0,
+          "title": "Turn Radius M",
+          "type": "number"
+        },
+        "min_altitude_agl_m": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Мин. безопасная высота, м",
+          "title": "Min Altitude Agl M"
+        },
+        "max_altitude_agl_m": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Потолок над землёй, м",
+          "title": "Max Altitude Agl M"
+        },
+        "max_range_m": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Протяжённость маршрута, метры",
+          "title": "Max Range M"
+        },
+        "energy_wh": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Энергия АКБ, Вт·ч (справочно)",
+          "title": "Energy Wh"
+        },
+        "battery_reserve_fraction": {
+          "description": "Отсечка заряда, доля 0..1 (заказчик, №34)",
+          "exclusiveMaximum": 1.0,
+          "minimum": 0.0,
+          "title": "Battery Reserve Fraction",
+          "type": "number"
+        },
+        "takeoff_mode": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Takeoff Mode"
+        },
+        "landing_mode": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Landing Mode"
+        },
+        "payloads": {
+          "items": {
+            "$ref": "#/definitions/Payload"
+          },
+          "title": "Payloads",
+          "type": "array"
+        },
+        "gaps": {
+          "description": "Пробелы ТТХ из каталога (инвариант 6)",
+          "items": {
+            "type": "string"
+          },
+          "title": "Gaps",
+          "type": "array"
+        },
+        "derived_fields": {
+          "description": "Поля, заполненные допущением команды, а не ТТХ производителя",
+          "items": {
+            "type": "string"
+          },
+          "title": "Derived Fields",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "type",
+        "cruise_speed_mps",
+        "endurance_s",
+        "max_wind_mps",
+        "turn_radius_m",
+        "battery_reserve_fraction"
+      ],
+      "title": "Vehicle",
       "type": "object"
     }
   }

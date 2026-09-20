@@ -93,6 +93,30 @@ def test_self_intersecting_area_is_422_with_location(client) -> None:
     assert "самопересечение" in response.json()["detail"]
 
 
+def test_edited_scenario_is_planned_as_a_copy(client) -> None:
+    """E10: панель параметров читает сценарий, шлёт копию с правками и считает её.
+
+    Исходный сценарий при этом не трогается — это весь договор веба с API:
+    новых маршрутов панели параметров не нужно.
+    """
+    base = client.get("/scenarios/simple").json()
+    edited = dict(base)
+    edited["id"] = "simple--custom"
+    edited["quality"] = {**base["quality"], "gsd_m": base["quality"]["gsd_m"] * 1.5}
+    edited["wind"] = {"speed_mps": 3.0, "direction_deg": 90.0}
+    edited["turnaround_s"] = 900
+    assert client.post("/scenarios", json=edited).status_code == 201
+
+    finished = _wait_for_job(client, client.post("/scenarios/simple--custom/plan").json()["id"])
+    assert finished["state"] == "done", finished.get("error")
+    assert client.get("/scenarios/simple").json() == base
+
+    over_limit = dict(edited) | {"fleet": [{"vehicle_id": "geoscan-gemini", "count": 20}]}
+    refused = client.post("/scenarios", json=over_limit)
+    assert refused.status_code == 422
+    assert "15" in json.dumps(refused.json(), ensure_ascii=False)
+
+
 def test_plan_runs_in_background_and_polls_to_done(client) -> None:
     """Сквозной путь API: сценарий → расчёт → статус → результат со статусом плана."""
     started = client.post("/scenarios/simple/plan", params={"mode": "min_resource"})

@@ -38,15 +38,16 @@ function drawRank(feature: GeoJsonFeature): number {
 }
 
 /**
- * Отрисовать документ GeoJSON, полученный от API, и перевести карту к нему.
- * Это полётное задание либо отчёт о невыполнимости — с местами нарушений и
- * предлагаемыми площадками.
+ * Отрисовать документ GeoJSON, полученный от API. Это полётное задание либо
+ * отчёт о невыполнимости — с местами нарушений и предлагаемыми площадками.
  *
  * @param map карта Leaflet
  * @param document выгрузка в WGS84
+ * @param fit перевести карту к объектам; при смене отбора слоёв — нет, иначе
+ *   каждая галочка сбрасывала бы масштаб, выбранный пользователем
  * @returns слой, который вызывающий код снимет перед следующей отрисовкой
  */
-export function drawMission(map: L.Map, document: GeoJsonDocument): L.GeoJSON {
+export function drawMission(map: L.Map, document: GeoJsonDocument, fit = true): L.GeoJSON {
   // Сортировка устойчива: внутри одного слоя порядок файла сохраняется.
   const features = [...document.features].sort((a, b) => drawRank(a) - drawRank(b));
   const ordered: GeoJsonDocument = { ...document, features };
@@ -69,7 +70,7 @@ export function drawMission(map: L.Map, document: GeoJsonDocument): L.GeoJSON {
   }).addTo(map);
 
   const bounds = layer.getBounds();
-  if (bounds.isValid()) {
+  if (fit && bounds.isValid()) {
     map.fitBounds(bounds, { padding: FIT_PADDING });
   }
   return layer;
