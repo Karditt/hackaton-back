@@ -6,6 +6,8 @@
     python -m core.cli scenarios/simple.json -o out/mission.geojson
     python -m core.cli scenarios/simple.json -o out/gemini1.kml --board geoscan-gemini_1
     python -m core.cli --batch scenarios/ -o out/
+    python -m core.cli import-layers --area area.kml --zones zones.kml \
+        --obstacles obstacles.kml --params params.json -o scenarios/real.json
     python -m core.cli export-schema -o web/src/types/schema.json
     python -m core.cli assumptions
 """
@@ -24,8 +26,10 @@ from core.catalog import load_catalog
 from core.errors import CoreError
 from core.export.package import write_mission_files
 from core.export.writer import export_mission, format_for
+from core.geo.kml_import import import_layers
 from core.pipeline import PlanningRun, run_pipeline
 from core.schemas import (
+    ImportReport,
     OptimizationMode,
     PipelineResult,
     PlanWarning,
@@ -35,7 +39,7 @@ from core.schemas import (
 )
 
 #: Подкоманды, которые не являются путём к сценарию.
-SUBCOMMANDS = ("plan", "export-schema", "assumptions")
+SUBCOMMANDS = ("plan", "import-layers", "export-schema", "assumptions")
 
 
 def load_scenario(path: Path) -> Scenario:
@@ -175,6 +179,64 @@ def command_plan(args: argparse.Namespace) -> int:
     return 1 if failures else 0
 
 
+def command_import_layers(args: argparse.Namespace) -> int:
+    """Собрать сценарий из слоёв KML заказчика и файла параметров (E1, E9).
+
+    Геометрия приходит файлами, всё остальное — параметрами: заказчик рисует
+    область в ГИС и не правит её у нас (№8, №12). Отчёт импорта печатается и
+    кладётся рядом со сценарием: что починено и что выброшено, должно быть
+    видно до расчёта, а не после.
+    """
+    params_path = Path(args.params)
+    if not params_path.is_file():
+        raise CoreError(f"Файл параметров не найден: {params_path}")
+    payload = json.loads(params_path.read_text(encoding="utf-8"))
+
+    layers = import_layers(
+        area_source=Path(args.area),
+        zones_source=Path(args.zones) if args.zones else None,
+        obstacles_source=Path(args.obstacles) if args.obstacles else None,
+        terrain_min_m=args.terrain_min,
+        terrain_max_m=args.terrain_max,
+    )
+    payload["area"] = layers.area.model_dump(mode="json")
+    payload["no_fly_zones"] = [zone.model_dump(mode="json") for zone in layers.zones]
+    payload["obstacles"] = [obstacle.model_dump(mode="json") for obstacle in layers.obstacles]
+    try:
+        scenario = Scenario.model_validate(payload)
+    except ValidationError as error:
+        raise CoreError(f"Собранный сценарий не соответствует контракту:\n{error}") from error
+
+    report = layers.report
+    print(f"=== импорт слоёв → {scenario.id}")
+    for label, stats in (
+        ("область", report.area),
+        ("зоны", report.zones),
+        ("препятствия", report.obstacles),
+    ):
+        print(
+            f"  {label:<12}: прочитано {stats.read}, принято {stats.kept}, "
+            f"исправлено {stats.fixed}, выброшено {stats.dropped}, "
+            f"вне области {stats.skipped}"
+        )
+    print(f"  площадь     : {report.area_km2:.1f} км²")
+    _print_grouped("ИМПОРТ", report.warnings, limit=20)
+
+    target = Path(args.output)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        json.dumps(scenario.model_dump(mode="json", exclude_none=True), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    report_path = target.with_suffix(".import.json")
+    report_path.write_text(
+        json.dumps(report.model_dump(mode="json"), ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    print(f"  записано    : {target}")
+    print(f"  отчёт       : {report_path}")
+    return 0
+
+
 def command_export_schema(args: argparse.Namespace) -> int:
     """Выгрузить JSON Schema контракта для генерации TypeScript-типов.
 
@@ -182,9 +244,10 @@ def command_export_schema(args: argparse.Namespace) -> int:
     заново, иначе типы фронта расходятся с ядром молча.
 
     Корни выгрузки — то, что фронт получает от API целиком: сценарий
-    (`GET /scenarios/{id}`), результат прогона (`GET /jobs/{id}/result`) и
-    борт каталога (`GET /vehicles`). `Vehicle` не достижим из первых двух,
-    поэтому назван отдельно: иначе типы каталога пришлось бы писать руками,
+    (`GET /scenarios/{id}`), результат прогона (`GET /jobs/{id}/result`),
+    борт каталога (`GET /vehicles`) и отчёт импорта слоёв
+    (`POST /scenarios/import`). Последние два не достижимы из первых,
+    поэтому названы отдельно: иначе их типы пришлось бы писать руками,
     что запрещено (AGENT.md §2).
     """
     schema = {
@@ -196,11 +259,12 @@ def command_export_schema(args: argparse.Namespace) -> int:
             "scenario": {"$ref": "#/definitions/Scenario"},
             "pipelineResult": {"$ref": "#/definitions/PipelineResult"},
             "vehicle": {"$ref": "#/definitions/Vehicle"},
+            "importReport": {"$ref": "#/definitions/ImportReport"},
         },
         "definitions": {},
     }
 
-    for model in (Scenario, PipelineResult, Vehicle):
+    for model in (Scenario, PipelineResult, Vehicle, ImportReport):
         model_schema = model.model_json_schema(ref_template="#/definitions/{model}")
         schema["definitions"].update(model_schema.pop("$defs", {}))
         schema["definitions"][model.__name__] = model_schema
@@ -291,6 +355,24 @@ def build_parser() -> argparse.ArgumentParser:
     plan.add_argument("--vehicles", help="путь к каталогу техники вместо data/vehicles.yaml")
     plan.add_argument("--dump-stages", help="каталог для выгрузки промежуточных стадий")
     plan.set_defaults(handler=command_plan)
+
+    layers = subparsers.add_parser(
+        "import-layers", help="собрать сценарий из слоёв KML и файла параметров"
+    )
+    layers.add_argument("--area", required=True, help="KML области съёмки")
+    layers.add_argument("--zones", help="KML зон ограничений")
+    layers.add_argument("--obstacles", help="KML высотных препятствий")
+    layers.add_argument(
+        "--params", required=True, help="JSON с параметрами задания: флот, площадки, GSD, сроки"
+    )
+    layers.add_argument(
+        "--terrain-min", type=float, default=0.0, help="минимальная отметка рельефа области, м"
+    )
+    layers.add_argument(
+        "--terrain-max", type=float, default=0.0, help="максимальная отметка рельефа области, м"
+    )
+    layers.add_argument("-o", "--output", required=True, help="куда записать сценарий")
+    layers.set_defaults(handler=command_import_layers)
 
     schema = subparsers.add_parser("export-schema", help="выгрузить JSON Schema контракта")
     schema.add_argument(

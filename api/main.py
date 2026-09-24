@@ -12,13 +12,15 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query, Response
+from fastapi import FastAPI, File, Form, HTTPException, Query, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import ValidationError
 
 from api.jobs import Job, JobRegistry, JobState
 from api.storage import ScenarioStore
@@ -29,6 +31,7 @@ from core.export.geojson import geojson_to_text, mission_to_geojson
 from core.export.kml import kml_to_bytes, mission_to_kml
 from core.export.package import file_stem, mission_zip
 from core.export.schedule import schedule_to_csv
+from core.geo.kml_import import import_layers
 from core.pipeline import check_scenario
 from core.schemas import ExportFormat, OptimizationMode, PipelineResult, Scenario
 
@@ -173,6 +176,66 @@ def create_scenario(scenario: Scenario) -> dict[str, Any]:
         raise HTTPException(status_code=422, detail=str(error)) from error
     saved = store.save(scenario)
     return {"id": saved.id, "name": saved.name}
+
+
+@app.post("/scenarios/import", tags=["сценарии"], status_code=201)
+async def import_scenario(
+    params: str = Form(description="JSON с параметрами задания: флот, площадки, GSD, сроки"),
+    area: UploadFile = File(description="KML области съёмки"),
+    zones: UploadFile | None = File(default=None, description="KML зон ограничений"),
+    obstacles: UploadFile | None = File(default=None, description="KML высотных препятствий"),
+    terrain_min_m: float = Form(default=0.0, description="Минимальная отметка рельефа, м"),
+    terrain_max_m: float = Form(default=0.0, description="Максимальная отметка рельефа, м"),
+) -> dict[str, Any]:
+    """Собрать сценарий из слоёв KML и параметров задания (E9, долг №29).
+
+    Геометрия приходит файлами, подготовленными в ГИС: рисовать и править её у
+    нас заказчик не просил и просил не делать (№8, №12). Правила чтения —
+    `docs/input_formats.md`.
+
+    Ответ несёт отчёт импорта: что прочитано, что починено, что выброшено и что
+    отброшено отбором по области. Молчать об этом нельзя — план начинается с
+    того, что мы прочитали (№4).
+    """
+    try:
+        payload = json.loads(params)
+    except json.JSONDecodeError as error:
+        raise HTTPException(
+            status_code=422, detail=f"Параметры задания не JSON: {error}"
+        ) from error
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=422, detail="Параметры задания — объект JSON")
+
+    async def _text(upload: UploadFile | None) -> str | None:
+        if upload is None:
+            return None
+        raw = await upload.read()
+        return raw.decode("utf-8-sig", errors="replace")
+
+    try:
+        layers = import_layers(
+            area_source=await _text(area) or "",
+            zones_source=await _text(zones),
+            obstacles_source=await _text(obstacles),
+            terrain_min_m=terrain_min_m,
+            terrain_max_m=terrain_max_m,
+        )
+    except CoreError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+    payload["area"] = layers.area.model_dump(mode="json")
+    payload["no_fly_zones"] = [zone.model_dump(mode="json") for zone in layers.zones]
+    payload["obstacles"] = [obstacle.model_dump(mode="json") for obstacle in layers.obstacles]
+    try:
+        scenario = Scenario.model_validate(payload)
+        check_scenario(scenario)
+    except ValidationError as error:
+        raise HTTPException(status_code=422, detail=error.errors()) from error
+    except CoreError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+    saved = store.save(scenario)
+    return {"id": saved.id, "name": saved.name, "report": layers.report.model_dump(mode="json")}
 
 
 @app.get("/scenarios/{scenario_id}", tags=["сценарии"])

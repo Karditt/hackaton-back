@@ -1,0 +1,90 @@
+{
+  "area": {
+    "read": 696,
+    "kept": 549,
+    "fixed": 5,
+    "dropped": 135,
+    "skipped": 0
+  },
+  "zones": {
+    "read": 341,
+    "kept": 10,
+    "fixed": 0,
+    "dropped": 0,
+    "skipped": 331
+  },
+  "obstacles": {
+    "read": 5164,
+    "kept": 547,
+    "fixed": 0,
+    "dropped": 2,
+    "skipped": 4615
+  },
+  "area_km2": 244.95539567173216,
+  "warnings": [
+    {
+      "code": "import.geometry_dropped",
+      "severity": "warning",
+      "stage": "geo",
+      "message": "Вырожденные куски области выброшены: нулевая площадь в проекции (сколько именно — в счётчике `dropped`)",
+      "context": {},
+      "geometry": null
+    },
+    {
+      "code": "import.geometry_fixed",
+      "severity": "warning",
+      "stage": "geo",
+      "message": "Самопересечения в контурах исправлены; площадь каждого куска изменилась не больше чем на 1% (сколько именно — в счётчике `fixed`)",
+      "context": {},
+      "geometry": null
+    },
+    {
+      "code": "import.geometry_merged",
+      "severity": "warning",
+      "stage": "geo",
+      "message": "Соседние куски области слиты: 561 записей файла дают 549 раздельных кусков — у остальных общая граница",
+      "context": {},
+      "geometry": null
+    },
+    {
+      "code": "import.zone_window_unknown",
+      "severity": "warning",
+      "stage": "geo",
+      "message": "Зона UUR215: тип «врем_ограничение», но времени действия в файле нет — зона считается действующей всегда. Формат окон — docs/input_formats.md §3.2",
+      "context": {},
+      "geometry": null
+    },
+    {
+      "code": "import.zone_datum_unverified",
+      "severity": "warning",
+      "stage": "geo",
+      "message": "Высоты зон заданы над уровнем моря, а рельеф не задан: отметки прочитаны как высоты над поверхностью (ЦМР — E1, P1)",
+      "context": {},
+      "geometry": null
+    },
+    {
+      "code": "import.obstacle_dropped",
+      "severity": "warning",
+      "stage": "geo",
+      "message": "Препятствие без координат или с координатами 0,0 выброшено",
+      "context": {},
+      "geometry": null
+    },
+    {
+      "code": "import.obstacle_altitude_mode_nonstandard",
+      "severity": "warning",
+      "stage": "geo",
+      "message": "Значение altitudeMode «relativetoseafloor» не из словаря KML — прочитано как отметка над уровнем моря (docs/input_formats.md §4.2)",
+      "context": {},
+      "geometry": null
+    },
+    {
+      "code": "import.obstacle_line_buffered",
+      "severity": "warning",
+      "stage": "geo",
+      "message": "Линейные препятствия развёрнуты в полосу шириной 10 м (допущение команды)",
+      "context": {},
+      "geometry": null
+    }
+  ]
+}

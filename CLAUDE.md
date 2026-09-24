@@ -43,6 +43,11 @@ pytest
 # прогон на всех тестовых сценариях
 python -m core.cli --batch scenarios/ -o out/
 
+# сборка сценария из слоёв KML заказчика (docs/input_formats.md)
+python -m core.cli import-layers --area data/samples/survey_area_msk.kml \
+    --zones data/samples/zones_msk.kml --obstacles data/samples/obstacles_msk.kml \
+    --params scenarios/params/real_msk.params.json -o scenarios/real/real_msk.json
+
 # генерация TypeScript-типов из core/schemas.py (после ЛЮБОЙ правки контракта)
 python -m core.cli export-schema -o web/src/types/schema.json
 cd web && npm run gen:types   # закреплённая версия генератора из web/package.json

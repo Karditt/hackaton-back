@@ -12,6 +12,9 @@
     },
     "vehicle": {
       "$ref": "#/definitions/Vehicle"
+    },
+    "importReport": {
+      "$ref": "#/definitions/ImportReport"
     }
   },
   "definitions": {
@@ -2350,6 +2353,80 @@
         "battery_reserve_fraction"
       ],
       "title": "Vehicle",
+      "type": "object"
+    },
+    "LayerStats": {
+      "additionalProperties": false,
+      "description": "Что импорт сделал с одним слоем (docs/input_formats.md §1).",
+      "properties": {
+        "read": {
+          "default": 0,
+          "description": "Объектов в файле",
+          "minimum": 0,
+          "title": "Read",
+          "type": "integer"
+        },
+        "kept": {
+          "default": 0,
+          "description": "Принято в сценарий",
+          "minimum": 0,
+          "title": "Kept",
+          "type": "integer"
+        },
+        "fixed": {
+          "default": 0,
+          "description": "Исправлено починкой геометрии",
+          "minimum": 0,
+          "title": "Fixed",
+          "type": "integer"
+        },
+        "dropped": {
+          "default": 0,
+          "description": "Выброшено как непригодное",
+          "minimum": 0,
+          "title": "Dropped",
+          "type": "integer"
+        },
+        "skipped": {
+          "default": 0,
+          "description": "Отброшено отбором по области",
+          "minimum": 0,
+          "title": "Skipped",
+          "type": "integer"
+        }
+      },
+      "title": "LayerStats",
+      "type": "object"
+    },
+    "ImportReport": {
+      "additionalProperties": false,
+      "description": "Отчёт импорта: что прочитано, что починено, что выброшено.\n\nОтдаётся вместе со сценарием и показывается пользователю. Молча чинить\nили выбрасывать объекты входного файла нельзя: заказчик проверяет именно\nбезопасность плана (№4), а она начинается с того, что мы прочитали.",
+      "properties": {
+        "area": {
+          "$ref": "#/definitions/LayerStats"
+        },
+        "zones": {
+          "$ref": "#/definitions/LayerStats"
+        },
+        "obstacles": {
+          "$ref": "#/definitions/LayerStats"
+        },
+        "area_km2": {
+          "default": 0.0,
+          "description": "Площадь принятой области, км²",
+          "minimum": 0.0,
+          "title": "Area Km2",
+          "type": "number"
+        },
+        "warnings": {
+          "items": {
+            "$ref": "#/definitions/PlanWarning"
+          },
+          "title": "Warnings",
+          "type": "array"
+        }
+      },
+      "title": "ImportReport",
       "type": "object"
     }
   }

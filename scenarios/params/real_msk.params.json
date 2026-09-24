@@ -1,0 +1,19 @@
+{
+  "id": "real_msk",
+  "name": "Московская область, данные заказчика",
+  "description": "Область съёмки, зоны ограничений и высотные препятствия — файлы заказчика из data/samples. Геометрия собирается командой import-layers, здесь только параметры задания: флот, площадки, качество, сроки, ветер.",
+  "survey_type": "rgb",
+  "quality": { "gsd_m": 0.05 },
+  "altitude_corridor": { "max_altitude_agl_m": 700 },
+  "wind": { "speed_mps": 5.0, "direction_deg": 250.0 },
+  "start_time": "2026-09-25T06:00:00Z",
+  "mode": "min_makespan",
+  "sites": [
+    { "id": "site-south", "name": "Южная площадка", "position": [38.55096, 54.85846] },
+    { "id": "site-north", "name": "Северная площадка", "position": [38.49815, 55.13821] }
+  ],
+  "fleet": [
+    { "vehicle_id": "geoscan-201", "count": 5, "payload_id": "riebo-r4" },
+    { "vehicle_id": "geoscan-gemini", "count": 10, "payload_id": "geoscan-pf1b" }
+  ]
+}

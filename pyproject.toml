@@ -25,6 +25,9 @@ dependencies = [
 api = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.27",
+    # Приём слоёв KML файлами (POST /scenarios/import): FastAPI разбирает
+    # multipart только с этой библиотекой.
+    "python-multipart>=0.0.9",
 ]
 dev = [
     "geoscan-planner[api]",
