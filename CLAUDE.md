@@ -8,7 +8,9 @@
 
 Полные правила разработки — в [`AGENT.md`](AGENT.md). Прочитать перед первой правкой кода.
 
-**Требования заказчика** — [`docs/customer_qa.md`](docs/customer_qa.md) (получены 2026-09-18). Документы и каркас кода приведены к ним; что ещё расходится — `docs/current_state.md` §6. При расхождении правы документы.
+**Требования заказчика** — [`docs/customer_qa.md`](docs/customer_qa.md) (получены 2026-09-18, дополнены 2026-09-24). Документы и каркас кода приведены к ним; что ещё расходится — `docs/current_state.md` §6. При расхождении правы документы.
+
+**Образцы входных данных заказчика** — [`data/samples/`](data/samples/README.md), правила их чтения — [`docs/input_formats.md`](docs/input_formats.md).
 
 ## Документы
 
@@ -20,7 +22,9 @@
 | [`docs/architecture.md`](docs/architecture.md) | Обоснование решений, черновик алгоритма, порядок разработки, риски |
 | [`docs/epics.md`](docs/epics.md) | Состав работ E0–E15, граф зависимостей, критерии готовности |
 | [`docs/current_state.md`](docs/current_state.md) | **Живой** статус: что работает, что заглушка, журнал изменений |
+| [`docs/input_formats.md`](docs/input_formats.md) | Чтение входных слоёв KML: область, зоны, препятствия. **Предложенный формат высот и времени зон** — требование заказчика (№53) |
 | [`docs/export_format.md`](docs/export_format.md) | Формат выгрузки GeoJSON, KML, расписания CSV — требование заказчика (№21) |
+| [`docs/planner_reference.md`](docs/planner_reference.md) | Что взято из ПО заказчика GeoScan Planner: термины, значения по умолчанию, проверки |
 | [`docs/external_sources.md`](docs/external_sources.md) | ТТХ БВС, подложка, рельеф, препятствия, спецификации форматов |
 
 ## Команды
