@@ -365,8 +365,22 @@ def endurance_limit_s(vehicle: Vehicle) -> float:
     return vehicle.endurance_s * (1.0 - vehicle.battery_reserve_fraction)
 
 
+def exceeds_range(sortie: Sortie, vehicle: Vehicle) -> bool:
+    """True — маршрут вылета длиннее паспортной протяжённости для этой модели.
+
+    Ограничение живёт отдельно от заряда: у самолёта запас хода может кончиться
+    раньше, чем автономность, и наоборот. Борт без `max_range_m` в каталоге
+    (Геоскан 801, Gemini — числа нет в документе) по протяжённости не
+    ограничивается: выдумывать предел нельзя (инвариант 6).
+    """
+    return vehicle.max_range_m is not None and sortie.distance_m > vehicle.max_range_m
+
+
 def sortie_is_feasible(sortie: Sortie, vehicle: Vehicle) -> tuple[bool, str]:
     """Проверить вылет по заряду: линейная модель, отсечка 20% (№34, №35).
+
+    Протяжённость маршрута здесь НЕ проверяется — она отдельным правилом,
+    `exceeds_range`, чтобы причина невыполнимости называлась своим именем.
 
     Args:
         sortie: собранный вылет.
@@ -389,6 +403,7 @@ __all__ = [
     "TransitRouter",
     "build_sortie",
     "endurance_limit_s",
+    "exceeds_range",
     "retime_sortie",
     "sortie_is_feasible",
     "turn_length_m",

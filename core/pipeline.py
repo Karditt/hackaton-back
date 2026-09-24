@@ -30,7 +30,7 @@ from core.coverage.decompose import decompose
 from core.coverage.oracle import CoverageOracle
 from core.deconflict import assign_transit_levels, build_schedule
 from core.errors import GeometryError
-from core.flight.cost import build_sortie, endurance_limit_s
+from core.flight.cost import build_sortie, endurance_limit_s, exceeds_range
 from core.geo.mask import WorkArea, build_survey_mask, build_work_area
 from core.schemas import (
     Allocation,
@@ -342,9 +342,16 @@ def run_pipeline(
         )
 
     def sortie_cost(instance: FleetInstance, site_id: str, cell_ids: list[str]) -> float | None:
-        """Длительность вылета — той же моделью, что собирает итоговый вылет."""
+        """Длительность вылета — той же моделью, что собирает итоговый вылет.
+
+        None — набор подобластей в один вылет не помещается: не хватает либо
+        автономности, либо паспортной протяжённости маршрута (долг №43).
+        Оба предела проверяет и краш-тест, независимо от этой стадии.
+        """
         probe = make_sortie(instance, cell_ids, site_id, site_id, "probe", 0)
         if probe.duration_s > endurance_limit_s(instance.vehicle):
+            return None
+        if exceeds_range(probe, instance.vehicle):
             return None
         return probe.duration_s
 
