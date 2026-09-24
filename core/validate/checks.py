@@ -22,7 +22,7 @@ from shapely.geometry import LineString, Point
 from shapely.geometry.base import BaseGeometry
 
 from core import assumptions
-from core.flight.cost import sortie_is_feasible
+from core.flight.cost import exceeds_range, sortie_is_feasible
 from core.flight.maneuver import ManeuverWindow, maneuver_overlap, maneuver_windows
 from core.flight.track import build_track, first_conflict
 from core.flight.wind import required_airspeed_mps
@@ -101,6 +101,33 @@ def _check_energy(sorties: list[Sortie], vehicles: dict[str, Vehicle]) -> list[P
                     vehicle_id=sortie.vehicle_id,
                 )
             )
+    return items
+
+
+def _check_range(sorties: list[Sortie], vehicles: dict[str, Vehicle]) -> list[PlanWarning]:
+    """Протяжённость маршрута против паспортной для модели БЛА (долг №43).
+
+    Первая проверка, которую делает над полётным заданием сам GeoScan Planner
+    заказчика: «Общая длина маршрута превышает допустимую для данной модели
+    БЛА» (docs/planner_reference.md §6). Запас хода — не то же самое, что
+    автономность: у самолёта он может кончиться раньше времени полёта.
+    """
+    items = []
+    for sortie in sorties:
+        vehicle = vehicles[sortie.vehicle_id]
+        if not exceeds_range(sortie, vehicle):
+            continue
+        assert vehicle.max_range_m is not None
+        items.append(
+            _violation(
+                "validate.range",
+                f"Вылет {sortie.id}: маршрут {sortie.distance_m / 1000:.1f} км длиннее "
+                f"паспортной протяжённости {vehicle.max_range_m / 1000:.0f} км "
+                f"для {vehicle.name}",
+                sortie_id=sortie.id,
+                vehicle_id=sortie.vehicle_id,
+            )
+        )
     return items
 
 
@@ -563,6 +590,7 @@ def validate_plan(
     report = ValidationReport()
     report.violations.extend(_check_coverage(decomposition, sorties))
     report.violations.extend(_check_energy(sorties, vehicles))
+    report.violations.extend(_check_range(sorties, vehicles))
     wind_violations, wind_warnings = _check_wind(scenario, sorties, vehicles)
     report.violations.extend(wind_violations)
     report.warnings.extend(wind_warnings)

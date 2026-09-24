@@ -83,6 +83,39 @@ def test_leaving_the_altitude_corridor_is_caught(runs: dict[str, PlanningRun]) -
     assert "validate.corridor" in _check(run, sorties)
 
 
+def test_route_longer_than_vehicle_range_is_caught(runs: dict[str, PlanningRun]) -> None:
+    """Маршрут длиннее паспортной протяжённости модели — нарушение (долг №43).
+
+    Ту же проверку первой делает GeoScan Planner заказчика: «Общая длина
+    маршрута превышает допустимую для данной модели БЛА».
+    """
+    run = runs["medium"]
+    sorties = list(run.mission.sorties)
+    limited = next(
+        index
+        for index, sortie in enumerate(sorties)
+        if run.vehicles[sortie.vehicle_id].max_range_m is not None
+    )
+    vehicle = run.vehicles[sorties[limited].vehicle_id]
+    assert vehicle.max_range_m is not None
+    sorties[limited] = sorties[limited].model_copy(
+        update={"distance_m": vehicle.max_range_m * 1.01}
+    )
+    assert "validate.range" in _check(run, sorties)
+
+
+def test_route_within_vehicle_range_passes(runs: dict[str, PlanningRun]) -> None:
+    """Борт без паспортной протяжённости в каталоге по ней не ограничивается."""
+    run = runs["simple"]
+    assert all(
+        run.vehicles[sortie.vehicle_id].max_range_m is None for sortie in run.mission.sorties
+    )
+    sorties = [
+        sortie.model_copy(update={"distance_m": 10_000_000.0}) for sortie in run.mission.sorties
+    ]
+    assert "validate.range" not in _check(run, sorties)
+
+
 def test_missing_cells_are_caught(runs: dict[str, PlanningRun]) -> None:
     """Выброшенный вылет оставляет подобласти неснятыми — задание не выполнено (инв. 10)."""
     run = runs["simple"]

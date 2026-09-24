@@ -7,8 +7,9 @@
   заданную путевую (№45), — и не входит во время и расход (№36).
 * `core.flight.cost` — вылет по фазам; на галсе и перелёте время — длина,
   делённая на путевую скорость, которую держит автопилот; расход линеен по
-  времени, отсечка 20% (№34, №35); эшелон перелёта; разные площадки взлёта и
-  посадки (№29). Разворот самолёта — время по радиусу, петля не строится (№38).
+  времени, отсечка 20% (№34, №35); протяжённость маршрута против паспортной
+  (`exceeds_range`); эшелон перелёта; разные площадки взлёта и посадки (№29).
+  Разворот самолёта — время по радиусу, петля не строится (№38).
 * `core.flight.track` — 4D-траектория и поиск сближений для расписания и
   валидатора (№4, №37).
 
@@ -18,7 +19,7 @@
 
 from __future__ import annotations
 
-from core.flight.cost import build_sortie, retime_sortie, sortie_is_feasible
+from core.flight.cost import build_sortie, exceeds_range, retime_sortie, sortie_is_feasible
 from core.flight.track import build_track, first_conflict
 from core.flight.wind import (
     crab_angle_deg,
@@ -33,6 +34,7 @@ __all__ = [
     "build_track",
     "crab_angle_deg",
     "crosswind_mps",
+    "exceeds_range",
     "first_conflict",
     "ground_speed_mps",
     "required_airspeed_mps",
