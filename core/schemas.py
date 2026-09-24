@@ -690,6 +690,36 @@ class Scenario(Model):
 
 
 # --------------------------------------------------------------------------
+# Импорт входных слоёв
+# --------------------------------------------------------------------------
+
+
+class LayerStats(Model):
+    """Что импорт сделал с одним слоем (docs/input_formats.md §1)."""
+
+    read: int = Field(default=0, ge=0, description="Объектов в файле")
+    kept: int = Field(default=0, ge=0, description="Принято в сценарий")
+    fixed: int = Field(default=0, ge=0, description="Исправлено починкой геометрии")
+    dropped: int = Field(default=0, ge=0, description="Выброшено как непригодное")
+    skipped: int = Field(default=0, ge=0, description="Отброшено отбором по области")
+
+
+class ImportReport(Model):
+    """Отчёт импорта: что прочитано, что починено, что выброшено.
+
+    Отдаётся вместе со сценарием и показывается пользователю. Молча чинить
+    или выбрасывать объекты входного файла нельзя: заказчик проверяет именно
+    безопасность плана (№4), а она начинается с того, что мы прочитали.
+    """
+
+    area: LayerStats = Field(default_factory=LayerStats)
+    zones: LayerStats = Field(default_factory=LayerStats)
+    obstacles: LayerStats = Field(default_factory=LayerStats)
+    area_km2: float = Field(default=0.0, ge=0.0, description="Площадь принятой области, км²")
+    warnings: list[PlanWarning] = Field(default_factory=list)
+
+
+# --------------------------------------------------------------------------
 # Стадия: SurveyPlan — параметры съёмки
 # --------------------------------------------------------------------------
 
@@ -1055,6 +1085,8 @@ __all__ = [
     "GeoMultiPolygon",
     "GeoPoint",
     "GeoPolygon",
+    "ImportReport",
+    "LayerStats",
     "Leg",
     "MetricLineString",
     "MetricPoint",

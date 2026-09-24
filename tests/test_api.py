@@ -93,6 +93,71 @@ def test_self_intersecting_area_is_422_with_location(client) -> None:
     assert "самопересечение" in response.json()["detail"]
 
 
+def _import_files() -> dict[str, tuple[str, bytes, str]]:
+    samples = SCENARIOS_DIR.parent / "data" / "samples"
+    return {
+        name: (path.name, path.read_bytes(), "application/vnd.google-earth.kml+xml")
+        for name, path in (
+            ("area", samples / "survey_area_msk.kml"),
+            ("zones", samples / "zones_msk.kml"),
+            ("obstacles", samples / "obstacles_msk.kml"),
+        )
+    }
+
+
+def test_layers_are_imported_into_a_scenario(client) -> None:
+    """Долг №29: три слоя KML и параметры задания приходят одним запросом.
+
+    Проверяется транспорт и отчёт импорта; правила разбора — в тестах ядра
+    (`tests/test_kml_import.py`).
+    """
+    params = json.loads(
+        (SCENARIOS_DIR / "params" / "real_msk.params.json").read_text(encoding="utf-8")
+    )
+    params["id"] = "imported"
+    response = client.post(
+        "/scenarios/import",
+        files=_import_files(),
+        data={"params": json.dumps(params, ensure_ascii=False)},
+    )
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["id"] == "imported"
+    report = payload["report"]
+    assert report["area"]["read"] == 696
+    assert report["area"]["kept"] == 549
+    assert report["obstacles"]["skipped"] == 4615
+    assert report["area_km2"] == pytest.approx(245.0, abs=0.5)
+    assert {warning["code"] for warning in report["warnings"]} >= {
+        "import.geometry_fixed",
+        "import.geometry_merged",
+    }
+    stored = client.get("/scenarios/imported").json()
+    assert len(stored["area"]["polygons"]) == 549
+    assert len(stored["obstacles"]) == 547
+
+
+def test_import_without_params_is_422(client) -> None:
+    """Параметры задания — не JSON: отказ на приёме, а не сбой при разборе слоёв."""
+    response = client.post(
+        "/scenarios/import",
+        files={"area": ("area.kml", b"<kml/>", "application/xml")},
+        data={"params": "не json"},
+    )
+    assert response.status_code == 422
+
+
+def test_import_of_a_file_without_polygons_is_422(client) -> None:
+    """Файл области без единого полигона — ошибка входа с понятной причиной."""
+    response = client.post(
+        "/scenarios/import",
+        files={"area": ("area.kml", b"<kml><Document/></kml>", "application/xml")},
+        data={"params": json.dumps({"id": "empty"})},
+    )
+    assert response.status_code == 422
+    assert "полигон" in str(response.json()["detail"])
+
+
 def test_edited_scenario_is_planned_as_a_copy(client) -> None:
     """E10: панель параметров читает сценарий, шлёт копию с правками и считает её.
 
