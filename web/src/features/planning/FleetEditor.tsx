@@ -3,6 +3,9 @@ import { Notice } from '../../shared/ui/Notice';
 import { MAX_FLEET_VEHICLES, fleetSize, newFleetRow, type FleetRow } from './scenarioOptions';
 import styles from './PlanningForm.module.css';
 
+/** Флот из парка техники: строки для бортов в строю и сколько бортов не взято. */
+export type ParkFleet = { rows: FleetRow[]; skipped: number };
+
 type Props = {
   rows: FleetRow[];
   /** Каталог техники — `GET /vehicles`; борта вне каталога недопустимы. */
@@ -11,14 +14,17 @@ type Props = {
   sites: Site[];
   onChange: (rows: FleetRow[]) => void;
   disabled: boolean;
+  /** Борта парка, которые в строю (вкладка «Техника»); null — парк не подключён. */
+  parkFleet?: ParkFleet | null;
 };
 
 /**
  * Состав флота: модель, число бортов, нагрузка, площадка, комплекты АКБ
  * (E10). Геометрия площадок не правится — выбирается из сценария (№8, №12).
  */
-export function FleetEditor({ rows, vehicles, sites, onChange, disabled }: Props) {
+export function FleetEditor({ rows, vehicles, sites, onChange, disabled, parkFleet }: Props) {
   const total = fleetSize(rows);
+  const parkCount = parkFleet ? fleetSize(parkFleet.rows) : 0;
 
   const update = (index: number, patch: Partial<FleetRow>) => {
     onChange(rows.map((row, position) => (position === index ? { ...row, ...patch } : row)));
@@ -29,6 +35,29 @@ export function FleetEditor({ rows, vehicles, sites, onChange, disabled }: Props
       <legend>
         Флот: {total} из {MAX_FLEET_VEHICLES}
       </legend>
+
+      {parkFleet && (
+        <div className={styles.parkRow}>
+          <button
+            type="button"
+            className={styles.rowButton}
+            onClick={() => onChange(parkFleet.rows)}
+            disabled={disabled || parkFleet.rows.length === 0}
+            title={
+              parkFleet.rows.length === 0
+                ? 'В парке нет бортов в строю — вкладка «Техника»'
+                : 'Заменить флот бортами парка, которые в строю; площадку выберет распределение'
+            }
+          >
+            Взять борта в строю из парка ({parkCount})
+          </button>
+          {parkFleet.skipped > 0 && (
+            <span className={styles.hint}>
+              ещё {parkFleet.skipped} не взято: модель скрыта или в её ТТХ ошибки
+            </span>
+          )}
+        </div>
+      )}
 
       {rows.map((row, index) => {
         const vehicle = vehicles.find((item) => item.id === row.vehicle_id);
@@ -45,7 +74,9 @@ export function FleetEditor({ rows, vehicles, sites, onChange, disabled }: Props
               disabled={disabled}
             >
               {vehicles.every((item) => item.id !== row.vehicle_id) && (
-                <option value={row.vehicle_id}>{row.vehicle_id} — нет в каталоге</option>
+                <option value={row.vehicle_id}>
+                  {row.vehicle_id} — скрыта или нет среди моделей
+                </option>
               )}
               {vehicles.map((item) => (
                 <option key={item.id} value={item.id}>
@@ -139,7 +170,7 @@ export function FleetEditor({ rows, vehicles, sites, onChange, disabled }: Props
 
       {total > MAX_FLEET_VEHICLES && (
         <Notice tone="error">
-          Во флоте {total} бортов, допустимо не больше {MAX_FLEET_VEHICLES} (заказчик, №2, №43).
+          Во флоте {total} бортов, допустимо не больше {MAX_FLEET_VEHICLES} — ограничение заказчика.
         </Notice>
       )}
     </fieldset>

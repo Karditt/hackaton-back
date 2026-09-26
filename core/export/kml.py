@@ -578,7 +578,7 @@ def _sortie_folder(
                     cells_folder,
                     "Placemark",
                     f"Зона манёвра {cell_id}",
-                    description="Защитная зона разворота самолёта на концах галсов (№38).",
+                    description="Защитная зона разворота самолёта на концах галсов.",
                     style="maneuver",
                     data={"kind": "maneuver_zone", "cell_id": cell_id, "sortie_id": sortie.id},
                 )

@@ -26,6 +26,7 @@ from core.export import (
     mission_to_geojson,
     mission_to_kml,
     mission_zip,
+    scenario_to_geojson,
     schedule_to_csv,
     sortie_keypoints,
 )
@@ -120,6 +121,25 @@ def test_infeasible_export_is_a_report_without_routes(runs: dict[str, PlanningRu
     assert document["properties"]["reasons"]
     assert document["properties"]["recommendations"]
     assert document["properties"]["boards"] == []
+
+
+def test_scenario_layers_are_the_plan_context(runs: dict[str, PlanningRun]) -> None:
+    """Слои сценария до расчёта — те же признаки, что слои сценария в выгрузке плана.
+
+    Интерфейс показывает их до расчёта и прячет по видам одним кодом (E10).
+    """
+    run = runs["demo_100km2"]
+    layers = scenario_to_geojson(run.scenario)
+    context = {"survey_area", "no_fly_zone", "airspace_boundary", "obstacle", "site"}
+    in_plan = [f for f in _geojson(run)["features"] if f["properties"]["kind"] in context]
+    assert layers["features"] == in_plan
+
+    properties = layers["properties"]
+    assert properties["scenario_id"] == run.scenario.id
+    assert properties["counts"]["obstacle"] == len(run.scenario.obstacles)
+    assert properties["counts"]["no_fly_zone"] == len(run.scenario.no_fly_zones)
+    assert properties["counts"]["site"] == len(run.scenario.sites)
+    assert properties["area_km2"] == pytest.approx(run.work_area.area.area / 1e6, rel=1e-3)
 
 
 def test_geojson_linestrings_have_two_distinct_points(run: PlanningRun) -> None:

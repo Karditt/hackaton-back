@@ -46,7 +46,11 @@ python -m core.cli --batch scenarios/ -o out/
 # сборка сценария из слоёв KML заказчика (docs/input_formats.md)
 python -m core.cli import-layers --area data/samples/survey_area_msk.kml \
     --zones data/samples/zones_msk.kml --obstacles data/samples/obstacles_msk.kml \
-    --params scenarios/params/real_msk.params.json -o scenarios/real/real_msk.json
+    --params scenarios/sources/real_msk/params.json -o scenarios/real/real_msk.json
+
+# сценарий комплектом файлов заказчика (слои KML + параметры) и сверка всех сценариев с их файлами
+python -m core.cli export-layers scenarios/simple.json -o scenarios/sources/simple
+python -m core.cli check-sources
 
 # генерация TypeScript-типов из core/schemas.py (после ЛЮБОЙ правки контракта)
 python -m core.cli export-schema -o web/src/types/schema.json
@@ -59,7 +63,7 @@ cd web && npm run gen:types   # закреплённая версия генер
 2. **`core` не импортирует `api` и `web`.** Ядро запускается как `python -m core.cli` и живёт без веба.
 3. **`core/schemas.py` — общий контракт.** Правка только осознанно, с отметкой в `current_state.md` и перегенерацией TS-типов.
 4. **Ветер — метеорологическая конвенция (откуда дует).** Нужен для выполнимости и направления галсов, во время и расход не входит.
-5. **Физические константы — только в `core/assumptions.py`**, каждая с источником. ТТХ БВС — только из `data/vehicles.yaml`, не выдумываются.
+5. **Физические константы — только в `core/assumptions.py`**, каждая с источником. ТТХ БВС — из `data/vehicles.yaml` или заданные пользователем в сценарии (`Scenario.vehicles`, поля в `user_fields`); команда их не выдумывает.
 6. **Baseline-алгоритм (равномерное деление) не удаляется никогда** — точка сравнения для доказательства эффективности.
 7. **Ни один выданный план не нарушает жёстких правил:** запретные зоны, препятствия, коридор высот, разведение бортов. Нарушение — невыполнимость, а не предупреждение. Это главное, что проверяет заказчик.
 8. **Частичных планов нет:** область покрыта целиком или результат объявлен невыполнимым с причиной и рекомендацией.

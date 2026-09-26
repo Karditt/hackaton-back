@@ -17,7 +17,7 @@
  * называет поле.
  */
 
-import type { FleetUnit, Scenario, SurveyType } from '../../api';
+import type { FleetUnit, Scenario, SurveyType, Vehicle } from '../../api';
 
 /** Суффикс производного сценария: правка панели не затирает исходный файл. */
 const CUSTOM_SUFFIX = '--custom';
@@ -153,15 +153,50 @@ export function isEdited(scenario: Scenario, options: ScenarioOptions): boolean 
   return JSON.stringify(options) !== JSON.stringify(optionsOf(scenario));
 }
 
+/** Значение без пустых полей и с упорядоченными ключами — для сравнения текстом. */
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, item]) => item !== null && item !== undefined)
+        .filter(([, item]) => !(Array.isArray(item) && item.length === 0))
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, item]) => [key, canonical(item)]),
+    );
+  }
+  return value;
+}
+
+/**
+ * Совпадают ли ТТХ пользователя с теми, что уже лежат в сценарии.
+ *
+ * Сервер хранит модели с полями по умолчанию, а вкладка «Техника» собирает
+ * их без пустых — поэтому сравниваются канонические формы.
+ */
+export function sameVehicles(scenario: Scenario, vehicles: Vehicle[]): boolean {
+  const byId = (items: Vehicle[]) => [...items].sort((a, b) => a.id.localeCompare(b.id));
+  return (
+    JSON.stringify(canonical(byId(scenario.vehicles ?? []))) ===
+    JSON.stringify(canonical(byId(vehicles)))
+  );
+}
+
 /**
  * Сценарий с применёнными правками — то, что уходит в `POST /scenarios`.
  *
  * Геометрия, зоны, препятствия и площадки переносятся из исходного сценария
- * без изменений.
+ * без изменений. ТТХ пользователя (вкладка «Техника») заменяют те, что были
+ * в сценарии: источник правок в браузере — парк.
  *
+ * @param vehicles правленые и свои модели флота — `Scenario.vehicles`
  * @throws Error поле формы не разбирается в число — с именем поля.
  */
-export function applyOptions(scenario: Scenario, options: ScenarioOptions): Scenario {
+export function applyOptions(
+  scenario: Scenario,
+  options: ScenarioOptions,
+  vehicles: Vehicle[] = [],
+): Scenario {
   const units: FleetUnit[] = options.fleet.map((row, index) => {
     const position = `борт ${index + 1}`;
     return {
@@ -195,6 +230,7 @@ export function applyOptions(scenario: Scenario, options: ScenarioOptions): Scen
       max_altitude_agl_m: parseRequired(options.max_altitude_agl_m, 'Коридор высот'),
     },
     fleet: [first, ...rest],
+    vehicles,
     start_time: options.start_time === '' ? null : `${options.start_time}:00Z`,
     deadline_s: deadlineHours === null ? null : deadlineHours * SECONDS_IN_HOUR,
     turnaround_s: turnaroundMinutes === null ? null : turnaroundMinutes * SECONDS_IN_MINUTE,

@@ -1,0 +1,80 @@
+{
+  "id": "nasty",
+  "name": "«Злой» сценарий: два отверстия, зона впритык к границе, обрезка воздушным пространством",
+  "description": "Сценарий на все острые углы разом: невыпуклый контур с выемкой, два отверстия, запретная зона, пересекающая границу области, обрезка по границе разрешённого воздушного пространства, резервная площадка, ветер у самого предела мультироторов и разнотипный флот на мультиспектральной съёмке. Прогоняется всегда — не только простой сценарий (AGENT.md §6). Ожидаемый итог — НЕВЫПОЛНИМО: ограничение числа вылетов (battery_sets) не даёт снять всю область. Проверка того, что частичный план не выдаётся, а причина и рекомендация названы (заказчик, №42).",
+  "airspace_boundary": {
+    "outer": [
+      {
+        "lon": 30.395,
+        "lat": 59.945
+      },
+      {
+        "lon": 30.444,
+        "lat": 59.945
+      },
+      {
+        "lon": 30.444,
+        "lat": 59.975
+      },
+      {
+        "lon": 30.395,
+        "lat": 59.975
+      }
+    ],
+    "holes": []
+  },
+  "altitude_corridor": {
+    "max_altitude_agl_m": 700.0
+  },
+  "sites": [
+    {
+      "id": "launch-north",
+      "name": "Площадка «Север»",
+      "position": {
+        "lon": 30.423,
+        "lat": 59.972
+      },
+      "kind": "primary"
+    },
+    {
+      "id": "reserve-south",
+      "name": "Резервная площадка «Юг»",
+      "position": {
+        "lon": 30.41,
+        "lat": 59.946
+      },
+      "kind": "reserve"
+    }
+  ],
+  "survey_type": "multispectral",
+  "quality": {
+    "gsd_m": 0.1,
+    "forward_overlap": 0.75,
+    "side_overlap": 0.55
+  },
+  "wind": {
+    "speed_mps": 9.0,
+    "direction_deg": 45.0
+  },
+  "fleet": [
+    {
+      "vehicle_id": "geoscan-201",
+      "count": 1,
+      "payload_id": "pollux",
+      "site_id": "launch-north",
+      "battery_sets": 1
+    },
+    {
+      "vehicle_id": "geoscan-gemini",
+      "count": 2,
+      "payload_id": "pollux",
+      "site_id": "launch-north",
+      "battery_sets": 6
+    }
+  ],
+  "vehicles": [],
+  "mode": "min_makespan",
+  "alpha": 0.7,
+  "start_time": "2026-09-20T06:00:00Z",
+  "seed": 42
+}

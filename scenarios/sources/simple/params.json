@@ -1,0 +1,42 @@
+{
+  "id": "simple",
+  "name": "Простой прямоугольник, 2 x 1,5 км",
+  "description": "Базовый сценарий: выпуклая область без отверстий, одна площадка, запретных зон нет, слабый ветер. Служит проверкой того, что сквозной путь вообще работает.",
+  "altitude_corridor": {
+    "max_altitude_agl_m": 700.0
+  },
+  "sites": [
+    {
+      "id": "base",
+      "name": "Площадка «Юг»",
+      "position": {
+        "lon": 30.3179,
+        "lat": 59.8985
+      },
+      "kind": "primary"
+    }
+  ],
+  "survey_type": "rgb",
+  "quality": {
+    "gsd_m": 0.05,
+    "forward_overlap": 0.8,
+    "side_overlap": 0.6
+  },
+  "wind": {
+    "speed_mps": 4.0,
+    "direction_deg": 270.0
+  },
+  "fleet": [
+    {
+      "vehicle_id": "geoscan-gemini",
+      "count": 2,
+      "payload_id": "geoscan-pf1b",
+      "battery_sets": 2
+    }
+  ],
+  "vehicles": [],
+  "mode": "min_makespan",
+  "alpha": 0.5,
+  "start_time": "2026-09-20T06:00:00Z",
+  "seed": 42
+}

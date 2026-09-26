@@ -112,7 +112,7 @@ def test_layers_are_imported_into_a_scenario(client) -> None:
     (`tests/test_kml_import.py`).
     """
     params = json.loads(
-        (SCENARIOS_DIR / "params" / "real_msk.params.json").read_text(encoding="utf-8")
+        (SCENARIOS_DIR / "sources" / "real_msk" / "params.json").read_text(encoding="utf-8")
     )
     params["id"] = "imported"
     response = client.post(
@@ -250,9 +250,58 @@ def test_board_export_and_package(client) -> None:
     assert {f"simple.{item['board_id']}.kml" for item in boards} <= names
 
 
+def test_scenario_layers_are_served_before_planning(client) -> None:
+    """E10: исходные данные видны на карте до расчёта — слои сценария в GeoJSON."""
+    response = client.get("/scenarios/medium/layers")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/geo+json")
+    document = response.json()
+    kinds = {feature["properties"]["kind"] for feature in document["features"]}
+    assert "survey_area" in kinds and "site" in kinds
+    assert not kinds & {"leg", "keypoint", "survey_cell"}, "до расчёта маршрутов нет"
+    assert document["properties"]["counts"]["site"] >= 1
+    assert document["properties"]["area_km2"] > 0
+
+
+def test_customer_scenario_is_listed_for_viewing_only(client) -> None:
+    """Сценарий на файлах заказчика виден в интерфейсе, расчёт из него не запускается."""
+    listing = {item["id"]: item for item in client.get("/scenarios").json()["scenarios"]}
+    assert listing["real_msk"]["planning_available"] is False
+    assert listing["real_msk"]["planning_note"]
+    assert listing["simple"]["planning_available"] is True
+
+    files = {item["kind"]: item for item in client.get("/scenarios/real_msk/files").json()["files"]}
+    assert files["area"]["name"] == "survey_area_msk.kml"
+    assert files["area"]["stats"]["read"] == 696 and files["area"]["stats"]["kept"] == 549
+
+
+def test_scenario_files_by_kind_and_download(client) -> None:
+    """Исходники сценария по видам: слои KML со счётчиками импорта, параметры, сам JSON."""
+    payload = client.get("/scenarios/medium/files").json()
+    files = {item["kind"]: item for item in payload["files"]}
+    assert set(files) == {"area", "zones", "params", "scenario"}
+    assert files["zones"]["stats"]["kept"] == 2
+    assert files["params"]["stats"] is None
+
+    download = client.get("/scenarios/medium/files/zones")
+    assert download.status_code == 200
+    assert "zones.kml" in download.headers["content-disposition"]
+    assert "<kml" in download.text and "zone_id" in download.text
+
+    assert client.get("/scenarios/medium/files/obstacles").status_code == 404
+
+    # Копия с правками параметров собрана из тех же файлов.
+    edited = _simple()
+    edited["id"] = "simple--custom"
+    assert client.post("/scenarios", json=edited).status_code == 201
+    copy = client.get("/scenarios/simple--custom/files").json()
+    assert copy["source_id"] == "simple"
+
+
 def test_unknown_scenario_is_404(client) -> None:
     """Несуществующий сценарий — 404, а не 500."""
     assert client.get("/scenarios/no-such").status_code == 404
+    assert client.get("/scenarios/no-such/layers").status_code == 404
     assert client.post("/scenarios/no-such/plan").status_code == 404
 
 

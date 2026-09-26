@@ -6,6 +6,7 @@ import type {
   Vehicle,
 } from '../../api';
 import { Notice } from '../../shared/ui/Notice';
+import type { ParkFleet } from './FleetEditor';
 import { ModeSelect } from './ModeSelect';
 import { ScenarioOptionsForm } from './ScenarioOptionsForm';
 import { ScenarioSelect } from './ScenarioSelect';
@@ -27,6 +28,10 @@ type Props = {
   onOptionsReset: () => void;
   optionsEdited: boolean;
   vehicles: Vehicle[];
+  /** Борта парка в строю — источник флота (вкладка «Техника»). */
+  parkFleet: ParkFleet | null;
+  /** Почему расчёт выбранного сценария из интерфейса не запускается; null — запускается. */
+  planningNote: string | null;
   onSubmit: () => void;
   busy: boolean;
   status: string;
@@ -61,16 +66,19 @@ export function PlanningForm(props: Props) {
           edited={props.optionsEdited}
           vehicles={props.vehicles}
           disabled={busy}
+          parkFleet={props.parkFleet}
         />
       )}
 
+      {props.planningNote && <Notice tone="caution">{props.planningNote}</Notice>}
       <button
         className={styles.submit}
         onClick={props.onSubmit}
         // Пока параметры не загружены, расчёт ушёл бы без правок панели.
-        disabled={busy || !scenarioId || options === null}
+        disabled={busy || !scenarioId || options === null || props.planningNote !== null}
+        title={props.planningNote ?? undefined}
       >
-        {busy ? 'Считаю…' : 'Рассчитать'}
+        {busy ? 'Считаю…' : props.planningNote ? 'Только просмотр' : 'Рассчитать'}
       </button>
 
       <p className={styles.status}>Состояние: {props.status}</p>

@@ -1,18 +1,32 @@
-import type { Schedule } from '../../api';
-import { clockTime, minutes } from '../../shared/format';
+import type { BoardSummary, Schedule } from '../../api';
+import { clockTime, hours, minutes } from '../../shared/format';
 import styles from './result.module.css';
 
-type Props = { schedule: Schedule };
+type Props = {
+  schedule: Schedule;
+  /** Сводка бортов выгрузки — подпись борта как на диаграмме. */
+  boards?: BoardSummary[];
+  /**
+   * Подробная таблица для вкладки «Расписание»: время в воздухе, ожидание на
+   * земле, эшелон перелёта, площадка посадки; вся высота, без прокрутки внутри.
+   */
+  detailed?: boolean;
+};
 
 /**
  * Расписание вылетов (заказчик, №31). Время — от начала работ; если начало
  * задано в сценарии, рядом — абсолютное время UTC.
  */
-export function ScheduleTable({ schedule }: Props) {
+export function ScheduleTable({ schedule, boards = [], detailed = false }: Props) {
   const entries = schedule.entries ?? [];
   const origin = schedule.start_time ? Date.parse(schedule.start_time) : null;
+  const labels = new Map(
+    boards.map((board) => [`${board.vehicle_id}/${board.vehicle_instance}`, board.label]),
+  );
+  const at = (seconds: number) => (origin === null ? minutes(seconds) : clockTime(origin, seconds));
+
   return (
-    <div className={styles.tableWrap}>
+    <div className={detailed ? styles.tableWrapFull : styles.tableWrap}>
       <table className={styles.table}>
         <thead>
           <tr>
@@ -20,19 +34,28 @@ export function ScheduleTable({ schedule }: Props) {
             <th>Вылет</th>
             <th>Взлёт</th>
             <th>Посадка</th>
+            {detailed && <th>В воздухе</th>}
+            {detailed && <th>Ожидание на земле</th>}
+            {detailed && <th>Эшелон, м</th>}
             <th>Площадка</th>
+            {detailed && <th>Посадка на</th>}
           </tr>
         </thead>
         <tbody>
           {entries.map((entry) => (
             <tr key={entry.sortie_id}>
               <td>
-                {entry.vehicle_id} #{entry.vehicle_instance + 1}
+                {labels.get(`${entry.vehicle_id}/${entry.vehicle_instance}`) ??
+                  `${entry.vehicle_id} #${entry.vehicle_instance + 1}`}
               </td>
               <td>{entry.trip_index + 1}</td>
-              <td>{origin === null ? minutes(entry.start_s) : clockTime(origin, entry.start_s)}</td>
-              <td>{origin === null ? minutes(entry.end_s) : clockTime(origin, entry.end_s)}</td>
+              <td>{at(entry.start_s)}</td>
+              <td>{at(entry.end_s)}</td>
+              {detailed && <td>{hours(entry.end_s - entry.start_s)}</td>}
+              {detailed && <td>{entry.delay_s > 0 ? hours(entry.delay_s) : '—'}</td>}
+              {detailed && <td>{Math.round(entry.transit_altitude_m)}</td>}
               <td>{entry.takeoff_site_id}</td>
+              {detailed && <td>{entry.landing_site_id}</td>}
             </tr>
           ))}
         </tbody>

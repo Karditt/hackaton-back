@@ -107,7 +107,7 @@ def test_assembled_scenario_is_accepted_by_core(layers: ImportedLayers) -> None:
     сценарием можно планировать». Параметры берутся из того же файла, которым
     сценарий собирает CLI.
     """
-    params_path = REPO_ROOT / "scenarios" / "params" / "real_msk.params.json"
+    params_path = REPO_ROOT / "scenarios" / "sources" / "real_msk" / "params.json"
     payload = json.loads(params_path.read_text("utf-8"))
     payload["area"] = layers.area.model_dump(mode="json")
     payload["no_fly_zones"] = [zone.model_dump(mode="json") for zone in layers.zones]

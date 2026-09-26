@@ -18,7 +18,13 @@ WGS84 (заказчик, №10, №21). Высоты — над поверхно
 from __future__ import annotations
 
 from core.export.boards import Board, KeyPoint, KeyPointKind, boards_of, sortie_keypoints
-from core.export.geojson import FORMAT_VERSION, geojson_to_text, mission_to_geojson, write_geojson
+from core.export.geojson import (
+    FORMAT_VERSION,
+    geojson_to_text,
+    mission_to_geojson,
+    scenario_to_geojson,
+    write_geojson,
+)
 from core.export.kml import kml_to_bytes, mission_to_kml, write_kml
 from core.export.package import board_file_name, mission_files, mission_zip, write_mission_files
 from core.export.schedule import ScheduleRow, schedule_rows, schedule_to_csv, write_schedule
@@ -40,6 +46,7 @@ __all__ = [
     "mission_to_kml",
     "mission_zip",
     "output_path_for",
+    "scenario_to_geojson",
     "schedule_rows",
     "schedule_to_csv",
     "sortie_keypoints",

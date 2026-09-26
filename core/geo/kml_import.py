@@ -25,9 +25,11 @@ import re
 import xml.etree.ElementTree as ET
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 from shapely.geometry import LineString, Polygon, box
+from shapely.geometry import Point as ShapelyPoint
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 
@@ -68,6 +70,13 @@ _ZONE_KINDS = {
     "запретная_зона": ("prohibited", True),
     "пост_ограничение": ("restricted", True),
     "врем_ограничение": ("temporary", False),
+}
+
+#: Типы зон предложенного формата (`zone_kind`, docs/input_formats.md §3.2).
+_MACHINE_ZONE_KINDS = {
+    "prohibited": ("prohibited", True),
+    "restricted": ("restricted", True),
+    "temporary": ("temporary", False),
 }
 
 _FL_RE = re.compile(r"FL\s*(\d+)", re.IGNORECASE)
@@ -494,15 +503,21 @@ def read_zones(
             or _text_of(placemark, "name")
             or f"zone-{index}"
         )
-        kind_text = (data.get("Type") or "").strip()
-        kind, permanent = _ZONE_KINDS.get(kind_text, ("restricted", True))
-        if kind_text and kind_text not in _ZONE_KINDS:
+        # Подпись зоны — `<name>`: у заказчика он совпадает с `Name`, в
+        # предложенном формате идентификатор отдельно, в `zone_id`.
+        title = _text_of(placemark, "name") or data.get("Name") or name
+        windows = _windows(data.get("active_windows", ""), name, log)
+        machine_kind = (data.get("zone_kind") or "").strip()
+        kind_text = machine_kind or (data.get("Type") or "").strip()
+        known_kinds = _MACHINE_ZONE_KINDS if machine_kind else _ZONE_KINDS
+        kind, permanent = known_kinds.get(kind_text, ("restricted", True))
+        if kind_text and kind_text not in known_kinds:
             log.say(
                 "import.zone_kind_unknown",
                 f"Зона {name}: неизвестный тип «{kind_text}» — считается постоянной",
                 once=True,
             )
-        if not permanent:
+        if not permanent and not windows:
             log.say(
                 "import.zone_window_unknown",
                 f"Зона {name}: тип «{kind_text}», но времени действия в файле нет — "
@@ -510,8 +525,16 @@ def read_zones(
                 once=True,
             )
 
-        min_alt, max_alt = _machine_altitudes(data, terrain_min_m, terrain_max_m)
-        if min_alt is None and max_alt is None:
+        machine = _machine_altitudes(data)
+        if machine is not None:
+            if not machine.parsed:
+                log.say(
+                    "import.zone_altitude_unparsed",
+                    f"Зона {name}: высоты alt_min_m / alt_max_m не числа — "
+                    "зона считается запретной на всех высотах",
+                )
+            min_alt, max_alt = _machine_to_agl(machine, terrain_min_m, terrain_max_m)
+        else:
             text = data.get("Altitudes") or _text_of(placemark, "description")
             altitudes = parse_altitude_text(text)
             if not altitudes.parsed and text:
@@ -529,35 +552,109 @@ def read_zones(
                     once=True,
                 )
 
+        # Контракт хранит одно окно на зону (docs/input_formats.md §3.2): при
+        # нескольких окнах зона разворачивается в записи с общим именем.
+        spans: list[tuple[datetime | None, datetime | None]] = list(windows) or [(None, None)]
         for part, ring in enumerate(polygons):
-            zones.append(
-                NoFlyZone(
-                    id=name if len(polygons) == 1 else f"{name}-{part + 1}",
-                    name=name,
-                    polygon=GeoPolygon(outer=[GeoPoint(lon=lon, lat=lat) for lon, lat, _ in ring]),
-                    min_alt_m=min_alt,
-                    max_alt_m=max_alt,
+            base_id = name if len(polygons) == 1 else f"{name}-{part + 1}"
+            for number, (start, end) in enumerate(spans):
+                zones.append(
+                    NoFlyZone(
+                        id=base_id if len(spans) == 1 else f"{base_id}-w{number + 1}",
+                        name=title,
+                        polygon=GeoPolygon(
+                            outer=[GeoPoint(lon=lon, lat=lat) for lon, lat, _ in ring]
+                        ),
+                        min_alt_m=min_alt,
+                        max_alt_m=max_alt,
+                        active_from=start,
+                        active_to=end,
+                    )
                 )
-            )
         log.stats.kept += 1
     return zones, ImportReport(zones=log.stats, warnings=log.warnings)
 
 
-def _machine_altitudes(
-    data: dict[str, str], terrain_min_m: float, terrain_max_m: float
-) -> tuple[float | None, float | None]:
-    """Высоты из предложенного формата (§3.2), если они там есть."""
+def _machine_altitudes(data: dict[str, str]) -> AltitudeRange | None:
+    """Высоты из предложенного формата (§3.2); None — машинных полей в зоне нет.
+
+    Пустой `alt_max_m` по формату значит «на всех высотах» выше нижней границы.
+    Нечисловое значение — диапазон с `parsed = False`: вызывающий говорит об
+    этом вслух и считает зону запретной на всех высотах.
+    """
     if "alt_max_m" not in data and "alt_min_m" not in data:
-        return None, None
+        return None
+    datum = (data.get("alt_datum") or "AGL").strip().upper()
     try:
         low = float(data.get("alt_min_m") or 0.0)
-        high = float(data["alt_max_m"]) if data.get("alt_max_m") else None
+        high_text = (data.get("alt_max_m") or "").strip()
+        high = float(high_text) if high_text else None
     except ValueError:
+        return AltitudeRange(None, None, datum, False)
+    if high is not None and high <= low:
+        return AltitudeRange(None, None, datum, False)
+    return AltitudeRange(low, high, datum, True)
+
+
+def _machine_to_agl(
+    altitudes: AltitudeRange, terrain_min_m: float, terrain_max_m: float
+) -> tuple[float | None, float | None]:
+    """Высоты предложенного формата в высоты над поверхностью.
+
+    Верхняя граница есть — как у текста заказчика (`_to_agl`). Её нет — зона
+    действует от нижней границы и выше; нижняя граница над уровнем моря
+    опускается на максимальную отметку рельефа (сторона ошибки безопасная).
+    Нижняя граница «от земли» записывается как отсутствующая, как в контракте.
+    """
+    if not altitudes.parsed or altitudes.min_m is None:
         return None, None
-    if high is None:
-        return None, None
-    datum = (data.get("alt_datum") or "AGL").upper()
-    return _to_agl(AltitudeRange(low, high, datum, True), terrain_min_m, terrain_max_m)
+    if altitudes.max_m is not None:
+        return _to_agl(altitudes, terrain_min_m, terrain_max_m)
+    low = altitudes.min_m
+    if altitudes.datum == "AMSL":
+        low = max(0.0, low - terrain_max_m)
+    return (low if low > 0.0 else None), None
+
+
+def _windows(text: str, zone: str, log: _Log) -> list[tuple[datetime | None, datetime | None]]:
+    """Окна действия зоны из `active_windows`: «начало/конец;начало/конец», UTC.
+
+    Открытый конец интервала — «..» (ISO 8601-2): «2026-09-20T07:00:00Z/..» —
+    зона действует с этого момента. Нечитаемое окно не выбрасывается молча:
+    зона тогда считается действующей всегда — это безопасная сторона — и в
+    отчёт идёт предупреждение.
+    """
+
+    def moment(value: str) -> datetime | None:
+        value = value.strip()
+        if value in ("", ".."):
+            return None
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+    windows: list[tuple[datetime | None, datetime | None]] = []
+    for item in (part.strip() for part in text.split(";")):
+        if not item:
+            continue
+        start_text, _, end_text = item.partition("/")
+        try:
+            start, end = moment(start_text), moment(end_text)
+        except ValueError:
+            start = end = None
+        if start is None and end is None:
+            log.say(
+                "import.zone_window_unparsed",
+                f"Зона {zone}: окно действия «{item}» не разобрано — "
+                "зона считается действующей всегда",
+            )
+            return []
+        if start is not None and end is not None and end <= start:
+            log.say(
+                "import.zone_window_unparsed",
+                f"Зона {zone}: окно действия «{item}» пустое — зона считается действующей всегда",
+            )
+            return []
+        windows.append((start, end))
+    return windows
 
 
 # --------------------------------------------------------------------------
@@ -586,24 +683,24 @@ def read_obstacles(
         Пара «препятствия, отчёт импорта».
     """
     log = _Log()
-    raw: list[tuple[str, str, str, list[tuple[float, float, float]], bool]] = []
+    raw: list[tuple[str, str, str, list[tuple[float, float, float]], str]] = []
     for index, placemark in enumerate(_placemarks(source)):
         log.stats.read += 1
         name = _text_of(placemark, "name").strip()
         identifier, _, kind = name.partition(" ")
         identifier = identifier or f"obstacle-{index}"
         mode = _text_of(placemark, "altitudeMode").strip().lower()
-        for geometry_name, is_line in (("Polygon", False), ("LineString", True)):
+        for geometry_name in ("Polygon", "LineString", "Point"):
             for geometry in _descendants(placemark, geometry_name):
-                if is_line:
+                if geometry_name == "Polygon":
+                    points, _ = _rings(geometry)
+                else:
                     # `next(..., None)`, а не `any(...)`: элемент без потомков в
                     # ElementTree ложен, и проверка «есть ли координаты» через
                     # истинность выбрасывала бы все линейные препятствия.
                     coords = next(_descendants(geometry, "coordinates"), None)
                     points = _coordinates(coords) if coords is not None else []
-                else:
-                    points, _ = _rings(geometry)
-                raw.append((identifier, kind.strip(), mode, points, is_line))
+                raw.append((identifier, kind.strip(), mode, points, geometry_name))
 
     # Записи без координат выбрасываются до выбора проекции: точек для неё нет.
     usable = []
@@ -626,10 +723,29 @@ def read_obstacles(
 
     obstacles: list[Obstacle] = []
     seen: dict[str, int] = {}
-    for identifier, kind, mode, points, is_line in usable:
+    for identifier, kind, mode, points, geometry_name in usable:
         height = _obstacle_height(mode, points[0][2], terrain_m, log)
         if height is None:
             log.stats.dropped += 1
+            continue
+        is_line = geometry_name == "LineString"
+        if geometry_name == "Point":
+            lon, lat, _ = points[0]
+            if selection is not None and not ShapelyPoint(lon, lat).intersects(selection):
+                log.stats.skipped += 1
+                continue
+            count = seen.get(identifier, 0)
+            seen[identifier] = count + 1
+            # Мачта, труба — точка с высотой: так её и хранит контракт.
+            obstacles.append(
+                Obstacle(
+                    id=identifier if count == 0 else f"{identifier}-{count + 1}",
+                    name=kind,
+                    position=GeoPoint(lon=lon, lat=lat),
+                    height_m=height,
+                )
+            )
+            log.stats.kept += 1
             continue
         shape = (
             LineString([(lon, lat) for lon, lat, _ in points])
@@ -642,6 +758,7 @@ def read_obstacles(
             log.stats.skipped += 1
             continue
         metric = projector.ring_to_metric([GeoPoint(lon=lon, lat=lat) for lon, lat, _ in points])
+        valid_as_is = False
         if is_line or len(metric) < 4:
             footprint = LineString(metric).buffer(assumptions.OBSTACLE_LINE_WIDTH_M / 2.0)
             log.say(
@@ -652,6 +769,7 @@ def read_obstacles(
             )
         else:
             footprint = Polygon(metric)
+            valid_as_is = footprint.is_valid and footprint.area > 0.0
             repaired, _ = _repair(footprint)
             if repaired is None:
                 log.stats.dropped += 1
@@ -660,11 +778,18 @@ def read_obstacles(
             footprint = repaired
         count = seen.get(identifier, 0)
         seen[identifier] = count + 1
+        # Корректный контур переносится как есть: круг через метры и обратно
+        # добавил бы в координаты шум, ничего не исправив.
+        polygon = (
+            GeoPolygon(outer=[GeoPoint(lon=lon, lat=lat) for lon, lat, _ in points])
+            if valid_as_is
+            else _polygon_to_geo(projector, footprint)
+        )
         obstacles.append(
             Obstacle(
                 id=identifier if count == 0 else f"{identifier}-{count + 1}",
                 name=kind,
-                polygon=_polygon_to_geo(projector, footprint),
+                polygon=polygon,
                 height_m=height,
             )
         )

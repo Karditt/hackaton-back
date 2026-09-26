@@ -1,0 +1,125 @@
+{
+  "id": "demo_100km2",
+  "name": "Демо в масштабе заказчика: ~95 км², 10 бортов",
+  "description": "Масштаб, названный заказчиком (docs/customer_qa.md, №2, №43): область около 100 км² — мультиполигон из основной части с озером-отверстием и отдельного участка, до 10 разнотипных бортов. Постоянная зона аэродрома, низковысотная зона ЛЭП (не мешает съёмке и перелётам выше 120 м), временная зона ОРВД с окном действия, слой высотных препятствий: мачта 250 м мешает съёмке Gemini (255 м), самолёт снимает выше неё с запасом (456 м); труба 180 м и здание 60 м ниже обеих высот съёмки с запасом. Коридор высот до 700 м (пример заказчика, №10). Геоскан 801 намеренно во флоте: для площадной RGB-съёмки он не подходит и должен быть исключён с объяснением.",
+  "airspace_boundary": {
+    "outer": [
+      {
+        "lon": 29.98,
+        "lat": 59.69
+      },
+      {
+        "lon": 30.24,
+        "lat": 59.69
+      },
+      {
+        "lon": 30.24,
+        "lat": 59.8
+      },
+      {
+        "lon": 29.98,
+        "lat": 59.8
+      }
+    ],
+    "holes": []
+  },
+  "altitude_corridor": {
+    "max_altitude_agl_m": 700.0
+  },
+  "sites": [
+    {
+      "id": "site-north",
+      "name": "Площадка «Север»",
+      "position": {
+        "lon": 30.085,
+        "lat": 59.788
+      },
+      "kind": "primary"
+    },
+    {
+      "id": "site-south",
+      "name": "Площадка «Юг»",
+      "position": {
+        "lon": 30.085,
+        "lat": 59.697
+      },
+      "kind": "primary"
+    },
+    {
+      "id": "site-west",
+      "name": "Площадка «Запад»",
+      "position": {
+        "lon": 29.995,
+        "lat": 59.742
+      },
+      "kind": "primary"
+    },
+    {
+      "id": "site-east",
+      "name": "Площадка «Восток»",
+      "position": {
+        "lon": 30.18,
+        "lat": 59.742
+      },
+      "kind": "primary"
+    },
+    {
+      "id": "reserve-south-east",
+      "name": "Резервная «Юго-восток»",
+      "position": {
+        "lon": 30.12,
+        "lat": 59.695
+      },
+      "kind": "reserve"
+    }
+  ],
+  "survey_type": "rgb",
+  "quality": {
+    "gsd_m": 0.05
+  },
+  "wind": {
+    "speed_mps": 5.0,
+    "direction_deg": 250.0
+  },
+  "fleet": [
+    {
+      "vehicle_id": "geoscan-201",
+      "count": 3,
+      "payload_id": "riebo-r4"
+    },
+    {
+      "vehicle_id": "geoscan-gemini",
+      "count": 2,
+      "payload_id": "geoscan-pf1b",
+      "site_id": "site-north"
+    },
+    {
+      "vehicle_id": "geoscan-gemini",
+      "count": 2,
+      "payload_id": "geoscan-pf1b",
+      "site_id": "site-east"
+    },
+    {
+      "vehicle_id": "geoscan-gemini",
+      "count": 1,
+      "payload_id": "geoscan-pf1b",
+      "site_id": "site-south"
+    },
+    {
+      "vehicle_id": "geoscan-gemini",
+      "count": 1,
+      "payload_id": "geoscan-pf1b",
+      "site_id": "site-west"
+    },
+    {
+      "vehicle_id": "geoscan-801",
+      "count": 1
+    }
+  ],
+  "vehicles": [],
+  "mode": "min_makespan",
+  "alpha": 0.5,
+  "start_time": "2026-09-20T06:00:00Z",
+  "turnaround_s": 900.0,
+  "seed": 42
+}

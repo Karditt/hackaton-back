@@ -5,12 +5,14 @@ import type { PlanningRun } from '../planning';
 import { ExportLinks } from './ExportLinks';
 import { MetricsList } from './MetricsList';
 import { RecommendationsList } from './RecommendationsList';
-import { ScheduleGantt } from './ScheduleGantt';
-import { ScheduleTable } from './ScheduleTable';
 import { WarningsList } from './WarningsList';
 import styles from './result.module.css';
 
-type Props = { run: PlanningRun };
+type Props = {
+  run: PlanningRun;
+  /** Открыть вкладку «Расписание» — диаграмма и таблица живут там во всю ширину. */
+  onOpenSchedule: () => void;
+};
 
 /** Предупреждения всех стадий конвейера в порядке их выполнения. */
 function collectWarnings(result: PipelineResult): PlanWarning[] {
@@ -28,7 +30,7 @@ function collectWarnings(result: PipelineResult): PlanWarning[] {
  * Итог расчёта. Выполнимый план — метрики и расписание; невыполнимый — причины
  * и что добавить (заказчик, №33, №42). Частичных планов нет.
  */
-export function ResultPanel({ run }: Props) {
+export function ResultPanel({ run, onOpenSchedule }: Props) {
   const { result } = run;
   const mission = result.mission;
   const feasible = mission.status === 'feasible';
@@ -64,12 +66,13 @@ export function ResultPanel({ run }: Props) {
       )}
 
       {feasible && mission.schedule && (
-        <Section title={`Расписание (${mission.schedule.entries?.length ?? 0})`}>
-          <ScheduleGantt schedule={mission.schedule} boards={boards} />
-          <details className={styles.tableToggle}>
-            <summary>показать таблицей</summary>
-            <ScheduleTable schedule={mission.schedule} />
-          </details>
+        <Section title="Расписание">
+          <p className={styles.scheduleLink}>
+            {mission.schedule.entries?.length ?? 0} вылетов у {boards.length} бортов.{' '}
+            <button type="button" className={styles.linkButton} onClick={onOpenSchedule}>
+              Открыть диаграмму и таблицу →
+            </button>
+          </p>
         </Section>
       )}
 

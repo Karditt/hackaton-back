@@ -11,6 +11,12 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
+}
+
+/* Атрибут hidden сильнее display из стилей компонентов: им прячутся вкладки. */
+[hidden] {
+  display: none !important;
 }

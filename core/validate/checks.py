@@ -383,7 +383,7 @@ def _check_altitudes(work_area: WorkArea, sorties: list[Sortie]) -> list[PlanWar
                 _violation(
                     "validate.survey_altitude",
                     f"Вылет {sortie.id}: съёмка ведётся на разных высотах "
-                    f"{sorted(survey)} — полезная работа должна идти на одной (№10)",
+                    f"{sorted(survey)} — полезная работа должна идти на одной",
                     sortie_id=sortie.id,
                 )
             )

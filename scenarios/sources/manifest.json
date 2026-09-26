@@ -1,0 +1,41 @@
+{
+  "description": "Из каких файлов собран каждый сценарий: три слоя KML в формате заказчика и параметры задания JSON (docs/input_formats.md). Пути — от этого файла. Совпадение JSON сценария с файлами проверяет `python -m core.cli check-sources` и tests/test_sources.py.",
+  "scenarios": {
+    "simple": {
+      "scenario": "../simple.json",
+      "area": "simple/area.kml",
+      "params": "simple/params.json"
+    },
+    "medium": {
+      "scenario": "../medium.json",
+      "area": "medium/area.kml",
+      "zones": "medium/zones.kml",
+      "params": "medium/params.json"
+    },
+    "nasty": {
+      "scenario": "../nasty.json",
+      "area": "nasty/area.kml",
+      "zones": "nasty/zones.kml",
+      "params": "nasty/params.json"
+    },
+    "demo_100km2": {
+      "scenario": "../demo_100km2.json",
+      "area": "demo_100km2/area.kml",
+      "zones": "demo_100km2/zones.kml",
+      "obstacles": "demo_100km2/obstacles.kml",
+      "params": "demo_100km2/params.json"
+    },
+    "real_msk": {
+      "scenario": "../real/real_msk.json",
+      "area": "../../data/samples/survey_area_msk.kml",
+      "zones": "../../data/samples/zones_msk.kml",
+      "obstacles": "../../data/samples/obstacles_msk.kml",
+      "params": "real_msk/params.json",
+      "report": "../real/real_msk.import.json",
+      "planning": {
+        "available": false,
+        "note": "Данные заказчика: 549 участков, 547 препятствий. Сценарий открыт для просмотра — расчёт на таком объёме пока идёт дольше 10 минут и будет включён после ускорения обхода препятствий."
+      }
+    }
+  }
+}

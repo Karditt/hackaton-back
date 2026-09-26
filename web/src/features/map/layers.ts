@@ -4,24 +4,44 @@
  * Слой — это вид объекта выгрузки, поле `kind` признака GeoJSON
  * (docs/export_format.md §4.2). Отбор идёт по признакам документа, который
  * вернул API: ни один объект здесь не строится и не пересчитывается.
+ *
+ * Слои двух родов. Исходные данные — то, что пришло файлами сценария:
+ * область, зоны, препятствия, площадки; их показ переключается в менеджере
+ * данных и виден до расчёта. Результат расчёта — подобласти, маршрут, точки,
+ * нарушения; их переключатели появляются вместе с планом.
  */
 
 import type { GeoJsonDocument } from '../../api';
 
+/** Род слоя: исходные данные сценария или результат расчёта. */
+export type LayerScope = 'input' | 'plan';
+
 /** Группа слоёв под одной галочкой. */
-export type LayerGroup = { id: string; label: string; kinds: string[] };
+export type LayerGroup = { id: string; label: string; kinds: string[]; scope: LayerScope };
 
 export const LAYER_GROUPS: LayerGroup[] = [
-  { id: 'area', label: 'Область и пространство', kinds: ['survey_area', 'airspace_boundary'] },
-  { id: 'no_fly_zone', label: 'Запретные зоны', kinds: ['no_fly_zone'] },
-  { id: 'obstacle', label: 'Высотные препятствия', kinds: ['obstacle'] },
-  { id: 'cell', label: 'Подобласти', kinds: ['survey_cell'] },
-  { id: 'maneuver_zone', label: 'Зоны манёвра', kinds: ['maneuver_zone'] },
-  { id: 'leg', label: 'Маршрут по фазам', kinds: ['leg'] },
-  { id: 'keypoint', label: 'Ключевые точки', kinds: ['keypoint'] },
-  { id: 'site', label: 'Площадки', kinds: ['site', 'recommended_site'] },
-  { id: 'violation', label: 'Нарушения', kinds: ['violation'] },
+  { id: 'area', label: 'Область съёмки', kinds: ['survey_area'], scope: 'input' },
+  { id: 'no_fly_zone', label: 'Запретные зоны', kinds: ['no_fly_zone'], scope: 'input' },
+  { id: 'obstacle', label: 'Высотные препятствия', kinds: ['obstacle'], scope: 'input' },
+  { id: 'airspace', label: 'Граница пространства', kinds: ['airspace_boundary'], scope: 'input' },
+  { id: 'site', label: 'Площадки', kinds: ['site'], scope: 'input' },
+  { id: 'cell', label: 'Подобласти', kinds: ['survey_cell'], scope: 'plan' },
+  { id: 'maneuver_zone', label: 'Зоны манёвра', kinds: ['maneuver_zone'], scope: 'plan' },
+  { id: 'leg', label: 'Маршрут по фазам', kinds: ['leg'], scope: 'plan' },
+  { id: 'keypoint', label: 'Ключевые точки', kinds: ['keypoint'], scope: 'plan' },
+  { id: 'violation', label: 'Нарушения', kinds: ['violation'], scope: 'plan' },
+  {
+    id: 'recommended_site',
+    label: 'Предлагаемые площадки',
+    kinds: ['recommended_site'],
+    scope: 'plan',
+  },
 ];
+
+/** Группы одного рода — в порядке списка. */
+export function groupsOf(scope: LayerScope): LayerGroup[] {
+  return LAYER_GROUPS.filter((group) => group.scope === scope);
+}
 
 /** Все виды объектов, которые интерфейс знает и умеет прятать. */
 const KNOWN_KINDS = new Set(LAYER_GROUPS.flatMap((group) => group.kinds));
@@ -37,6 +57,24 @@ export type MapFilter = {
 /** Отбор по умолчанию: показано всё. */
 export function allLayers(): MapFilter {
   return { groups: LAYER_GROUPS.map((group) => group.id), board: '' };
+}
+
+/**
+ * Показать все слои расчёта и все борта, не трогая исходные данные: их
+ * пользователь мог спрятать в менеджере данных, и новый расчёт не должен
+ * включать их обратно.
+ */
+export function resetPlanLayers(filter: MapFilter): MapFilter {
+  const inputShown = filter.groups.filter((id) =>
+    groupsOf('input').some((group) => group.id === id),
+  );
+  return { groups: [...inputShown, ...groupsOf('plan').map((group) => group.id)], board: '' };
+}
+
+/** Включить или выключить одну группу. */
+export function toggleGroup(filter: MapFilter, id: string, shown: boolean): MapFilter {
+  const rest = filter.groups.filter((item) => item !== id);
+  return { ...filter, groups: shown ? [...rest, id] : rest };
 }
 
 /**

@@ -12,12 +12,20 @@
 
 Формат записи каталога: `параметр: {value: ..., source: "..."}` либо
 `параметр: {value: null, gap: "..."}`.
+
+ТТХ, ЗАДАННЫЕ ПОЛЬЗОВАТЕЛЕМ (решение владельца, 2026-09-26). Сценарий может
+нести свои записи `Scenario.vehicles`: правку модели каталога или новую модель.
+Это вход, а не выдумка команды: числа ввёл человек, поля перечислены в
+`Vehicle.user_fields`, и план предупреждает, какие борта летят не по данным
+каталога. Сам каталог при этом не меняется — к исходным данным всегда можно
+вернуться, убрав запись из сценария.
 """
 
 from __future__ import annotations
 
 import math
 import os
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -25,7 +33,7 @@ import yaml
 
 from core import assumptions
 from core.errors import CatalogError
-from core.schemas import Payload, PayloadKind, Vehicle, VehicleType
+from core.schemas import Payload, PayloadKind, PlanWarning, Severity, Stage, Vehicle, VehicleType
 
 #: Каталог по умолчанию — рядом с репозиторием, а не относительно рабочей папки.
 DEFAULT_CATALOG_PATH = Path(__file__).resolve().parents[1] / "data" / "vehicles.yaml"
@@ -349,14 +357,102 @@ def _vehicle(raw: dict[str, Any]) -> Vehicle:
     )
 
 
+#: Подписи полей ТТХ для предупреждения о данных пользователя.
+_FIELD_LABELS: dict[str, str] = {
+    "name": "название",
+    "type": "тип",
+    "cruise_speed_mps": "крейсерская скорость",
+    "max_speed_mps": "максимальная скорость",
+    "min_speed_mps": "минимальная скорость",
+    "endurance_s": "продолжительность полёта",
+    "max_wind_mps": "допустимый ветер",
+    "turn_radius_m": "радиус разворота",
+    "min_altitude_agl_m": "минимальная безопасная высота",
+    "max_altitude_agl_m": "потолок",
+    "max_range_m": "протяжённость маршрута",
+    "energy_wh": "энергия АКБ",
+    "payloads": "полезная нагрузка",
+}
+
+
+def _user_vehicle(vehicle: Vehicle) -> Vehicle:
+    """Проверить модель с ТТХ пользователя и привести её к правилам ядра.
+
+    Отсечка заряда — значение заказчика, одно на все борта: пользователь её не
+    задаёт, и в модели она всегда из `core.assumptions`.
+
+    Raises:
+        CatalogError: числа противоречат друг другу или самолёту не хватает
+            радиуса разворота — без него нельзя построить зону манёвра.
+    """
+    if vehicle.is_fixed_wing() and vehicle.turn_radius_m <= 0.0:
+        raise CatalogError(
+            f"Модель {vehicle.name!r}: у самолёта нужен радиус разворота больше нуля"
+        )
+    if vehicle.max_speed_mps is not None and vehicle.cruise_speed_mps > vehicle.max_speed_mps:
+        raise CatalogError(
+            f"Модель {vehicle.name!r}: крейсерская скорость {vehicle.cruise_speed_mps:g} м/с "
+            f"больше максимальной {vehicle.max_speed_mps:g} м/с"
+        )
+    if vehicle.min_speed_mps is not None and vehicle.cruise_speed_mps < vehicle.min_speed_mps:
+        raise CatalogError(
+            f"Модель {vehicle.name!r}: крейсерская скорость {vehicle.cruise_speed_mps:g} м/с "
+            f"меньше минимальной {vehicle.min_speed_mps:g} м/с"
+        )
+    if (
+        vehicle.min_altitude_agl_m is not None
+        and vehicle.max_altitude_agl_m is not None
+        and vehicle.min_altitude_agl_m >= vehicle.max_altitude_agl_m
+    ):
+        raise CatalogError(
+            f"Модель {vehicle.name!r}: минимальная безопасная высота не ниже потолка"
+        )
+    derived = [field for field in vehicle.derived_fields if field != "battery_reserve_fraction"]
+    return vehicle.model_copy(
+        update={
+            "battery_reserve_fraction": assumptions.BATTERY_RESERVE_FRACTION,
+            "derived_fields": [*derived, "battery_reserve_fraction"],
+            "user_fields": [f for f in vehicle.user_fields if f != "battery_reserve_fraction"],
+        }
+    )
+
+
 class VehicleCatalog:
     """Загруженный каталог техники."""
 
-    def __init__(self, vehicles: list[Vehicle], path: Path) -> None:
+    def __init__(self, vehicles: list[Vehicle], path: Path, user_ids: Iterable[str] = ()) -> None:
         self.path = path
         self._by_id = {vehicle.id: vehicle for vehicle in vehicles}
         if len(self._by_id) != len(vehicles):
             raise CatalogError("Идентификаторы бортов в каталоге не уникальны")
+        self.user_ids: frozenset[str] = frozenset(user_ids)
+        """Модели, чьи ТТХ пришли из сценария, а не из файла каталога."""
+
+    def with_user_vehicles(self, vehicles: Sequence[Vehicle]) -> VehicleCatalog:
+        """Каталог с ТТХ пользователя поверх файла.
+
+        Запись с id модели каталога заменяет её целиком, новая — добавляется.
+        Файл каталога не меняется: без записей сценария каталог прежний.
+
+        Args:
+            vehicles: модели из `Scenario.vehicles`.
+
+        Returns:
+            Новый каталог; исходный не изменён.
+
+        Raises:
+            CatalogError: модель пользователя внутренне противоречива.
+        """
+        if not vehicles:
+            return self
+        merged = dict(self._by_id)
+        for vehicle in vehicles:
+            merged[vehicle.id] = _user_vehicle(vehicle)
+        return VehicleCatalog(
+            list(merged.values()),
+            self.path,
+            user_ids=self.user_ids | {vehicle.id for vehicle in vehicles},
+        )
 
     def __len__(self) -> int:
         return len(self._by_id)
@@ -383,6 +479,42 @@ class VehicleCatalog:
             raise CatalogError(
                 f"Борт {vehicle_id!r} отсутствует в каталоге {self.path.name}. Известны: {known}"
             ) from exc
+
+
+def user_vehicle_warnings(
+    vehicles: Iterable[Vehicle], catalog: VehicleCatalog
+) -> list[PlanWarning]:
+    """Предупредить, какие борта плана летят по ТТХ пользователя, а не каталога.
+
+    План с такими бортами законен (решение владельца), но проверяющий должен
+    видеть, что числа модели не из документа производителя.
+
+    Args:
+        vehicles: модели флота сценария.
+        catalog: каталог с наложенными ТТХ пользователя.
+
+    Returns:
+        По предупреждению на модель с данными пользователя.
+    """
+    warnings = []
+    for vehicle in vehicles:
+        if vehicle.id not in catalog.user_ids:
+            continue
+        fields = [_FIELD_LABELS.get(item, item) for item in vehicle.user_fields]
+        detail = f": {', '.join(fields)}" if fields else ""
+        warnings.append(
+            PlanWarning(
+                code="catalog.user_vehicle",
+                severity=Severity.INFO,
+                stage=Stage.SURVEY,
+                message=(
+                    f"Модель {vehicle.name} посчитана по ТТХ, заданным пользователем{detail}. "
+                    "Эти числа не из каталога производителя"
+                ),
+                context={"vehicle_id": vehicle.id, "user_fields": ",".join(vehicle.user_fields)},
+            )
+        )
+    return warnings
 
 
 def load_catalog(path: str | os.PathLike[str] | None = None) -> VehicleCatalog:
@@ -414,4 +546,10 @@ def load_catalog(path: str | os.PathLike[str] | None = None) -> VehicleCatalog:
     return VehicleCatalog([_vehicle(item) for item in raw["vehicles"]], resolved)
 
 
-__all__ = ["CATALOG_ENV_VAR", "DEFAULT_CATALOG_PATH", "VehicleCatalog", "load_catalog"]
+__all__ = [
+    "CATALOG_ENV_VAR",
+    "DEFAULT_CATALOG_PATH",
+    "VehicleCatalog",
+    "load_catalog",
+    "user_vehicle_warnings",
+]

@@ -56,7 +56,7 @@ def describe_rejection(error: Exception) -> str:
         text += (
             ". Это сценарий контракта v1: добавьте поле "
             '"altitude_corridor": {"max_altitude_agl_m": …} — верхнюю границу высот над '
-            "землёй (в примере заказчика — 700 м, №10)"
+            "землёй (в примере заказчика — 700 м)"
         )
     return text
 
@@ -140,14 +140,23 @@ class ScenarioStore:
         """
         if not directory.is_dir():
             return 0
-        loaded = 0
-        for path in sorted(directory.glob("*.json")):
-            scenario = self._read(path)
-            if scenario is None:
-                continue
-            self._cache.setdefault(scenario.id, scenario)
-            loaded += 1
-        return loaded
+        return sum(self.seed_file(path) for path in sorted(directory.glob("*.json")))
+
+    def seed_file(self, path: Path) -> bool:
+        """Загрузить один готовый сценарий, не перезаписывая сохранённый с тем же id.
+
+        Args:
+            path: файл JSON-сценария — например, сценарий на данных заказчика
+                из `scenarios/real/`, который лежит вне `scenarios/`.
+
+        Returns:
+            True — сценарий прочитан.
+        """
+        scenario = self._read(path)
+        if scenario is None:
+            return False
+        self._cache.setdefault(scenario.id, scenario)
+        return True
 
 
 __all__ = ["DEFAULT_STORAGE_DIR", "STORAGE_ENV_VAR", "ScenarioStore", "describe_rejection"]
