@@ -1,0 +1,37 @@
+<?xml version='1.0' encoding='utf-8'?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>Высотные препятствия — Демо в масштабе заказчика: ~95 км², 10 бортов</name>
+    <Placemark>
+      <name>mast-north Мачта связи</name>
+      <description>Высота 250 м над землёй</description>
+      <Point>
+        <extrude>1</extrude>
+        <altitudeMode>relativeToGround</altitudeMode>
+        <coordinates>30.03,59.73,250.0</coordinates>
+      </Point>
+    </Placemark>
+    <Placemark>
+      <name>chimney Труба котельной</name>
+      <description>Высота 180 м над землёй</description>
+      <Point>
+        <extrude>1</extrude>
+        <altitudeMode>relativeToGround</altitudeMode>
+        <coordinates>30.155,59.71,180.0</coordinates>
+      </Point>
+    </Placemark>
+    <Placemark>
+      <name>warehouse Складской корпус</name>
+      <description>Высота 60 м над землёй</description>
+      <Polygon>
+        <extrude>1</extrude>
+        <altitudeMode>relativeToGround</altitudeMode>
+        <outerBoundaryIs>
+          <LinearRing>
+            <coordinates>30.118,59.764,60.0 30.122,59.764,60.0 30.122,59.766,60.0 30.118,59.766,60.0 30.118,59.764,60.0</coordinates>
+          </LinearRing>
+        </outerBoundaryIs>
+      </Polygon>
+    </Placemark>
+  </Document>
+</kml>

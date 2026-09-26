@@ -462,6 +462,10 @@ class Vehicle(Model):
         default_factory=list,
         description="Поля, заполненные допущением команды, а не ТТХ производителя",
     )
+    user_fields: list[str] = Field(
+        default_factory=list,
+        description="Поля, заданные пользователем, а не взятые из каталога data/vehicles.yaml",
+    )
 
     def payload(self, payload_id: str) -> Payload | None:
         """Нагрузка по идентификатору, либо None."""
@@ -629,6 +633,13 @@ class Scenario(Model):
     quality: QualityRequirement
     wind: Wind = Field(default_factory=lambda: Wind(speed_mps=0.0, direction_deg=0.0))
     fleet: list[FleetUnit] = Field(min_length=1)
+    vehicles: list[Vehicle] = Field(
+        default_factory=list,
+        description=(
+            "ТТХ, заданные пользователем: запись заменяет модель каталога с тем же id "
+            "или добавляет новую. Пусто — только каталог data/vehicles.yaml"
+        ),
+    )
 
     mode: OptimizationMode = OptimizationMode.MIN_MAKESPAN
     alpha: float = Field(
@@ -659,6 +670,14 @@ class Scenario(Model):
             raise ValueError("Идентификаторы площадок должны быть уникальны")
         return sites
 
+    @field_validator("vehicles")
+    @classmethod
+    def _unique_vehicle_ids(cls, vehicles: list[Vehicle]) -> list[Vehicle]:
+        ids = [vehicle.id for vehicle in vehicles]
+        if len(set(ids)) != len(ids):
+            raise ValueError("Модели с ТТХ пользователя повторяются: у каждой свой id")
+        return vehicles
+
     @model_validator(mode="after")
     def _consistency(self) -> Scenario:
         known = {site.id for site in self.sites}
@@ -668,15 +687,16 @@ class Scenario(Model):
                     f"Борт {unit.vehicle_id} приписан к неизвестной площадке {unit.site_id!r}"
                 )
         if not self.primary_sites():
+            # Заказчик, №41. Номера вопросов в тексты для пользователя не выносятся:
+            # docs/customer_qa.md — рабочий файл команды.
             raise ValueError(
-                "Нужна хотя бы одна штатная площадка: резервные для работы не используются "
-                "(заказчик, №41)"
+                "Нужна хотя бы одна штатная площадка: резервные для работы не используются"
             )
         total = sum(unit.count for unit in self.fleet)
         if total > assumptions.MAX_FLEET_VEHICLES:
+            # Заказчик, №2, №43.
             raise ValueError(
-                f"Во флоте {total} бортов, допустимо не больше "
-                f"{assumptions.MAX_FLEET_VEHICLES} (заказчик, №2, №43)"
+                f"Во флоте {total} бортов, допустимо не больше {assumptions.MAX_FLEET_VEHICLES}"
             )
         return self
 

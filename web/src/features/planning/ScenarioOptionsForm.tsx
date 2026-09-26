@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { Scenario, Vehicle } from '../../api';
 import { Notice } from '../../shared/ui/Notice';
-import { FleetEditor } from './FleetEditor';
+import { FleetEditor, type ParkFleet } from './FleetEditor';
 import { SURVEY_TYPES, customScenarioId, type ScenarioOptions } from './scenarioOptions';
 import styles from './PlanningForm.module.css';
 
@@ -14,6 +14,8 @@ type Props = {
   edited: boolean;
   vehicles: Vehicle[];
   disabled: boolean;
+  /** Борта парка в строю — источник флота (вкладка «Техника»). */
+  parkFleet?: ParkFleet | null;
 };
 
 /**
@@ -73,7 +75,7 @@ export function ScenarioOptionsForm(props: Props) {
           disabled={disabled}
         />
         <span className={styles.hint}>
-          целевое разрешение на местности — по нему считается высота съёмки (№26)
+          целевое разрешение на местности — по нему считается высота съёмки
         </span>
       </label>
 
@@ -108,7 +110,7 @@ export function ScenarioOptionsForm(props: Props) {
         </div>
         <span className={styles.hint}>
           направление — метеорологическое: 0° — ветер с севера. Во время полёта и расход
-          не входит, влияет на выполнимость (№45)
+          не входит, влияет на выполнимость
         </span>
       </fieldset>
 
@@ -123,7 +125,7 @@ export function ScenarioOptionsForm(props: Props) {
           onChange={(event) => set({ max_altitude_agl_m: event.target.value })}
           disabled={disabled}
         />
-        <span className={styles.hint}>верхняя граница всех высот плана (№10)</span>
+        <span className={styles.hint}>верхняя граница всех высот плана</span>
       </label>
 
       <label className={styles.field}>
@@ -163,7 +165,7 @@ export function ScenarioOptionsForm(props: Props) {
             min={0}
             step={1}
             placeholder="по умолч."
-            title="Межвылетная подготовка между вылетами одного борта (№32)"
+            title="Межвылетная подготовка между вылетами одного борта"
             value={options.turnaround_min}
             onChange={(event) => set({ turnaround_min: event.target.value })}
             disabled={disabled}
@@ -177,6 +179,7 @@ export function ScenarioOptionsForm(props: Props) {
         sites={scenario.sites}
         onChange={(fleet) => set({ fleet })}
         disabled={disabled}
+        parkFleet={props.parkFleet}
       />
 
       {props.edited && (

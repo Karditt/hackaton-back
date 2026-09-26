@@ -7,13 +7,22 @@ type Props = {
   schedule: Schedule;
   /** Сводка бортов выгрузки — даёт подписи «Геоскан Gemini #3» и порядок строк. */
   boards: BoardSummary[];
+  /**
+   * `compact` — для боковой панели; `wide` — вкладка «Расписание» во всю
+   * ширину: строки выше, делений шкалы больше, у делений — время UTC.
+   */
+  variant?: 'compact' | 'wide';
 };
 
 /** Цвета моделей: борта одной модели — одним цветом, порядок — по первой встрече. */
 const MODEL_COLORS = ['#2563eb', '#16a34a', '#b45309', '#7c3aed', '#0891b2', '#db2777'];
 
-/** Сколько делений подписывается на шкале времени. */
-const TICKS = 4;
+/**
+ * Сколько делений подписывается на шкале времени. У широкой шкалы под
+ * делением две строки — длительность и время UTC, — и больше шести делений
+ * на экране ноутбука наезжают друг на друга.
+ */
+const TICKS = { compact: 4, wide: 6 } as const;
 
 /** Ключ борта: модель и номер экземпляра — так же, как их различает контракт. */
 function boardKey(item: { vehicle_id: string; vehicle_instance: number }): string {
@@ -31,7 +40,7 @@ function boardKey(item: { vehicle_id: string; vehicle_instance: number }): strin
  * бортами. У baseline он велик: в демо один коптер делает 21 вылет, другой 7
  * (долг №25, задача E6 шаг 2).
  */
-export function ScheduleGantt({ schedule, boards }: Props) {
+export function ScheduleGantt({ schedule, boards, variant = 'compact' }: Props) {
   const entries = schedule.entries ?? [];
   if (entries.length === 0) {
     return <p className={styles.empty}>Расписание пусто.</p>;
@@ -39,6 +48,7 @@ export function ScheduleGantt({ schedule, boards }: Props) {
 
   const span = Math.max(...entries.map((entry) => entry.end_s));
   const origin = schedule.start_time ? Date.parse(schedule.start_time) : null;
+  const ticks = TICKS[variant];
 
   const rows = new Map<string, ScheduleEntry[]>();
   for (const board of boards) {
@@ -58,7 +68,7 @@ export function ScheduleGantt({ schedule, boards }: Props) {
     origin === null ? `T+${minutes(seconds)}` : clockTime(origin, seconds);
 
   return (
-    <div className={styles.gantt}>
+    <div className={`${styles.gantt} ${variant === 'wide' ? styles.ganttWide : ''}`}>
       {[...rows].map(([key, own]) => {
         const [vehicleId, instance] = key.split('/');
         const color = MODEL_COLORS[models.indexOf(vehicleId) % MODEL_COLORS.length];
@@ -105,13 +115,22 @@ export function ScheduleGantt({ schedule, boards }: Props) {
       })}
 
       <div className={styles.ganttAxis}>
-        {Array.from({ length: TICKS + 1 }, (_, index) => (
-          <span key={index}>{hours((span * index) / TICKS)}</span>
-        ))}
+        {Array.from({ length: ticks + 1 }, (_, index) => {
+          const at = (span * index) / ticks;
+          return (
+            <span key={index} className={styles.ganttTick}>
+              {hours(at)}
+              {variant === 'wide' && origin !== null && (
+                <span className={styles.ganttClock}>{clockTime(origin, at)}</span>
+              )}
+            </span>
+          );
+        })}
       </div>
       <p className={styles.hint}>
-        Полоса — вылет, штриховка перед ней — ожидание на земле ради разведения бортов. Число
-        у борта — сколько у него вылетов.
+        Полоса — вылет, штриховка перед ней — ожидание на земле ради разведения бортов. Число у
+        борта — сколько у него вылетов.
+        {variant === 'wide' && origin !== null && ' Под делениями шкалы — дата и время UTC.'}
       </p>
     </div>
   );

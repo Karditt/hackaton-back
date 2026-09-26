@@ -151,6 +151,14 @@ select.control {
   margin-top: 6px;
 }
 
+.parkRow {
+  margin: 6px 0 10px;
+}
+
+.parkRow .hint {
+  margin-top: 4px;
+}
+
 .rowButton {
   padding: 4px 8px;
   font: inherit;

@@ -25,7 +25,7 @@ from core.advise import diagnose, stub_warning
 from core.allocate.baseline import build_baseline_allocation
 from core.allocate.fleet import FleetInstance, expand_fleet
 from core.allocate.objective import objective_value, resource_s, weighted_value
-from core.catalog import VehicleCatalog, load_catalog
+from core.catalog import VehicleCatalog, load_catalog, user_vehicle_warnings
 from core.coverage.decompose import decompose
 from core.coverage.oracle import CoverageOracle
 from core.deconflict import assign_transit_levels, build_schedule
@@ -108,17 +108,31 @@ def resolve_fleet(scenario: Scenario, catalog: VehicleCatalog) -> dict[str, Vehi
     return {unit.vehicle_id: catalog.get(unit.vehicle_id) for unit in scenario.fleet}
 
 
+def scenario_catalog(scenario: Scenario, catalog: VehicleCatalog | None = None) -> VehicleCatalog:
+    """Каталог, по которому считается сценарий: файл плюс ТТХ пользователя.
+
+    Args:
+        scenario: сценарий; его `vehicles` накладываются поверх каталога.
+        catalog: каталог техники. None — прочитать `data/vehicles.yaml`.
+
+    Raises:
+        CatalogError: каталог не читается или модель пользователя противоречива.
+    """
+    return (catalog or load_catalog()).with_user_vehicles(scenario.vehicles)
+
+
 def check_scenario(scenario: Scenario, catalog: VehicleCatalog | None = None) -> None:
     """Проверить сценарий на приёме, до расчёта (заказчик, №19).
 
     Ловит то, что является ошибкой входа, а не невыполнимостью задания:
-    неизвестный борт, некорректную геометрию (самопересечение — с местом),
-    слишком большую область, перекрытие ниже минимума для типа съёмки.
+    неизвестный борт, противоречивые ТТХ пользователя, некорректную геометрию
+    (самопересечение — с местом), слишком большую область, перекрытие ниже
+    минимума для типа съёмки.
 
     Raises:
         CatalogError, GeometryError, ScenarioError: с понятным текстом.
     """
-    resolve_fleet(scenario, catalog or load_catalog())
+    resolve_fleet(scenario, scenario_catalog(scenario, catalog))
     build_work_area(scenario)
     resolve_overlaps(scenario.survey_type, scenario.quality)
 
@@ -269,7 +283,7 @@ def run_pipeline(
         scenario = scenario.model_copy(update=overrides)
 
     clock = _Clock()
-    vehicle_catalog = catalog or load_catalog()
+    vehicle_catalog = scenario_catalog(scenario, catalog)
     vehicles = resolve_fleet(scenario, vehicle_catalog)
 
     work_area = build_work_area(scenario)
@@ -285,7 +299,10 @@ def run_pipeline(
         work_area=work_area,
         survey_plan=survey_plan,
         clock=clock,
-        warnings=list(work_area.warnings),
+        warnings=[
+            *work_area.warnings,
+            *user_vehicle_warnings(vehicles.values(), vehicle_catalog),
+        ],
     )
     if not survey_plan.per_vehicle:
         return assembler.finish(_errors(survey_plan.warnings), stub_stages=())

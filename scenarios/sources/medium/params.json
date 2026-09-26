@@ -1,0 +1,56 @@
+{
+  "id": "medium",
+  "name": "Г-образная область с отверстием, 4 x 3 км",
+  "description": "Невыпуклая область с внутренним отверстием, две запретные зоны, две площадки, умеренный ветер, разнотипный флот. Геоскан 201 снимает RGB камерой Riebo R4: размер кадра выведен из мегапикселей и формата полного кадра, высота — по фокусному 40 мм (производные поля). Проверяет обход зон перелётами, переходы в обход отверстия, зоны манёвра самолёта у запретных зон. Ожидается выполнимый план.",
+  "altitude_corridor": {
+    "max_altitude_agl_m": 700.0
+  },
+  "sites": [
+    {
+      "id": "base-west",
+      "name": "Площадка «Запад»",
+      "position": {
+        "lon": 30.196,
+        "lat": 59.848
+      },
+      "kind": "primary"
+    },
+    {
+      "id": "base-east",
+      "name": "Площадка «Восток»",
+      "position": {
+        "lon": 30.275,
+        "lat": 59.86
+      },
+      "kind": "primary"
+    }
+  ],
+  "survey_type": "rgb",
+  "quality": {
+    "gsd_m": 0.04,
+    "forward_overlap": 0.8,
+    "side_overlap": 0.6
+  },
+  "wind": {
+    "speed_mps": 6.0,
+    "direction_deg": 225.0
+  },
+  "fleet": [
+    {
+      "vehicle_id": "geoscan-gemini",
+      "count": 3,
+      "payload_id": "geoscan-pf1b",
+      "battery_sets": 8
+    },
+    {
+      "vehicle_id": "geoscan-201",
+      "count": 1,
+      "battery_sets": 1
+    }
+  ],
+  "vehicles": [],
+  "mode": "min_makespan",
+  "alpha": 0.5,
+  "start_time": "2026-09-20T06:00:00Z",
+  "seed": 42
+}

@@ -23,6 +23,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from core.errors import GeometryError
 from core.export.boards import (
     Board,
     KeyPoint,
@@ -32,6 +33,7 @@ from core.export.boards import (
 )
 from core.export.common import oriented_rings, utc_time
 from core.export.schedule import schedule_rows
+from core.geo.crs import pick_working_crs
 from core.geo.project import Projector
 from core.schemas import (
     GeoPolygon,
@@ -47,6 +49,9 @@ from core.schemas import (
 #: Версия формата выгрузки (docs/export_format.md). Меняется при изменении
 #: состава признаков или свойств.
 FORMAT_VERSION = "geoscan-planner/3"
+
+#: Квадратных метров в квадратном километре — перевод единиц показа.
+_M2_PER_KM2 = 1.0e6
 
 
 def _rings(polygon: GeoPolygon) -> list[list[list[float]]]:
@@ -381,6 +386,57 @@ def mission_to_geojson(
     }
 
 
+def _area_km2(scenario: Scenario) -> float | None:
+    """Площадь области съёмки, км²; None — геометрия не переводится в метры.
+
+    Площадь считается в метрической проекции (инвариант 1), как в конвейере.
+    Некорректная геометрия здесь не ошибка: этот документ только показывает
+    слои, а отвергает их приём сценария и расчёт — с указанием места.
+    """
+    anchors = [point for polygon in scenario.area.polygons for point in polygon.outer]
+    crs, _origin = pick_working_crs(anchors)
+    try:
+        area = Projector(crs).multipolygon_to_metric(scenario.area, "Область съёмки")
+    except GeometryError:
+        return None
+    return round(area.area / _M2_PER_KM2, 3)
+
+
+def scenario_to_geojson(scenario: Scenario) -> dict[str, Any]:
+    """Слои сценария без расчёта: область, зоны, пространство, препятствия, площадки.
+
+    Нужен интерфейсу, чтобы показать исходные данные на карте до расчёта и
+    прятать их по видам (E10). Признаки и поле `kind` — те же, что у слоёв
+    сценария в выгрузке плана, поэтому интерфейс рисует оба документа одним
+    кодом.
+
+    Args:
+        scenario: сценарий с координатами в WGS84.
+
+    Returns:
+        Словарь GeoJSON FeatureCollection. В свойствах — число объектов по
+        видам и площадь области, км² (None, если геометрия некорректна).
+    """
+    return {
+        "type": "FeatureCollection",
+        "features": _context_features(scenario),
+        "properties": {
+            "format": FORMAT_VERSION,
+            "scenario_id": scenario.id,
+            "name": scenario.name,
+            "altitude_reference": "AGL",
+            "area_km2": _area_km2(scenario),
+            "counts": {
+                "survey_area": len(scenario.area.polygons),
+                "no_fly_zone": len(scenario.no_fly_zones),
+                "airspace_boundary": int(scenario.airspace_boundary is not None),
+                "obstacle": len(scenario.obstacles),
+                "site": len(scenario.sites),
+            },
+        },
+    }
+
+
 def geojson_to_text(document: dict[str, Any]) -> str:
     """Сериализовать FeatureCollection: UTF-8 без экранирования кириллицы."""
     return json.dumps(document, ensure_ascii=False, indent=2)
@@ -411,4 +467,10 @@ def write_geojson(
     return path
 
 
-__all__ = ["FORMAT_VERSION", "geojson_to_text", "mission_to_geojson", "write_geojson"]
+__all__ = [
+    "FORMAT_VERSION",
+    "geojson_to_text",
+    "mission_to_geojson",
+    "scenario_to_geojson",
+    "write_geojson",
+]

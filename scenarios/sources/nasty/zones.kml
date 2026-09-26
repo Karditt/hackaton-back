@@ -1,0 +1,40 @@
+<?xml version='1.0' encoding='utf-8'?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>Зоны ограничений — «Злой» сценарий: два отверстия, зона впритык к границе, обрезка воздушным пространством</name>
+    <Placemark>
+      <name>Зона впритык к западной границе</name>
+      <description>На всех высотах</description>
+      <ExtendedData>
+        <Data name="zone_id">
+          <value>nfz-edge</value>
+        </Data>
+        <Data name="zone_kind">
+          <value>prohibited</value>
+        </Data>
+        <Data name="alt_datum">
+          <value>AGL</value>
+        </Data>
+        <Data name="alt_min_m">
+          <value>0</value>
+        </Data>
+        <Data name="alt_max_m">
+          <value />
+        </Data>
+        <Data name="active_windows">
+          <value />
+        </Data>
+        <Data name="source_text">
+          <value>На всех высотах</value>
+        </Data>
+      </ExtendedData>
+      <Polygon>
+        <outerBoundaryIs>
+          <LinearRing>
+            <coordinates>30.398,59.956 30.406,59.956 30.406,59.96 30.398,59.96 30.398,59.956</coordinates>
+          </LinearRing>
+        </outerBoundaryIs>
+      </Polygon>
+    </Placemark>
+  </Document>
+</kml>

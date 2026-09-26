@@ -1,0 +1,177 @@
+.origin {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* Исходный файл сценария под видом данных. */
+
+.source {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 2px 0;
+  font-size: 11px;
+}
+
+.sourceLine {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.sourcePrefix {
+  color: var(--muted);
+}
+
+.sourceName {
+  overflow: hidden;
+  color: var(--accent);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.stats {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.warnings {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.warnings summary {
+  cursor: pointer;
+}
+
+.warnings ul {
+  margin: 6px 0 0;
+  padding-left: 16px;
+}
+
+.warnings li {
+  margin-bottom: 4px;
+}
+
+.kinds {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.kind {
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+
+.kind:first-child {
+  border-top: none;
+}
+
+.head {
+  display: grid;
+  grid-template-columns: 30px 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.noLayer {
+  display: block;
+  width: 30px;
+  height: 2px;
+  background: var(--line);
+  border-radius: 1px;
+}
+
+.text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.label {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.count {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.upload {
+  padding: 3px 8px;
+  font-size: 11px;
+  color: var(--accent);
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.upload:hover {
+  background: var(--accent-bg);
+  border-color: var(--accent);
+}
+
+.files {
+  margin: 6px 0 0 38px;
+  padding: 0;
+  list-style: none;
+}
+
+.file {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  gap: 6px;
+  align-items: center;
+  padding: 2px 0;
+  font-size: 11px;
+}
+
+.fileName {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.fileSize {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.stub {
+  padding: 0 5px;
+  color: var(--warning);
+  background: var(--warning-bg);
+  border-radius: 999px;
+  cursor: help;
+}
+
+.remove {
+  padding: 0 4px;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.remove:hover {
+  color: var(--error);
+}
+
+.note {
+  margin: 8px 0 0;
+  padding: 6px 8px;
+  font-size: 11px;
+  color: var(--warning);
+  background: var(--warning-bg);
+  border-radius: var(--radius);
+}

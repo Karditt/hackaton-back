@@ -14,6 +14,7 @@
 
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import { viewAltitudeControl } from './viewAltitude';
 
 const OSM_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
 const OSM_ATTRIBUTION =
@@ -37,5 +38,9 @@ export function createMap(container: HTMLElement): L.Map {
     attribution: OSM_ATTRIBUTION,
     maxZoom: MAX_ZOOM,
   }).addTo(map);
+  // Нижние элементы угла Leaflet ставит друг над другом в обратном порядке:
+  // линейка масштаба окажется внизу, высота обзора — над ней.
+  L.control.scale({ imperial: false }).addTo(map);
+  viewAltitudeControl('bottomleft').addTo(map);
   return map;
 }

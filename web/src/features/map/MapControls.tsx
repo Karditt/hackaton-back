@@ -1,5 +1,5 @@
 import type { BoardSummary } from '../../api';
-import { LAYER_GROUPS, allLayers, type MapFilter } from './layers';
+import { groupsOf, resetPlanLayers, toggleGroup, type MapFilter } from './layers';
 import styles from './MapControls.module.css';
 
 type Props = {
@@ -10,20 +10,14 @@ type Props = {
 };
 
 /**
- * Что показано на карте: галочки по видам объектов и выбор борта (E11).
+ * Слои результата расчёта и выбор борта (E11). Исходные данные — область,
+ * зоны, препятствия, площадки — переключаются в менеджере данных.
  *
  * Карта рисует все слои сразу, и на плане в сотню вылетов один маршрут в них
  * теряется. Отбор — только показ: план не пересчитывается и выгрузка не
  * меняется.
  */
 export function MapControls({ filter, onChange, boards }: Props) {
-  const toggle = (id: string) => {
-    const groups = filter.groups.includes(id)
-      ? filter.groups.filter((item) => item !== id)
-      : [...filter.groups, id];
-    onChange({ ...filter, groups });
-  };
-
   return (
     <div>
       <label className={styles.board}>
@@ -43,13 +37,13 @@ export function MapControls({ filter, onChange, boards }: Props) {
       </label>
 
       <ul className={styles.list}>
-        {LAYER_GROUPS.map((group) => (
+        {groupsOf('plan').map((group) => (
           <li key={group.id}>
             <label className={styles.item}>
               <input
                 type="checkbox"
                 checked={filter.groups.includes(group.id)}
-                onChange={() => toggle(group.id)}
+                onChange={(event) => onChange(toggleGroup(filter, group.id, event.target.checked))}
               />
               {group.label}
             </label>
@@ -57,7 +51,11 @@ export function MapControls({ filter, onChange, boards }: Props) {
         ))}
       </ul>
 
-      <button type="button" className={styles.reset} onClick={() => onChange(allLayers())}>
+      <button
+        type="button"
+        className={styles.reset}
+        onClick={() => onChange(resetPlanLayers(filter))}
+      >
         показать всё
       </button>
     </div>

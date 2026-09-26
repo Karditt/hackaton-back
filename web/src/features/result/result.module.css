@@ -68,6 +68,10 @@
   overflow: auto;
 }
 
+.tableWrapFull {
+  overflow-x: auto;
+}
+
 .table {
   width: 100%;
   border-collapse: collapse;
@@ -94,15 +98,27 @@
 /* Диаграмма расписания: борт — строка, вылет — полоса (заказчик, №31). */
 
 .gantt {
+  --label-width: 104px;
+  --track-height: 12px;
   font-size: 11px;
+}
+
+.ganttWide {
+  --label-width: 200px;
+  --track-height: 20px;
+  font-size: 12px;
 }
 
 .ganttRow {
   display: grid;
-  grid-template-columns: 104px 1fr;
+  grid-template-columns: var(--label-width) 1fr;
   gap: 6px;
   align-items: center;
   margin-bottom: 3px;
+}
+
+.ganttWide .ganttRow {
+  margin-bottom: 5px;
 }
 
 .ganttLabel {
@@ -123,9 +139,20 @@
 .ganttTrack {
   position: relative;
   display: block;
-  height: 12px;
+  height: var(--track-height);
   background: var(--bg);
   border-radius: 2px;
+}
+
+/* Вертикальные линии под деления шкалы: их шесть, как `TICKS.wide`. */
+.ganttWide .ganttTrack {
+  background: repeating-linear-gradient(
+    90deg,
+    var(--bg),
+    var(--bg) calc(100% / 6 - 1px),
+    var(--line) calc(100% / 6 - 1px),
+    var(--line) calc(100% / 6)
+  );
 }
 
 .ganttBar,
@@ -154,9 +181,30 @@
 .ganttAxis {
   display: flex;
   justify-content: space-between;
-  margin: 6px 0 0 110px;
+  margin: 6px 0 0 calc(var(--label-width) + 6px);
   color: var(--muted);
   font-variant-numeric: tabular-nums;
+}
+
+.ganttTick {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 0;
+  white-space: nowrap;
+}
+
+.ganttTick:first-child {
+  align-items: flex-start;
+}
+
+.ganttTick:last-child {
+  align-items: flex-end;
+}
+
+.ganttClock {
+  font-size: 10px;
+  opacity: 0.8;
 }
 
 .hint {
@@ -165,12 +213,16 @@
   color: var(--muted);
 }
 
-.tableToggle {
-  margin-top: 8px;
+.scheduleLink {
+  margin: 0;
 }
 
-.tableToggle > summary {
-  font-size: 12px;
-  color: var(--muted);
+.linkButton {
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
+  background: none;
+  border: none;
+  text-decoration: underline;
   cursor: pointer;
 }

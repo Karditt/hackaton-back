@@ -1,0 +1,21 @@
+<?xml version='1.0' encoding='utf-8'?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>Область съёмки — Г-образная область с отверстием, 4 x 3 км</name>
+    <Placemark>
+      <name>Участок 1</name>
+      <Polygon>
+        <outerBoundaryIs>
+          <LinearRing>
+            <coordinates>30.2,59.85 30.2716,59.85 30.2716,59.8635 30.2358,59.8635 30.2358,59.877 30.2,59.877 30.2,59.85</coordinates>
+          </LinearRing>
+        </outerBoundaryIs>
+        <innerBoundaryIs>
+          <LinearRing>
+            <coordinates>30.21,59.856 30.2172,59.856 30.2172,59.8596 30.21,59.8596 30.21,59.856</coordinates>
+          </LinearRing>
+        </innerBoundaryIs>
+      </Polygon>
+    </Placemark>
+  </Document>
+</kml>

@@ -8,6 +8,8 @@
     python -m core.cli --batch scenarios/ -o out/
     python -m core.cli import-layers --area area.kml --zones zones.kml \
         --obstacles obstacles.kml --params params.json -o scenarios/real.json
+    python -m core.cli export-layers scenarios/simple.json -o scenarios/sources/simple
+    python -m core.cli check-sources
     python -m core.cli export-schema -o web/src/types/schema.json
     python -m core.cli assumptions
 """
@@ -24,6 +26,7 @@ from pydantic import ValidationError
 from core import assumptions as assumptions_module
 from core.catalog import load_catalog
 from core.errors import CoreError
+from core.export.input_layers import export_input_layers
 from core.export.package import write_mission_files
 from core.export.writer import export_mission, format_for
 from core.geo.kml_import import import_layers
@@ -37,9 +40,17 @@ from core.schemas import (
     Severity,
     Vehicle,
 )
+from core.sources import build_from_sources, load_sources, scenario_differences
 
 #: Подкоманды, которые не являются путём к сценарию.
-SUBCOMMANDS = ("plan", "import-layers", "export-schema", "assumptions")
+SUBCOMMANDS = (
+    "plan",
+    "import-layers",
+    "export-layers",
+    "check-sources",
+    "export-schema",
+    "assumptions",
+)
 
 
 def load_scenario(path: Path) -> Scenario:
@@ -237,6 +248,41 @@ def command_import_layers(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_export_layers(args: argparse.Namespace) -> int:
+    """Выгрузить сценарий комплектом файлов в формате входа заказчика.
+
+    Три слоя KML — область, зоны в предложенном формате, препятствия — и
+    параметры задания JSON (docs/input_formats.md). Обратная сторона
+    `import-layers`: собранный обратно сценарий — тот же самый.
+    """
+    scenario = load_scenario(Path(args.scenario))
+    written = export_input_layers(scenario, Path(args.output))
+    print(f"=== {scenario.id} → комплект входных файлов")
+    for kind, path in written.items():
+        print(f"  {kind:<10}: {path}")
+    return 0
+
+
+def command_check_sources(args: argparse.Namespace) -> int:
+    """Проверить, что каждый сценарий манифеста собирается из своих файлов.
+
+    Сравнение смысловое: координаты с допуском на шум перевода в метры и
+    обратно. Расхождение — повод собрать сценарий заново командой
+    `import-layers`, а не править JSON руками.
+    """
+    sources = load_sources(Path(args.manifest) if args.manifest else None)
+    failed = 0
+    for scenario_id, item in sources.items():
+        built, _ = build_from_sources(item)
+        differences = scenario_differences(built, load_scenario(item.scenario))
+        status = "совпадает" if not differences else f"РАСХОДИТСЯ ({len(differences)})"
+        print(f"  {scenario_id:<14}: {status}")
+        for line in differences[:10]:
+            print(f"      {line}")
+        failed += bool(differences)
+    return 1 if failed else 0
+
+
 def command_export_schema(args: argparse.Namespace) -> int:
     """Выгрузить JSON Schema контракта для генерации TypeScript-типов.
 
@@ -373,6 +419,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     layers.add_argument("-o", "--output", required=True, help="куда записать сценарий")
     layers.set_defaults(handler=command_import_layers)
+
+    export_layers = subparsers.add_parser(
+        "export-layers", help="выгрузить сценарий слоями KML и параметрами JSON"
+    )
+    export_layers.add_argument("scenario", help="путь к JSON-сценарию")
+    export_layers.add_argument("-o", "--output", required=True, help="каталог комплекта")
+    export_layers.set_defaults(handler=command_export_layers)
+
+    check = subparsers.add_parser(
+        "check-sources", help="сверить сценарии с исходными файлами из манифеста"
+    )
+    check.add_argument("--manifest", help="манифест вместо scenarios/sources/manifest.json")
+    check.set_defaults(handler=command_check_sources)
 
     schema = subparsers.add_parser("export-schema", help="выгрузить JSON Schema контракта")
     schema.add_argument(

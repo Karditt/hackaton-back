@@ -1,0 +1,26 @@
+<?xml version='1.0' encoding='utf-8'?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>Область съёмки — «Злой» сценарий: два отверстия, зона впритык к границе, обрезка воздушным пространством</name>
+    <Placemark>
+      <name>Участок 1</name>
+      <Polygon>
+        <outerBoundaryIs>
+          <LinearRing>
+            <coordinates>30.4,59.95 30.44657,59.95 30.44657,59.959 30.423,59.959 30.423,59.964 30.44657,59.964 30.44657,59.968 30.4,59.968 30.4,59.95</coordinates>
+          </LinearRing>
+        </outerBoundaryIs>
+        <innerBoundaryIs>
+          <LinearRing>
+            <coordinates>30.408,59.953 30.416,59.953 30.416,59.957 30.408,59.957 30.408,59.953</coordinates>
+          </LinearRing>
+        </innerBoundaryIs>
+        <innerBoundaryIs>
+          <LinearRing>
+            <coordinates>30.43,59.965 30.438,59.965 30.438,59.9672 30.43,59.9672 30.43,59.965</coordinates>
+          </LinearRing>
+        </innerBoundaryIs>
+      </Polygon>
+    </Placemark>
+  </Document>
+</kml>

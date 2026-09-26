@@ -161,7 +161,9 @@ min_alt_agl = min_alt_amsl − terrain_max_m     низ зоны опускае�
  "geometry": {"type": "Polygon", "coordinates": [[…]]}}
 ```
 
-Отображение на контракт прямое: `zone_id → NoFlyZone.id`, `alt_min_m/alt_max_m → min_alt_m/max_alt_m` после перевода в AGL, первое окно → `active_from/active_to`. Несколько окон в контракте пока не поддержаны: `NoFlyZone` хранит одно — при нескольких окнах зона разворачивается в несколько записей с общим `id` и суффиксом.
+Отображение на контракт прямое: `zone_id → NoFlyZone.id`, `<name> → NoFlyZone.name`, `alt_min_m/alt_max_m → min_alt_m/max_alt_m` после перевода в AGL, окно → `active_from/active_to`. Несколько окон в контракте пока не поддержаны: `NoFlyZone` хранит одно — при нескольких окнах зона разворачивается в несколько записей с общим именем и суффиксом `-w1`, `-w2`…
+
+**Читается импортом с 2026-09-26** (`core/geo/kml_import.py`): машинные поля верны, если есть; пустой `alt_max_m` — зона от `alt_min_m` и выше; окно, открытое с одной стороны, пишется открытым интервалом ISO 8601-2 — `2026-09-20T07:00:00Z/..`; нечитаемое окно — зона действует всегда и в отчёте предупреждение `import.zone_window_unparsed`. В этом формате записаны зоны тестовых сценариев — `scenarios/sources/*/zones.kml`.
 
 ---
 
@@ -175,7 +177,8 @@ min_alt_agl = min_alt_amsl − terrain_max_m     низ зоны опускае�
 
 | Элемент | Куда в контракте |
 |---|---|
-| `Polygon` + `extrude` | `Obstacle.polygon`, `height_m` = `Z` |
+| `Polygon` + `extrude` | `Obstacle.polygon`, `height_m` = `Z`. Корректный контур переносится с исходными координатами, исправленный — через метрическую проекцию |
+| `Point` + `extrude` | `Obstacle.position`, `height_m` = `Z` — мачта, труба. В образцах заказчика точек нет, так записаны препятствия тестовых сценариев |
 | `LineString` + `extrude` | **нет в контракте.** Линейное препятствие (ЛЭП, провода) разворачивается в полигон буфером по ширине `obstacle_line_width_m` (допущение команды, по умолчанию 10 м) и предупреждением `import.obstacle_line_buffered` |
 | `<name>` до пробела | `Obstacle.id` |
 | `<name>` после пробела | `Obstacle.name` — тип из словаря заказчика (`BUILDING`, `OTHER:COMMUNICATION_TOWER`, `VEGETATION`, `TREE`, `OTHER:POWER_TRANSMISSION_PYLON`, `ANTENNA`, `OTHER:CHIMNEY`, `FENCE`, `NAVAID`, `SIGN`, …). На расчёт не влияет: буфер и запас по высоте одни для всех типов |
@@ -229,6 +232,15 @@ curl -F area=@area.kml -F zones=@zones.kml -F obstacles=@obstacles.kml \
 ```
 
 Отчёт (`ImportReport` в контракте) несёт по каждому слою счётчики «прочитано, принято, исправлено, выброшено, вне области», площадь принятой области и предупреждения с кодами `import.*`. В вебе — те же три поля загрузки (E10, остаток долга №29).
+
+**Обратная сторона — выгрузка сценария в этот формат** (`core/export/input_layers.py`): область, зоны в формате §3.2 и препятствия «3d примитивами», плюс параметры задания JSON. Прочитанный обратно, это тот же сценарий — проверяется тестом.
+
+```bash
+python -m core.cli export-layers scenarios/demo_100km2.json -o scenarios/sources/demo_100km2
+python -m core.cli check-sources   # каждый сценарий манифеста собирается из своих файлов
+```
+
+Все сценарии репозитория лежат и в этом виде: `scenarios/sources/<сценарий>/` плюс манифест `scenarios/sources/manifest.json` — какой сценарий из каких файлов собран. У сценария на данных заказчика (`real_msk`) слои — сами файлы из `data/samples/`. Интерфейс показывает эти файлы в менеджере исходных данных (`GET /scenarios/{id}/files`) и отдаёт их на скачивание.
 
 ---
 

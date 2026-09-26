@@ -119,7 +119,7 @@
 
 549 кусков вместо 561 уцелевшей записи — соседние куски с общей границей слиты в один: мультиполигон с частями, делящими ребро, некорректен по OGC. Отбор зон и препятствий — по описанному прямоугольнику области с запасом 5 км (`IMPORT_SELECT_MARGIN_M`), поэтому принятых препятствий больше, чем 453 «внутри голого bbox» из §3.
 
-Готовый сценарий на этих файлах — [`scenarios/real/real_msk.json`](../../scenarios/real/real_msk.json), параметры задания к нему — [`scenarios/params/real_msk.params.json`](../../scenarios/params/real_msk.params.json).
+Готовый сценарий на этих файлах — [`scenarios/real/real_msk.json`](../../scenarios/real/real_msk.json), параметры задания к нему — [`scenarios/sources/real_msk/params.json`](../../scenarios/sources/real_msk/params.json). Связь сценария с этими файлами записана в [`scenarios/sources/manifest.json`](../../scenarios/sources/manifest.json); в вебе сценарий открыт для просмотра, файлы — в менеджере исходных данных.
 
 ## Как эти числа получены
 

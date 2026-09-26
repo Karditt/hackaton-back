@@ -1,0 +1,31 @@
+<?xml version='1.0' encoding='utf-8'?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>Область съёмки — Демо в масштабе заказчика: ~95 км², 10 бортов</name>
+    <Placemark>
+      <name>Участок 1</name>
+      <Polygon>
+        <outerBoundaryIs>
+          <LinearRing>
+            <coordinates>30.0,59.7 30.17,59.7 30.17,59.785 30.0,59.785 30.0,59.7</coordinates>
+          </LinearRing>
+        </outerBoundaryIs>
+        <innerBoundaryIs>
+          <LinearRing>
+            <coordinates>30.07,59.74 30.088,59.74 30.088,59.749 30.07,59.749 30.07,59.74</coordinates>
+          </LinearRing>
+        </innerBoundaryIs>
+      </Polygon>
+    </Placemark>
+    <Placemark>
+      <name>Участок 2</name>
+      <Polygon>
+        <outerBoundaryIs>
+          <LinearRing>
+            <coordinates>30.19,59.72 30.226,59.72 30.226,59.738 30.19,59.738 30.19,59.72</coordinates>
+          </LinearRing>
+        </outerBoundaryIs>
+      </Polygon>
+    </Placemark>
+  </Document>
+</kml>

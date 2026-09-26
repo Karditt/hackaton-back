@@ -1,0 +1,112 @@
+<?xml version='1.0' encoding='utf-8'?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>Зоны ограничений — Демо в масштабе заказчика: ~95 км², 10 бортов</name>
+    <Placemark>
+      <name>Аэродром (постоянная)</name>
+      <description>На всех высотах</description>
+      <ExtendedData>
+        <Data name="zone_id">
+          <value>nfz-aerodrome</value>
+        </Data>
+        <Data name="zone_kind">
+          <value>prohibited</value>
+        </Data>
+        <Data name="alt_datum">
+          <value>AGL</value>
+        </Data>
+        <Data name="alt_min_m">
+          <value>0</value>
+        </Data>
+        <Data name="alt_max_m">
+          <value />
+        </Data>
+        <Data name="active_windows">
+          <value />
+        </Data>
+        <Data name="source_text">
+          <value>На всех высотах</value>
+        </Data>
+      </ExtendedData>
+      <Polygon>
+        <outerBoundaryIs>
+          <LinearRing>
+            <coordinates>30.14,59.775 30.18,59.775 30.18,59.79 30.14,59.79 30.14,59.775</coordinates>
+          </LinearRing>
+        </outerBoundaryIs>
+      </Polygon>
+    </Placemark>
+    <Placemark>
+      <name>Коридор ЛЭП, до 120 м</name>
+      <description>От земли до 120 м AGL</description>
+      <ExtendedData>
+        <Data name="zone_id">
+          <value>nfz-powerline</value>
+        </Data>
+        <Data name="zone_kind">
+          <value>prohibited</value>
+        </Data>
+        <Data name="alt_datum">
+          <value>AGL</value>
+        </Data>
+        <Data name="alt_min_m">
+          <value>0</value>
+        </Data>
+        <Data name="alt_max_m">
+          <value>120</value>
+        </Data>
+        <Data name="active_windows">
+          <value />
+        </Data>
+        <Data name="source_text">
+          <value>От земли до 120 м AGL</value>
+        </Data>
+      </ExtendedData>
+      <Polygon>
+        <outerBoundaryIs>
+          <LinearRing>
+            <coordinates>29.99,59.7595 30.18,59.7595 30.18,59.7605 29.99,59.7605 29.99,59.7595</coordinates>
+          </LinearRing>
+        </outerBoundaryIs>
+      </Polygon>
+    </Placemark>
+    <Placemark>
+      <name>Временная зона ОРВД, 07:00–09:00 UTC</name>
+      <description>На всех высотах; действует с 2026-09-20T07:00:00Z до 2026-09-20T09:00:00Z UTC</description>
+      <TimeSpan>
+        <begin>2026-09-20T07:00:00Z</begin>
+        <end>2026-09-20T09:00:00Z</end>
+      </TimeSpan>
+      <ExtendedData>
+        <Data name="zone_id">
+          <value>nfz-orvd-temporary</value>
+        </Data>
+        <Data name="zone_kind">
+          <value>temporary</value>
+        </Data>
+        <Data name="alt_datum">
+          <value>AGL</value>
+        </Data>
+        <Data name="alt_min_m">
+          <value>0</value>
+        </Data>
+        <Data name="alt_max_m">
+          <value />
+        </Data>
+        <Data name="active_windows">
+          <value>2026-09-20T07:00:00Z/2026-09-20T09:00:00Z</value>
+        </Data>
+        <Data name="source_text">
+          <value>На всех высотах; действует с 2026-09-20T07:00:00Z до 2026-09-20T09:00:00Z UTC</value>
+        </Data>
+      </ExtendedData>
+      <Polygon>
+        <outerBoundaryIs>
+          <LinearRing>
+            <coordinates>30.05,59.705 30.08,59.705 30.08,59.72 30.05,59.72 30.05,59.705</coordinates>
+          </LinearRing>
+        </outerBoundaryIs>
+      </Polygon>
+    </Placemark>
+  </Document>
+</kml>
