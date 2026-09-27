@@ -91,6 +91,18 @@
   text-overflow: ellipsis;
 }
 
+/* Показан план подсказки, а не расчёт флота сценария. */
+.planLabel {
+  flex: none;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--warning);
+  background: var(--warning-bg);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
 .phase {
   display: inline-flex;
   flex: none;

@@ -40,6 +40,12 @@ export function ResultPanel({ run, onOpenSchedule }: Props) {
 
   return (
     <>
+      {run.label && (
+        <Notice tone="caution">
+          {run.label} — не расчёт флота сценария: борта подобраны подсказкой, режим «минимум срока».
+          Чтобы вернуться к флоту сценария — «Рассчитать».
+        </Notice>
+      )}
       {feasible ? (
         <Notice tone="success">План выполним: область покрыта целиком, краш-тест пройден.</Notice>
       ) : (

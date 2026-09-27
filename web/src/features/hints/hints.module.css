@@ -1,0 +1,168 @@
+/* Подсказка по флоту (E10): вопрос по пулу, прогресс по прогонам, ответ. */
+
+.lead {
+  margin: 10px 0 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* Поле числа бортов и срока: одно — во всю ширину, два — рядом. */
+.fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.note {
+  margin: -8px 0 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.badgeRunning,
+.badgeReady {
+  margin-left: 8px;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 999px;
+}
+
+.badgeRunning {
+  color: var(--accent);
+  background: var(--accent-bg);
+}
+
+.badgeReady {
+  color: var(--success);
+  background: var(--success-bg);
+}
+
+.ask,
+.showPlan {
+  width: 100%;
+  padding: 8px;
+  font: inherit;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.ask {
+  margin-bottom: 12px;
+}
+
+.ask:disabled,
+.showPlan:disabled {
+  color: var(--muted);
+  border-color: var(--line-strong);
+  cursor: not-allowed;
+}
+
+.progressBox {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.progress {
+  width: 100%;
+  height: 8px;
+  accent-color: var(--accent);
+}
+
+.answer {
+  margin-top: 4px;
+}
+
+.answerText {
+  margin: 0 0 10px;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.tableWrap {
+  margin-bottom: 12px;
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.table th,
+.table td {
+  padding: 3px 4px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--line);
+}
+
+.table th {
+  color: var(--muted);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.table td {
+  white-space: nowrap;
+}
+
+/* Состав, причина и подбор состава — под числами прогона, без отдельных колонок. */
+.table tr:first-child td {
+  border-bottom: none;
+}
+
+.detailRow td {
+  padding-top: 0;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: normal;
+}
+
+.detailRow span {
+  display: block;
+}
+
+.detailRow .fleet {
+  color: var(--text);
+}
+
+.detailRow .reason {
+  color: var(--error);
+}
+
+.answerRow {
+  background: var(--accent-bg);
+}
+
+.answerRow td:first-child {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.good {
+  color: var(--success);
+}
+
+.late {
+  color: var(--warning);
+}
+
+.bad {
+  color: var(--error);
+}
+
+.warnings {
+  margin-bottom: 12px;
+}
