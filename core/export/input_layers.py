@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from core.schemas import GeoPoint, GeoPolygon, NoFlyZone, Obstacle, Scenario
+from core.schemas import GeoMultiPolygon, GeoPoint, GeoPolygon, NoFlyZone, Obstacle, Scenario
 
 KML_NS = "http://www.opengis.net/kml/2.2"
 
@@ -112,8 +112,13 @@ def _number(value: float) -> str:
 
 def area_kml(scenario: Scenario) -> bytes:
     """Область съёмки: `Placemark` на каждый кусок мультиполигона."""
-    root, document = _document(f"Область съёмки — {scenario.name or scenario.id}")
-    for index, polygon in enumerate(scenario.area.polygons, start=1):
+    return multipolygon_kml(scenario.area, f"Область съёмки — {scenario.name or scenario.id}")
+
+
+def multipolygon_kml(area: GeoMultiPolygon, title: str) -> bytes:
+    """Слой области без сценария: `Placemark` «Участок N» на каждый кусок."""
+    root, document = _document(title)
+    for index, polygon in enumerate(area.polygons, start=1):
         placemark = _element(document, "Placemark")
         _element(placemark, "name", f"Участок {index}")
         _polygon(placemark, polygon)
@@ -243,6 +248,7 @@ __all__ = [
     "LAYER_FILES",
     "area_kml",
     "export_input_layers",
+    "multipolygon_kml",
     "obstacles_kml",
     "scenario_params",
     "zones_kml",

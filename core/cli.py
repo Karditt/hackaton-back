@@ -9,6 +9,8 @@
     python -m core.cli import-layers --area area.kml --zones zones.kml \
         --obstacles obstacles.kml --params params.json -o scenarios/real.json
     python -m core.cli export-layers scenarios/simple.json -o scenarios/sources/simple
+    python -m core.cli relayout-area --area data/samples/survey_area_msk.kml \
+        --center 36.75,56.07 --size-km 60 58 --seed 1 -o scenarios/sources/real_nw/area.kml
     python -m core.cli check-sources
     python -m core.cli export-schema -o web/src/types/schema.json
     python -m core.cli assumptions
@@ -26,12 +28,14 @@ from pydantic import ValidationError
 from core import assumptions as assumptions_module
 from core.catalog import load_catalog
 from core.errors import CoreError
-from core.export.input_layers import export_input_layers
+from core.export.input_layers import export_input_layers, multipolygon_kml
 from core.export.package import write_mission_files
 from core.export.writer import export_mission, format_for
-from core.geo.kml_import import import_layers
+from core.geo.kml_import import import_layers, read_area
+from core.geo.relayout import DEFAULT_LINK_M, relayout_area
 from core.pipeline import PlanningRun, run_pipeline
 from core.schemas import (
+    GeoPoint,
     ImportReport,
     OptimizationMode,
     PipelineResult,
@@ -47,6 +51,7 @@ SUBCOMMANDS = (
     "plan",
     "import-layers",
     "export-layers",
+    "relayout-area",
     "check-sources",
     "export-schema",
     "assumptions",
@@ -263,6 +268,40 @@ def command_export_layers(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_relayout_area(args: argparse.Namespace) -> int:
+    """Разложить островки настоящей области по новому месту (core/geo/relayout.py).
+
+    Формы и размеры островков — настоящие, группы соседних переносятся
+    целиком; меняется общая раскладка. Так получаются сценарии того же рода,
+    что у заказчика, для отложенной проверки алгоритма.
+    """
+    try:
+        lon_text, lat_text = args.center.split(",")
+        center = GeoPoint(lon=float(lon_text), lat=float(lat_text))
+    except ValueError as error:
+        raise CoreError(f"Центр задаётся как «долгота,широта»: {args.center!r}") from error
+    area, _ = read_area(Path(args.area))
+    width_km, height_km = args.size_km
+    result, report = relayout_area(
+        area,
+        center,
+        width_km * 1000.0,
+        height_km * 1000.0,
+        seed=args.seed,
+        link_m=args.link_m,
+    )
+    target = Path(args.output)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    title = args.title or f"Область съёмки: островки {Path(args.area).name}, раскладка {args.seed}"
+    target.write_bytes(multipolygon_kml(result, title))
+    print(f"=== {Path(args.area).name} → {target}")
+    print(f"  островков   : {report.pieces}, групп {report.groups} (соседство {args.link_m:g} м)")
+    print(f"  площадь     : {report.area_km2:.1f} км²")
+    print(f"  прямоугольник: {width_km:g} × {height_km:g} км вокруг {args.center}")
+    print(f"  попыток     : {report.attempts}")
+    return 0
+
+
 def command_check_sources(args: argparse.Namespace) -> int:
     """Проверить, что каждый сценарий манифеста собирается из своих файлов.
 
@@ -426,6 +465,30 @@ def build_parser() -> argparse.ArgumentParser:
     export_layers.add_argument("scenario", help="путь к JSON-сценарию")
     export_layers.add_argument("-o", "--output", required=True, help="каталог комплекта")
     export_layers.set_defaults(handler=command_export_layers)
+
+    relayout = subparsers.add_parser(
+        "relayout-area", help="разложить островки настоящей области по новому месту"
+    )
+    relayout.add_argument("--area", required=True, help="KML настоящей области съёмки")
+    relayout.add_argument("--center", required=True, help="центр нового места: долгота,широта")
+    relayout.add_argument(
+        "--size-km",
+        type=float,
+        nargs=2,
+        required=True,
+        metavar=("ШИРИНА", "ВЫСОТА"),
+        help="прямоугольник нового места, км (восток — запад, север — юг)",
+    )
+    relayout.add_argument("--seed", type=int, required=True, help="зерно раскладки")
+    relayout.add_argument(
+        "--link-m",
+        type=float,
+        default=DEFAULT_LINK_M,
+        help="порог соседства: островки ближе него переносятся одной группой, м",
+    )
+    relayout.add_argument("--title", help="название слоя в KML")
+    relayout.add_argument("-o", "--output", required=True, help="куда записать KML области")
+    relayout.set_defaults(handler=command_relayout_area)
 
     check = subparsers.add_parser(
         "check-sources", help="сверить сценарии с исходными файлами из манифеста"
