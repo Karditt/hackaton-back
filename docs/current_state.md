@@ -320,6 +320,7 @@ python -m core.cli assumptions
 
 ### 2026-09-27 — слияние в main
 
+- Ветка `e0-real-like-scenarios` влита в `main` локально merge-коммитом `cd37cbb`, на GitHub не отправлялась. Откат: `git revert -m 1 cd37cbb` — пропадут сценарий `real_nw`, команда `relayout-area` и модуль `core/geo/relayout.py`.
 - Ветка `e5-visibility-speed` влита в `main` локально merge-коммитом `dd025ef`, на GitHub не отправлялась. Откат: `git revert -m 1 dd025ef` — вернётся перебор всех пар узлов, `real_msk` снова не считается за разумное время, в манифесте его надо вернуть в «только просмотр».
 
 ### 2026-09-27 — E5: граф видимости на данных заказчика, ветка `e5-visibility-speed`
