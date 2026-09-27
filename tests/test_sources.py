@@ -28,7 +28,7 @@ SOURCES = load_sources()
 def test_every_test_scenario_has_its_files() -> None:
     """У каждого сценария из `scenarios/` есть исходники; сценарий заказчика — тоже."""
     assert set(SCENARIO_NAMES) | {"real_msk"} <= set(SOURCES)
-    assert not SOURCES["real_msk"].planning_available, "расчёт на данных заказчика пока долгий"
+    assert SOURCES["real_msk"].planning_available, "расчёт на данных заказчика — полминуты"
     assert SOURCES["real_msk"].files["area"].name == "survey_area_msk.kml"
 
 

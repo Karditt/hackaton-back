@@ -263,10 +263,10 @@ def test_scenario_layers_are_served_before_planning(client) -> None:
     assert document["properties"]["area_km2"] > 0
 
 
-def test_customer_scenario_is_listed_for_viewing_only(client) -> None:
-    """Сценарий на файлах заказчика виден в интерфейсе, расчёт из него не запускается."""
+def test_customer_scenario_is_listed_and_computable(client) -> None:
+    """Сценарий на файлах заказчика виден в интерфейсе и считается (долг №48 закрыт)."""
     listing = {item["id"]: item for item in client.get("/scenarios").json()["scenarios"]}
-    assert listing["real_msk"]["planning_available"] is False
+    assert listing["real_msk"]["planning_available"] is True
     assert listing["real_msk"]["planning_note"]
     assert listing["simple"]["planning_available"] is True
 
