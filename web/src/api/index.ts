@@ -1,3 +1,4 @@
+export * from './hints';
 export * from './jobs';
 export * from './scenarios';
 export * from './vehicles';

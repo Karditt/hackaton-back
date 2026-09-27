@@ -35,6 +35,8 @@ export type PlanningRun = {
   jobId: string;
   result: PipelineResult;
   document: GeoJsonDocument;
+  /** Откуда план, если не из расчёта сценария: «План подсказки: 5 бортов». */
+  label?: string;
 };
 
 /**
@@ -42,6 +44,27 @@ export type PlanningRun = {
  * устарел (параметры правились после расчёта), ошибка.
  */
 export type PlanningPhase = 'idle' | 'running' | 'feasible' | 'infeasible' | 'stale' | 'error';
+
+/**
+ * Какой сценарий уходит в расчёт: выбранный или, если параметры панели или ТТХ
+ * правлены, его копия `<id>--custom` — она сначала сохраняется. Общая точка
+ * для расчёта плана и подсказки по флоту.
+ *
+ * @param onSaving вызывается перед сохранением копии — для строки состояния
+ * @returns идентификатор сценария для расчёта
+ */
+export async function scenarioToRun(
+  scenarioId: string,
+  scenario: Scenario | null,
+  options: ScenarioOptions | null,
+  vehicles: Vehicle[],
+  onSaving?: () => void,
+): Promise<string> {
+  if (!scenario || !options) return scenarioId;
+  if (!isEdited(scenario, options) && sameVehicles(scenario, vehicles)) return scenarioId;
+  onSaving?.();
+  return (await saveScenario(applyOptions(scenario, options, vehicles))).id;
+}
 
 /**
  * Жизненный цикл расчёта: сохранение правок → постановка → поллинг → результат.
@@ -87,15 +110,9 @@ export function usePlanning({
     setRun(null);
     setStatus('расчёт поставлен в очередь');
     try {
-      let planId = scenarioId;
-      if (
-        scenario &&
-        options &&
-        (isEdited(scenario, options) || !sameVehicles(scenario, vehicles))
-      ) {
-        setStatus('сохраняю правленые параметры');
-        planId = (await saveScenario(applyOptions(scenario, options, vehicles))).id;
-      }
+      const planId = await scenarioToRun(scenarioId, scenario, options, vehicles, () =>
+        setStatus('сохраняю правленые параметры'),
+      );
       const job = await startPlanning(planId, mode);
       const finished = await waitForJob(job.id, (tick) =>
         setStatus(tick.state === 'running' ? 'идёт расчёт' : 'расчёт в очереди'),
@@ -121,11 +138,58 @@ export function usePlanning({
     }
   }, [scenarioId, mode, scenario, options, vehicles, vehicleProblems, signature]);
 
+  /**
+   * Показать готовый план как текущий расчёт — без нового расчёта. Так
+   * показывается план из ответа подсказки: сервер уже посчитал его и завёл
+   * обычной задачей, здесь только загрузка результата и выгрузки.
+   *
+   * Вызывающий отвечает за то, что план посчитан по текущим параметрам:
+   * план считается действующим, пока выбор не изменится.
+   *
+   * @param jobId задача расчёта с готовым планом
+   * @param label откуда план — показывается в шапке и над результатом
+   */
+  const showJob = useCallback(
+    async (jobId: string, label: string) => {
+      setBusy(true);
+      setPhase('running');
+      setError(null);
+      setRun(null);
+      setStatus('загружаю готовый план');
+      try {
+        const [result, document] = await Promise.all([
+          getResult(jobId),
+          fetchMissionGeoJson(jobId),
+        ]);
+        const feasible = result.mission.status === 'feasible';
+        setRun({
+          scenarioId: result.scenario_id,
+          mode: result.mission.mode,
+          jobId,
+          result,
+          document,
+          label,
+        });
+        setRanSignature(signature);
+        setStatus(feasible ? `${label} — готов` : `${label} — задание невыполнимо`);
+        setPhase(feasible ? 'feasible' : 'infeasible');
+      } catch (cause) {
+        setError((cause as Error).message);
+        setStatus('ошибка');
+        setPhase('error');
+      } finally {
+        setBusy(false);
+      }
+    },
+    [signature],
+  );
+
   const isCurrent = run !== null && ranSignature === signature;
   const stale = run !== null && !isCurrent;
 
   return {
     start,
+    showJob,
     busy,
     status: stale ? 'параметры изменены — нужен пересчёт' : status,
     phase: stale ? ('stale' as const) : phase,

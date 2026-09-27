@@ -17,9 +17,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { OptimizationMode } from '../api';
 import { useScenarioFiles, useScenarioLayers, useUploads } from '../features/data';
 import { FleetPage, fleetCatalog, parkToFleetRows, usePark, userVehicles } from '../features/fleet';
+import { HintPanel, useHint } from '../features/hints';
 import { MapView } from '../features/map/MapView';
 import { allLayers, resetPlanLayers, type MapFilter } from '../features/map/layers';
 import {
+  fleetSize,
   PlanningForm,
   usePlanning,
   useScenarioOptions,
@@ -78,6 +80,28 @@ export default function App() {
     vehicleProblems: custom.problems,
   });
   const run = planning.run;
+  const hint = useHint({
+    scenarioId,
+    scenario: draft.scenario,
+    options: draft.options,
+    vehicles: custom.vehicles,
+    vehicleProblems: custom.problems,
+  });
+
+  // Пул подсказки — флот панели параметров. Поле числа бортов с опечаткой —
+  // пул не разобрать, об этом скажет и расчёт.
+  const poolSize = useMemo(() => {
+    try {
+      return draft.options ? fleetSize(draft.options.fleet) : null;
+    } catch {
+      return null;
+    }
+  }, [draft.options]);
+  // Сколько шёл последний расчёт этого сценария — для оценки ожидания подсказки.
+  const lastRunS =
+    run && run.scenarioId.startsWith(scenarioId)
+      ? Object.values(run.result.timings_s ?? {}).reduce((total, value) => total + value, 0)
+      : null;
 
   // Новый расчёт — новый состав бортов: слои результата и выбор борта
   // возвращаются к «показать всё». Исходные данные, спрятанные в менеджере,
@@ -110,6 +134,7 @@ export default function App() {
           fleet: boards.length > 0 ? `${activeBoards}/${boards.length}` : undefined,
         }}
         scenarioName={summary?.name || scenarioId}
+        planLabel={run?.label}
         phase={planning.phase}
         status={planning.status}
         viewOnly={planningNote !== null}
@@ -142,6 +167,18 @@ export default function App() {
             busy={planning.busy}
             status={planning.status}
             error={loadError ?? catalogError ?? draft.error ?? planning.error}
+          />
+          <HintPanel
+            // Новый сценарий — новый вопрос: поля формы не переносятся.
+            key={scenarioId}
+            hint={hint}
+            poolSize={poolSize}
+            deadlineHours={draft.options?.deadline_h ?? ''}
+            disabledNote={planningNote}
+            lastRunS={lastRunS}
+            vehicles={catalog}
+            onShowPlan={(jobId, label) => void planning.showJob(jobId, label)}
+            planBusy={planning.busy}
           />
           {run && <ResultPanel run={run} onOpenSchedule={() => open('schedule')} />}
         </aside>

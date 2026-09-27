@@ -7,12 +7,16 @@
  * и которых в контракте нет: сводка сценария, статус задачи, выгрузка GeoJSON.
  */
 
-import type { LayerStats, PlanWarning } from '../types/schema';
+import type { HintKind, HintReport, LayerStats, PlanWarning } from '../types/schema';
 
 export type {
   AltitudeCorridor,
   FleetUnit,
   FlightPhase,
+  HintBoard,
+  HintKind,
+  HintReport,
+  HintRun,
   ImportReport,
   LayerStats,
   Mission,
@@ -84,6 +88,29 @@ export type JobStatus = {
   mission_id: string | null;
   /** Итог расчёта: `feasible` или `infeasible`; невыполнимость — не сбой задачи. */
   mission_status: string | null;
+};
+
+/** Статус задачи подсказки — `api/jobs.py`, `HintJob.public()`. */
+export type HintStatus = {
+  id: string;
+  scenario_id: string;
+  kind: HintKind;
+  /** Вопрос: число бортов; null — вопрос не о нём. */
+  boards: number | null;
+  /** Срок из вопроса, секунды; null — не задан. */
+  deadline_s: number | null;
+  state: JobState;
+  /** Доля готовности 0..1 — оценка по числу прогонов. */
+  progress: number;
+  /** Сколько прогонов конвейера уже сделано. */
+  runs_done: number;
+  error: string | null;
+  created_at: string;
+  finished_at: string | null;
+  /** Отчёт: прогоны по N и ответ фразой; null — ещё не готов. */
+  report: HintReport | null;
+  /** Задача расчёта с планом из ответа; null — ответа нет. */
+  plan_job_id: string | null;
 };
 
 export type GeoJsonFeature = {

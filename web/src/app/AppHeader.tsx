@@ -8,6 +8,8 @@ type Props = {
   badges: Partial<Record<Tab, string>>;
   /** Название выбранного сценария — видно с любой вкладки. */
   scenarioName: string;
+  /** Показан план не из расчёта сценария — откуда он: «План подсказки: 3 борта». */
+  planLabel?: string;
   /** Состояние расчёта. */
   phase: PlanningPhase;
   /** Подробность состояния — во всплывающей подсказке. */
@@ -27,7 +29,15 @@ const PHASES: Record<PlanningPhase, { label: string; tone: string }> = {
 };
 
 /** Верхняя панель: название, вкладки, выбранный сценарий и состояние расчёта. */
-export function AppHeader({ tab, badges, scenarioName, phase, status, viewOnly }: Props) {
+export function AppHeader({
+  tab,
+  badges,
+  scenarioName,
+  planLabel,
+  phase,
+  status,
+  viewOnly,
+}: Props) {
   const state =
     viewOnly && phase === 'idle' ? { label: 'Только просмотр', tone: 'neutral' } : PHASES[phase];
   return (
@@ -57,6 +67,7 @@ export function AppHeader({ tab, badges, scenarioName, phase, status, viewOnly }
             {scenarioName}
           </span>
         )}
+        {planLabel && <span className={styles.planLabel}>{planLabel}</span>}
         <span
           className={`${styles.phase} ${styles[`phase_${state.tone}`]}`}
           title={status}
