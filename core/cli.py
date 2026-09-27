@@ -7,6 +7,9 @@
     python -m core.cli scenarios/simple.json -o out/gemini1.kml --board geoscan-gemini_1
     python -m core.cli --batch scenarios/ -o out/
     python -m core.cli compare scenarios/ scenarios/real/ -o out/compare.md
+    python -m core.cli hints scenarios/demo_100km2.json --boards 4
+    python -m core.cli hints scenarios/demo_100km2.json --deadline-h 6 -o out/hints.md
+    python -m core.cli hints scenarios/demo_100km2.json --sweep
     python -m core.cli import-layers --area area.kml --zones zones.kml \
         --obstacles obstacles.kml --params params.json -o scenarios/real.json
     python -m core.cli export-layers scenarios/simple.json -o scenarios/sources/simple
@@ -34,9 +37,13 @@ from core.export.package import write_mission_files
 from core.export.writer import export_mission, format_for
 from core.geo.kml_import import import_layers, read_area
 from core.geo.relayout import DEFAULT_LINK_M, relayout_area
+from core.hints import boards_text, duration_text, run_hint
 from core.pipeline import ALLOCATORS, PlanningRun, run_pipeline
 from core.schemas import (
     GeoPoint,
+    HintKind,
+    HintReport,
+    HintRun,
     ImportReport,
     OptimizationMode,
     PipelineResult,
@@ -53,6 +60,7 @@ SUBCOMMANDS = (
     "import-layers",
     "export-layers",
     "compare",
+    "hints",
     "relayout-area",
     "check-sources",
     "export-schema",
@@ -276,6 +284,109 @@ def command_compare(args: argparse.Namespace) -> int:
     return 0
 
 
+def _hint_row(run: HintRun) -> list[str]:
+    """Ячейки строки таблицы подсказки: N, состав, итог, срок, ресурс, вылетов."""
+    composition = ", ".join(f"{unit.count} × {unit.vehicle_id}" for unit in run.fleet)
+    if run.makespan_s is None:
+        outcome = "невыполним"
+    elif run.meets_deadline is False:
+        outcome = "не успевает"
+    else:
+        outcome = "выполним"
+    return [
+        str(run.boards),
+        composition,
+        outcome,
+        _hours(run.makespan_s) if run.makespan_s is not None else "—",
+        _hours(run.resource_s) if run.resource_s is not None else "—",
+        str(run.sortie_count) if run.sortie_count is not None else "—",
+    ]
+
+
+def _hint_markdown(report: HintReport) -> str:
+    """Отчёт подсказки таблицей Markdown."""
+    lines = [
+        f"**{report.answer}**",
+        "",
+        "| N | Состав | Итог | Срок, ч | Ресурс, ч | Вылетов | Как подобран состав |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for run in report.runs:
+        lines.append("| " + " | ".join([*_hint_row(run), run.note or "по порядку пула"]) + " |")
+    return "\n".join(lines) + "\n"
+
+
+def command_hints(args: argparse.Namespace) -> int:
+    """Подсказки по пулу: срок при N бортах, сколько бортов к сроку (заказчик, №51).
+
+    Флот сценария — пул; на каждое N прогоняется обычный конвейер, поэтому
+    ответ подтверждён настоящим планом. Таблица печатается по мере прогонов:
+    на данных заказчика прогон — десятки секунд.
+    """
+    if args.boards is not None:
+        kind = HintKind.BOARDS
+    elif args.sweep:
+        kind = HintKind.SWEEP
+    elif args.deadline_h is not None:
+        kind = HintKind.DEADLINE
+    else:
+        print("Укажите вопрос: --boards N, --deadline-h ЧАСЫ или --sweep", file=sys.stderr)
+        return 2
+    deadline_s = args.deadline_h * 3600.0 if args.deadline_h is not None else None
+    scenario = load_scenario(Path(args.scenario))
+    catalog = load_catalog(args.vehicles)
+
+    question = {
+        HintKind.BOARDS: f"срок при N = {args.boards}",
+        HintKind.DEADLINE: f"сколько бортов к сроку {duration_text(deadline_s or 0.0)}",
+        HintKind.SWEEP: "срок при каждом числе бортов",
+    }[kind]
+    print(f"=== {scenario.id}: {question}")
+    print("  N | состав | итог | срок, ч | ресурс, ч | вылетов | расчёт")
+
+    def on_run(run: HintRun) -> None:
+        print(f"  {' | '.join(_hint_row(run))} | {run.elapsed_s:.0f} с", flush=True)
+        if run.note:
+            print(f"      состав : {run.note}", flush=True)
+        if run.reasons:
+            print(f"      причина: {run.reasons[0].message}", flush=True)
+
+    try:
+        result = run_hint(
+            scenario, kind, args.boards, deadline_s, catalog, seed=args.seed, on_run=on_run
+        )
+    except ValueError as error:
+        raise CoreError(str(error)) from error
+    report = result.report
+    groups: list[list[str | int]] = []
+    for board in report.pool:
+        label = f"{board.vehicle_name} ({board.productivity_m2ps:.0f} м²/с)"
+        if board.site_id:
+            label += f", площадка {board.site_id}"
+        if groups and groups[-1][1] == label:
+            groups[-1][0] = int(groups[-1][0]) + 1
+        else:
+            groups.append([1, label])
+    print(f"  пул            : {boards_text(len(report.pool))} по убыванию производительности")
+    for count, label in groups:
+        print(f"                   {count} × {label}")
+    _print_grouped("ВНИМАНИЕ", report.warnings)
+    print(f"  ОТВЕТ: {report.answer}")
+
+    if args.output:
+        target = Path(args.output)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.suffix == ".json":
+            target.write_text(report.model_dump_json(indent=2), encoding="utf-8")
+        else:
+            target.write_text(_hint_markdown(report), encoding="utf-8")
+        print(f"  записано       : {target}")
+    if args.plan_out and result.plan is not None:
+        for written in _write_outputs(result.plan, Path(args.plan_out), True, None):
+            print(f"  план ответа    : {written}")
+    return 0 if report.answer_boards is not None else 1
+
+
 def command_import_layers(args: argparse.Namespace) -> int:
     """Собрать сценарий из слоёв KML заказчика и файла параметров (E1, E9).
 
@@ -411,10 +522,10 @@ def command_export_schema(args: argparse.Namespace) -> int:
 
     Корни выгрузки — то, что фронт получает от API целиком: сценарий
     (`GET /scenarios/{id}`), результат прогона (`GET /jobs/{id}/result`),
-    борт каталога (`GET /vehicles`) и отчёт импорта слоёв
-    (`POST /scenarios/import`). Последние два не достижимы из первых,
-    поэтому названы отдельно: иначе их типы пришлось бы писать руками,
-    что запрещено (AGENT.md §2).
+    борт каталога (`GET /vehicles`), отчёт импорта слоёв
+    (`POST /scenarios/import`) и отчёт подсказки (`GET /hints/{id}`).
+    Последние три не достижимы из первых, поэтому названы отдельно: иначе их
+    типы пришлось бы писать руками, что запрещено (AGENT.md §2).
     """
     schema = {
         "$schema": "http://json-schema.org/draft-07/schema#",
@@ -426,11 +537,12 @@ def command_export_schema(args: argparse.Namespace) -> int:
             "pipelineResult": {"$ref": "#/definitions/PipelineResult"},
             "vehicle": {"$ref": "#/definitions/Vehicle"},
             "importReport": {"$ref": "#/definitions/ImportReport"},
+            "hintReport": {"$ref": "#/definitions/HintReport"},
         },
         "definitions": {},
     }
 
-    for model in (Scenario, PipelineResult, Vehicle, ImportReport):
+    for model in (Scenario, PipelineResult, Vehicle, ImportReport, HintReport):
         model_schema = model.model_json_schema(ref_template="#/definitions/{model}")
         schema["definitions"].update(model_schema.pop("$defs", {}))
         schema["definitions"][model.__name__] = model_schema
@@ -565,6 +677,27 @@ def build_parser() -> argparse.ArgumentParser:
     compare.add_argument("--vehicles", help="путь к каталогу техники вместо data/vehicles.yaml")
     compare.add_argument("-o", "--output", help="куда записать таблицу Markdown")
     compare.set_defaults(handler=command_compare)
+
+    hints = subparsers.add_parser(
+        "hints", help="подсказки по пулу: срок при N бортах, сколько бортов к сроку"
+    )
+    hints.add_argument("scenario", help="путь к JSON-сценарию; его флот — пул техники")
+    question = hints.add_mutually_exclusive_group()
+    question.add_argument("--boards", type=int, help="сколько времени займёт работа при N бортах")
+    question.add_argument(
+        "--sweep", action="store_true", help="срок при каждом N — от одного борта до всего пула"
+    )
+    hints.add_argument(
+        "--deadline-h",
+        type=float,
+        help="срок от начала работ, часы: один — сколько бортов нужно; "
+        "с --boards и --sweep — успевают ли",
+    )
+    hints.add_argument("--seed", type=int, help="зерно ГПСЧ, перекрывает сценарий")
+    hints.add_argument("--vehicles", help="путь к каталогу техники вместо data/vehicles.yaml")
+    hints.add_argument("-o", "--output", help="куда записать отчёт: .json — отчёт, иначе Markdown")
+    hints.add_argument("--plan-out", help="каталог: комплект файлов плана из ответа")
+    hints.set_defaults(handler=command_hints)
 
     relayout = subparsers.add_parser(
         "relayout-area", help="разложить островки настоящей области по новому месту"

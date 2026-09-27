@@ -46,6 +46,11 @@ python -m core.cli --batch scenarios/ -o out/
 # доказательство эффективности: baseline против эвристики в обоих режимах (E12)
 python -m core.cli compare scenarios/ scenarios/real/ -o out/compare.md
 
+# подсказки по пулу (флот сценария — пул): срок при N бортах, сколько бортов к сроку, перебор N
+python -m core.cli hints scenarios/demo_100km2.json --boards 4
+python -m core.cli hints scenarios/demo_100km2.json --deadline-h 6 -o out/hints.md
+python -m core.cli hints scenarios/demo_100km2.json --sweep
+
 # сборка сценария из слоёв KML заказчика (docs/input_formats.md)
 python -m core.cli import-layers --area data/samples/survey_area_msk.kml \
     --zones data/samples/zones_msk.kml --obstacles data/samples/obstacles_msk.kml \

@@ -298,6 +298,40 @@ def test_scenario_files_by_kind_and_download(client) -> None:
     assert copy["source_id"] == "simple"
 
 
+def test_hint_runs_in_background_and_serves_the_plan(client) -> None:
+    """Подсказка — фоновая задача с поллингом; план из ответа — обычная задача."""
+    started = client.post("/scenarios/simple/hints", params={"boards": 2})
+    assert started.status_code == 202
+    hint_id = started.json()["id"]
+    deadline = time.monotonic() + 300.0
+    while True:
+        payload = client.get(f"/hints/{hint_id}").json()
+        if payload["state"] in ("done", "failed") or time.monotonic() > deadline:
+            break
+        time.sleep(0.05)
+    assert payload["state"] == "done", payload["error"]
+    assert payload["kind"] == "boards"
+    assert payload["progress"] == 1.0
+    report = payload["report"]
+    assert report["answer_boards"] == 2
+    assert [run["boards"] for run in report["runs"]] == [2]
+
+    plan_job = payload["plan_job_id"]
+    result = client.get(f"/jobs/{plan_job}/result")
+    assert result.status_code == 200
+    assert result.json()["mission"]["status"] == "feasible"
+    assert client.get(f"/jobs/{plan_job}/export", params={"format": "kml"}).status_code == 200
+
+
+def test_hint_needs_exactly_one_question(client) -> None:
+    assert client.post("/scenarios/simple/hints").status_code == 422
+    both = client.post("/scenarios/simple/hints", params={"boards": 2, "sweep": True})
+    assert both.status_code == 422
+    assert client.post("/scenarios/simple/hints", params={"boards": 0}).status_code == 422
+    assert client.post("/scenarios/nope/hints", params={"boards": 1}).status_code == 404
+    assert client.get("/hints/hint-nope").status_code == 404
+
+
 def test_unknown_scenario_is_404(client) -> None:
     """Несуществующий сценарий — 404, а не 500."""
     assert client.get("/scenarios/no-such").status_code == 404

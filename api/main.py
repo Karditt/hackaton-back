@@ -34,7 +34,14 @@ from core.export.package import file_stem, mission_zip
 from core.export.schedule import schedule_to_csv
 from core.geo.kml_import import import_layers
 from core.pipeline import check_scenario
-from core.schemas import ExportFormat, ImportReport, OptimizationMode, PipelineResult, Scenario
+from core.schemas import (
+    ExportFormat,
+    HintKind,
+    ImportReport,
+    OptimizationMode,
+    PipelineResult,
+    Scenario,
+)
 from core.sources import ScenarioSources, import_report, load_sources
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -381,6 +388,60 @@ async def start_planning(
     except ScenarioError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     return jobs.submit(scenario, mode=mode, alpha=alpha, seed=seed).public()
+
+
+@app.post("/scenarios/{scenario_id}/hints", tags=["подсказки"], status_code=202)
+async def start_hint(
+    scenario_id: str,
+    boards: int | None = Query(
+        default=None, ge=1, description="Сколько времени займёт работа при N бортах"
+    ),
+    deadline_s: float | None = Query(
+        default=None,
+        gt=0,
+        description="Срок от начала работ, секунды. Один — сколько бортов нужно, чтобы "
+        "успеть; с `boards` и `sweep` — успевают ли",
+    ),
+    sweep: bool = Query(default=False, description="Срок при каждом N — от 1 до всего пула"),
+    seed: int | None = Query(default=None),
+) -> dict[str, Any]:
+    """Поставить вопрос-подсказку по пулу техники (заказчик, №51).
+
+    Флот сценария — пул. На каждое N прогоняется обычный конвейер с краш-тестом,
+    поэтому ответ подтверждён планом; его стадии и выгрузка доступны по
+    `plan_job_id` через `/jobs/{id}/…`. Вопрос один: `boards`, `deadline_s`
+    или `sweep`; `deadline_s` можно добавить к двум другим.
+
+    Returns:
+        Задача подсказки для поллинга `GET /hints/{id}`.
+    """
+    if boards is not None and sweep:
+        raise HTTPException(status_code=422, detail="Вопрос один: либо boards, либо sweep")
+    if boards is not None:
+        kind = HintKind.BOARDS
+    elif sweep:
+        kind = HintKind.SWEEP
+    elif deadline_s is not None:
+        kind = HintKind.DEADLINE
+    else:
+        raise HTTPException(status_code=422, detail="Нужен вопрос: boards, deadline_s или sweep")
+    try:
+        scenario = store.get(scenario_id)
+    except ScenarioError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return jobs.submit_hint(scenario, kind, boards, deadline_s, seed).public()
+
+
+@app.get("/hints/{hint_id}", tags=["подсказки"])
+def get_hint(hint_id: str) -> dict[str, Any]:
+    """Состояние подсказки и, когда готова, отчёт: прогоны по N и ответ фразой.
+
+    Точка поллинга. `runs_done` — сколько прогонов конвейера уже сделано.
+    """
+    job = jobs.hint(hint_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Подсказка {hint_id!r} не найдена")
+    return job.public()
 
 
 @app.get("/jobs", tags=["расчёт"])
