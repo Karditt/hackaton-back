@@ -5,6 +5,8 @@ from __future__ import annotations
 from shapely.geometry import LineString, box
 
 from core.assumptions import VERTICAL_SEPARATION_M
+from core.deconflict import ScheduleBook
+from core.flight.cost import retime_sortie
 from core.flight.maneuver import ManeuverWindow, maneuver_overlap
 from core.geo.mask import build_work_area
 from core.pipeline import PlanningRun
@@ -138,6 +140,36 @@ def test_schedule_lists_every_sortie(run: PlanningRun) -> None:
     }
     for entry in mission.schedule.entries:
         assert entry.end_s > entry.start_s >= 0
+
+
+def test_schedule_book_rewinds_to_placed_prefix(runs: dict[str, PlanningRun]) -> None:
+    """Откат книги расписания возвращает её к первым N вылетам (локальный поиск E6).
+
+    Вылет плана, поставленный в книгу вместе со всеми остальными, занимает своё
+    же окно: сам с собой он сходится. Откат на один вылет окно освобождает —
+    остальные вылеты плана с ним разведены.
+    """
+    run = runs["medium"]
+    coverage = run.result.coverage
+    book = ScheduleBook(run.work_area.zones)
+    sorties = sorted(run.mission.sorties, key=lambda sortie: (sortie.start_time_s, sortie.id))
+    prepared = [
+        book.prepare(
+            retime_sortie(sortie, 0.0), run.vehicles[sortie.vehicle_id].is_fixed_wing(), coverage
+        )
+        for sortie in sorties
+    ]
+    for item, sortie in zip(prepared, sorties, strict=True):
+        book.add(item, sortie.start_time_s)
+    last, start_s = prepared[-1], sorties[-1].start_time_s
+    taken = book.earliest_start(last, start_s)
+    assert taken is None or taken > start_s
+
+    book.rewind(len(sorties) - 1)
+    assert len(book) == len(sorties) - 1
+    assert book.earliest_start(last, start_s) == start_s
+    book.rewind(0)
+    assert len(book) == 0
 
 
 def test_temporary_zone_is_respected_in_time(runs: dict[str, PlanningRun]) -> None:

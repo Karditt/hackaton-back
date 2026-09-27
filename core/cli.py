@@ -219,12 +219,14 @@ def _change(new: float, old: float) -> str:
 
 
 def command_compare(args: argparse.Namespace) -> int:
-    """Сравнить распределения на сценариях: baseline против эвристики (E12).
+    """Сравнить распределения на сценариях: baseline против оптимизатора (E12).
 
-    Оба алгоритма считаются на одних и тех же подобластях и одной модели
-    полёта, в обоих режимах критерия. Итог — таблица Markdown: срок и ресурс
-    каждого, изменение в процентах, выполнимость. Краш-тест проходит каждый
-    план, как в обычном прогоне.
+    Три алгоритма — baseline, эвристика без поиска и эвристика с локальным
+    поиском — считаются на одних и тех же подобластях и одной модели полёта,
+    в обоих режимах критерия. Итог — таблица Markdown: срок и ресурс каждого,
+    изменение у оптимизатора (эвристика с поиском) против baseline в
+    процентах, выполнимость. Краш-тест проходит каждый план, как в обычном
+    прогоне.
     """
     catalog = load_catalog(args.vehicles)
     paths: list[Path] = []
@@ -242,15 +244,16 @@ def command_compare(args: argparse.Namespace) -> int:
     modes = [OptimizationMode(args.mode)] if args.mode else [mode for mode in OptimizationMode]
     lines = [
         "| Сценарий | Режим | Baseline: срок, ч | Baseline: ресурс, ч "
-        "| Эвристика: срок, ч | Эвристика: ресурс, ч | Δ срока | Δ ресурса |",
-        "|---|---|---|---|---|---|---|---|",
+        "| Эвристика: срок, ч | Эвристика: ресурс, ч "
+        "| С поиском: срок, ч | С поиском: ресурс, ч | Δ срока | Δ ресурса |",
+        "|---|---|---|---|---|---|---|---|---|---|",
     ]
     for path in paths:
         scenario = load_scenario(path)
         for mode in modes:
             cells: list[str] = []
             metrics = {}
-            for allocator in ("baseline", "constructive"):
+            for allocator in ("baseline", "constructive", "local_search"):
                 run = run_pipeline(scenario, catalog=catalog, mode=mode, allocator=allocator)
                 metrics[allocator] = run.mission.metrics
                 if run.mission.metrics is None:
@@ -262,7 +265,7 @@ def command_compare(args: argparse.Namespace) -> int:
                             _hours(run.mission.metrics.resource_s),
                         ]
                     )
-            old, new = metrics["baseline"], metrics["constructive"]
+            old, new = metrics["baseline"], metrics["local_search"]
             if old is not None and new is not None:
                 cells.extend(
                     [
@@ -634,7 +637,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--allocator",
         choices=ALLOCATORS,
         default=ALLOCATORS[0],
-        help="алгоритм распределения: эвристика (по умолчанию) или baseline",
+        help=(
+            "алгоритм распределения: эвристика с локальным поиском (по умолчанию), "
+            "эвристика без поиска или baseline"
+        ),
     )
     plan.add_argument("--vehicles", help="путь к каталогу техники вместо data/vehicles.yaml")
     plan.add_argument("--dump-stages", help="каталог для выгрузки промежуточных стадий")
