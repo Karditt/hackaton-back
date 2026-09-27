@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from core import assumptions
 from core.catalog import VehicleCatalog
 from core.cli import load_scenario, main
 from core.hints import (
@@ -158,6 +159,23 @@ def test_sweep_covers_every_n(catalog: VehicleCatalog) -> None:
     assert report.runs[0].reasons, "у невыполнимого прогона — причина"
     assert report.answer_boards == 2
     assert report.answer.startswith("Выполнимо начиная с 2 бортов")
+
+
+def test_sweep_names_the_near_best_fleet(medium, catalog: VehicleCatalog) -> None:
+    """Перебор называет наименьшее N с почти лучшим сроком — если оно меньше лучшего."""
+    report = sweep_hint(medium, catalog).report
+    timed = {run.boards: run.makespan_s for run in report.runs if run.makespan_s is not None}
+    fastest = min(timed, key=lambda count: (timed[count], count))
+    near = min(
+        count
+        for count in timed
+        if timed[count] <= timed[fastest] * (1 + assumptions.HINT_NEAR_BEST_FRACTION)
+    )
+    assert report.answer_boards == fastest
+    if near < fastest:
+        assert f"уже при {boards_text(near, 'loc')}" in report.answer
+    else:
+        assert "уже при" not in report.answer
 
 
 def test_more_boards_than_the_pool(catalog: VehicleCatalog) -> None:

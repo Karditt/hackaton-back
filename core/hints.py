@@ -14,10 +14,11 @@
 производительных — одни самолёты — дают невыполнимый план, хотя те же N
 бортов с коптером вместо последнего самолёта справились бы (`real_msk`: три
 Геоскан 201 не снимают 5 подобластей, два 201 и Gemini снимают всё). Поэтому
-состав чинится: план провалился по покрытию — последний борт подбора
-меняется на лучший борт той строки пула, которой в подборе нет; найденная
-строка дальше берётся в подбор сразу. Меняется один борт: если работе нужны
-две недостающие строки сразу, подсказка честно скажет «невыполнимо».
+состав чинится по шагам: план провалился по покрытию — последний борт
+подбора меняется на лучший борт другой строки пула, берётся замена, сильнее
+всех сократившая непокрытую площадь, и так, пока площадь сокращается (на
+`real_nw` работа у зон разных площадок требует коптеров у каждой). Строки
+принятых замен запоминаются и в следующих подборах берутся сразу.
 
 Прогоны — в режиме «минимум срока» и без дедлайна сценария: вопрос о том,
 сколько займёт работа, а срок сравнивается с итогом. Сколько бортов нужно к
@@ -32,11 +33,13 @@
 
 from __future__ import annotations
 
+import math
 import time
 from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
+from core import assumptions
 from core.catalog import VehicleCatalog, load_catalog
 from core.pipeline import PlanningRun, resolve_fleet, run_pipeline, scenario_catalog
 from core.schemas import (
@@ -51,6 +54,7 @@ from core.schemas import (
     Severity,
     Stage,
     Vehicle,
+    VehicleType,
 )
 from core.survey.plan import build_survey_plan
 
@@ -202,11 +206,12 @@ class _Session:
         return len(self.pool)
 
     def _victim(self, chosen: list[int]) -> int | None:
-        """Позиция борта, которого не жалко заменить: последний не единственный нужный."""
+        """Позиция борта, которого не жалко заменить: последний сверх выученных нужных."""
+        need = Counter(self.required)
         rows = Counter(self.pool[index].row for index in chosen)
         for position in reversed(range(len(chosen))):
             row = self.pool[chosen[position]].row
-            if row not in self.required or rows[row] > 1:
+            if rows[row] > need[row]:
                 return position
         return None
 
@@ -228,8 +233,10 @@ class _Session:
         """Подбор N бортов: самые производительные плюс выученные нужные строки."""
         chosen = list(range(count))
         notes = []
+        need: Counter[int] = Counter()
         for row in self.required:
-            if any(self.pool[index].row == row for index in chosen):
+            need[row] += 1
+            if sum(self.pool[index].row == row for index in chosen) >= need[row]:
                 continue
             spare = self._spare(chosen, row)
             victim = self._victim(chosen)
@@ -286,12 +293,33 @@ class _Session:
         )
         return run, plan
 
-    @staticmethod
-    def _coverage_failed(run: HintRun) -> bool:
-        return any(reason.code in COVERAGE_REASONS for reason in run.reasons)
+    def _candidates(self, chosen: list[int], removed: PoolBoard, run: HintRun) -> list[int]:
+        """Кем заменить борт: лучший свободный борт каждой другой строки пула.
+
+        Если часть работы не снимает ни один борт подбора из-за зоны манёвра,
+        первыми пробуются мультироторы: им зона манёвра не нужна.
+        """
+        spares: dict[int, int] = {}
+        for index, board in enumerate(self.pool):
+            if index not in chosen and board.row != removed.row:
+                spares.setdefault(board.row, index)
+        hover_first = any(reason.code == "allocate.cells_unserviceable" for reason in run.reasons)
+        return sorted(
+            spares.values(),
+            key=lambda index: (
+                not (hover_first and self.pool[index].vehicle.type is VehicleType.MULTIROTOR),
+                index,
+            ),
+        )
 
     def evaluate(self, count: int) -> tuple[HintRun, PlanningRun]:
         """Прогон на N бортах пула; при провале по покрытию — с починкой состава.
+
+        Починка — по шагам: последний борт сверх нужных меняется на лучший
+        борт другой строки пула, берётся замена, сильнее всех сократившая
+        непокрытую площадь (первая, что покрыла всё, — сразу), и так, пока
+        площадь сокращается. Строки принятых замен запоминаются: в следующих
+        подборах они берутся сразу, без лишних прогонов.
 
         Args:
             count: число бортов, 1..размер пула.
@@ -301,27 +329,30 @@ class _Session:
         """
         chosen, note = self._select(count)
         run, plan = self._run(chosen, note)
-        victim = self._victim(chosen)
-        if self._coverage_failed(run) and victim is not None:
-            present = {self.pool[index].row for index in chosen}
-            tried: set[int] = set()
-            for index, board in enumerate(self.pool):
-                if board.row in present or board.row in tried:
-                    continue
-                tried.add(board.row)
-                removed = self.pool[chosen[victim]]
+        deficit_m2 = _deficit_m2(plan)
+        while deficit_m2 > 0:
+            victim = self._victim(chosen)
+            if victim is None:
+                break
+            removed = self.pool[chosen[victim]]
+            reason = next(item for item in run.reasons if item.code in COVERAGE_REASONS)
+            best: tuple[float, int, list[int], HintRun, PlanningRun, str] | None = None
+            for index in self._candidates(chosen, removed, run):
+                board = self.pool[index]
                 alternative = sorted([*chosen[:victim], *chosen[victim + 1 :], index])
-                reason = next(item for item in run.reasons if item.code in COVERAGE_REASONS)
-                alt_note = self._swap_note(
-                    removed, board, f"без замены область не покрыть — {reason.message}"
-                )
-                alt_run, alt_plan = self._run(
-                    alternative, "; ".join(filter(None, [note, alt_note]))
-                )
-                if not self._coverage_failed(alt_run):
-                    self.required.append(board.row)
-                    run, plan = alt_run, alt_plan
+                why = "без замены область не покрыть"
+                swap = self._swap_note(removed, board, why if note else f"{why} — {reason.message}")
+                alt_run, alt_plan = self._run(alternative, "; ".join(filter(None, [note, swap])))
+                alt_deficit_m2 = _deficit_m2(alt_plan)
+                if alt_deficit_m2 < (best[0] if best else deficit_m2):
+                    best = (alt_deficit_m2, board.row, alternative, alt_run, alt_plan, swap)
+                if alt_deficit_m2 == 0:
                     break
+            if best is None:
+                break
+            deficit_m2, row, chosen, run, plan, swap = best
+            note = "; ".join(filter(None, [note, swap]))
+            self.required.append(row)
         self.runs[count] = run
         if self.on_run is not None:
             self.on_run(run)
@@ -398,6 +429,24 @@ class _Session:
             for vehicle_id in names
             if counts[vehicle_id]
         )
+
+
+def _deficit_m2(plan: PlanningRun) -> float:
+    """Площадь подобластей, которые не снимет ни один борт подбора, м².
+
+    Подобласти — из причин покрытия (`COVERAGE_REASONS`, поле `cell_ids`).
+    Нарезка у разных подборов своя, поэтому сравнивается площадь, а не число.
+    """
+    ids: set[str] = set()
+    for reason in plan.mission.reasons:
+        if reason.code in COVERAGE_REASONS:
+            ids.update(filter(None, reason.context.get("cell_ids", "").split(",")))
+    if not ids:
+        return 0.0
+    decomposition = plan.result.decomposition
+    if decomposition is None:
+        return math.inf
+    return sum(cell.area_m2 for cell in decomposition.cells if cell.id in ids)
 
 
 def _verdict(session: _Session, run: HintRun) -> str:
@@ -642,6 +691,19 @@ def sweep_hint(
         f"самый короткий срок — {duration_text(timed[fastest])} "
         f"при {boards_text(fastest, 'loc')}"
     )
+    # Сколько бортов реально нужно: срок почти лучший, а ресурс бывает вдвое меньше.
+    limit_s = timed[fastest] * (1.0 + assumptions.HINT_NEAR_BEST_FRACTION)
+    near = min(count for count in timed if timed[count] <= limit_s)
+    if near < fastest:
+        near_run, fast_run = session.runs[near], session.runs[fastest]
+        answer += (
+            f"; почти так же — {duration_text(timed[near])} — уже при {boards_text(near, 'loc')}"
+        )
+        if near_run.resource_s is not None and fast_run.resource_s is not None:
+            answer += (
+                f", ресурс {duration_text(near_run.resource_s)} "
+                f"против {duration_text(fast_run.resource_s)}"
+            )
     if session.deadline_s is not None:
         limit = duration_text(session.deadline_s)
         answer += (
