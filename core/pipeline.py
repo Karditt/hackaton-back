@@ -24,6 +24,7 @@ from shapely.ops import unary_union
 from core.advise import diagnose, stub_warning
 from core.allocate.baseline import build_baseline_allocation
 from core.allocate.fleet import FleetInstance, expand_fleet
+from core.allocate.greedy import build_greedy_allocation
 from core.allocate.objective import objective_value, resource_s, weighted_value
 from core.catalog import VehicleCatalog, load_catalog, user_vehicle_warnings
 from core.coverage.decompose import decompose
@@ -58,6 +59,10 @@ from core.validate import validate_plan
 #: Стадии, работающие на заглушках. Список сокращается по мере закрытия эпиков
 #: и напрямую попадает в `Mission.stub_stages`, KML и GeoJSON.
 STUB_STAGES: tuple[Stage, ...] = (Stage.SCHEDULE,)
+
+#: Алгоритмы распределения. По умолчанию — конструктивная эвристика (E6);
+#: baseline всегда доступен для сравнения (инвариант 8, E12).
+ALLOCATORS = ("constructive", "baseline")
 
 
 @dataclass
@@ -252,6 +257,7 @@ def run_pipeline(
     mode: OptimizationMode | None = None,
     alpha: float | None = None,
     seed: int | None = None,
+    allocator: str = ALLOCATORS[0],
 ) -> PlanningRun:
     """Прогнать сценарий через весь конвейер.
 
@@ -261,6 +267,7 @@ def run_pipeline(
         mode: переопределение режима оптимизации. None — из сценария.
         alpha: переопределение веса срока в свёртке, 0..1. None — из сценария.
         seed: переопределение зерна ГПСЧ. None — из сценария.
+        allocator: алгоритм распределения из `ALLOCATORS`.
 
     Returns:
         Прогон: стадии конвейера и итог — план или отчёт о невыполнимости.
@@ -269,7 +276,10 @@ def run_pipeline(
         GeometryError, ScenarioError, CatalogError: ошибка входа (некорректная
             геометрия, недопустимые значения, неизвестный борт). Невыполнимость
             задания — не исключение, а `Mission.status = infeasible`.
+        ValueError: неизвестный алгоритм распределения.
     """
+    if allocator not in ALLOCATORS:
+        raise ValueError(f"Алгоритм распределения {allocator!r} неизвестен: {ALLOCATORS}")
     overrides = {
         key: value
         for key, value in (("mode", mode), ("alpha", alpha), ("seed", seed))
@@ -368,16 +378,36 @@ def run_pipeline(
             return None
         return probe.duration_s
 
+    def survey_time(cell_id: str, vehicle_id: str) -> float:
+        """Время галсов подобласти бортом, секунды — нижняя граница вылета."""
+        params = survey_plan.for_vehicle(vehicle_id)
+        assert params is not None
+        strips = oracle.get(cell_id, vehicle_id).strips
+        return sum(strip.length_m for strip in strips) / params.survey_speed_mps
+
     primary_sites = {site.id: work_area.site(site.id) for site in scenario.primary_sites()}
-    allocation = build_baseline_allocation(
-        scenario,
-        work_area.crs,
-        decomposition.cells,
-        instances,
-        primary_sites,
-        oracle.serviceable,
-        sortie_cost,
-    )
+    if allocator == "baseline":
+        allocation = build_baseline_allocation(
+            scenario,
+            work_area.crs,
+            decomposition.cells,
+            instances,
+            primary_sites,
+            oracle.serviceable,
+            sortie_cost,
+        )
+    else:
+        allocation = build_greedy_allocation(
+            scenario,
+            work_area.crs,
+            decomposition.cells,
+            instances,
+            primary_sites,
+            oracle.serviceable,
+            sortie_cost,
+            survey_plan,
+            survey_time,
+        )
     assembler.allocation = allocation
     clock.lap("allocate")
 
@@ -411,4 +441,11 @@ def run_pipeline(
     return assembler.finish(reasons, sorties, schedule)
 
 
-__all__ = ["PlanningRun", "STUB_STAGES", "check_scenario", "resolve_fleet", "run_pipeline"]
+__all__ = [
+    "ALLOCATORS",
+    "PlanningRun",
+    "STUB_STAGES",
+    "check_scenario",
+    "resolve_fleet",
+    "run_pipeline",
+]

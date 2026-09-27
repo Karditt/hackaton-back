@@ -43,6 +43,9 @@ pytest
 # прогон на всех тестовых сценариях
 python -m core.cli --batch scenarios/ -o out/
 
+# доказательство эффективности: baseline против эвристики в обоих режимах (E12)
+python -m core.cli compare scenarios/ scenarios/real/ -o out/compare.md
+
 # сборка сценария из слоёв KML заказчика (docs/input_formats.md)
 python -m core.cli import-layers --area data/samples/survey_area_msk.kml \
     --zones data/samples/zones_msk.kml --obstacles data/samples/obstacles_msk.kml \
