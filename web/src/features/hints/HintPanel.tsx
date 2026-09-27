@@ -271,7 +271,9 @@ export function HintPanel(props: Props) {
               Показать план ответа на карте
             </button>
           ) : (
-            <p className={styles.note}>Плана ответа нет: выполнимого состава не нашлось.</p>
+            <p className={styles.note}>
+              Плана ответа нет: ни один состав пула не отвечает на вопрос — почему, сказано выше.
+            </p>
           )}
         </div>
       )}
