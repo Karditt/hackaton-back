@@ -6,6 +6,7 @@
     python -m core.cli scenarios/simple.json -o out/mission.geojson
     python -m core.cli scenarios/simple.json -o out/gemini1.kml --board geoscan-gemini_1
     python -m core.cli --batch scenarios/ -o out/
+    python -m core.cli compare scenarios/ scenarios/real/ -o out/compare.md
     python -m core.cli import-layers --area area.kml --zones zones.kml \
         --obstacles obstacles.kml --params params.json -o scenarios/real.json
     python -m core.cli export-layers scenarios/simple.json -o scenarios/sources/simple
@@ -33,7 +34,7 @@ from core.export.package import write_mission_files
 from core.export.writer import export_mission, format_for
 from core.geo.kml_import import import_layers, read_area
 from core.geo.relayout import DEFAULT_LINK_M, relayout_area
-from core.pipeline import PlanningRun, run_pipeline
+from core.pipeline import ALLOCATORS, PlanningRun, run_pipeline
 from core.schemas import (
     GeoPoint,
     ImportReport,
@@ -51,6 +52,7 @@ SUBCOMMANDS = (
     "plan",
     "import-layers",
     "export-layers",
+    "compare",
     "relayout-area",
     "check-sources",
     "export-schema",
@@ -179,7 +181,12 @@ def command_plan(args: argparse.Namespace) -> int:
             scenario = load_scenario(path)
             mode = OptimizationMode(args.mode) if args.mode else None
             run = run_pipeline(
-                scenario, catalog=catalog, mode=mode, alpha=args.alpha, seed=args.seed
+                scenario,
+                catalog=catalog,
+                mode=mode,
+                alpha=args.alpha,
+                seed=args.seed,
+                allocator=args.allocator,
             )
         except CoreError as error:
             failures += 1
@@ -193,6 +200,80 @@ def command_plan(args: argparse.Namespace) -> int:
             print(f"  стадии          : {_dump_stages(run, Path(args.dump_stages))}")
 
     return 1 if failures else 0
+
+
+def _hours(seconds: float) -> str:
+    return f"{seconds / 3600:.2f}".replace(".", ",")
+
+
+def _change(new: float, old: float) -> str:
+    return f"{(new / old - 1.0) * 100:+.1f}%".replace(".", ",") if old > 0 else "—"
+
+
+def command_compare(args: argparse.Namespace) -> int:
+    """Сравнить распределения на сценариях: baseline против эвристики (E12).
+
+    Оба алгоритма считаются на одних и тех же подобластях и одной модели
+    полёта, в обоих режимах критерия. Итог — таблица Markdown: срок и ресурс
+    каждого, изменение в процентах, выполнимость. Краш-тест проходит каждый
+    план, как в обычном прогоне.
+    """
+    catalog = load_catalog(args.vehicles)
+    paths: list[Path] = []
+    for item in args.scenarios:
+        path = Path(item)
+        if not path.is_dir():
+            paths.append(path)
+            continue
+        # Рядом со сценариями на данных заказчика лежат отчёты импорта — не сценарии.
+        paths.extend(
+            found
+            for found in sorted(path.glob("*.json"))
+            if not found.name.endswith(".import.json")
+        )
+    modes = [OptimizationMode(args.mode)] if args.mode else [mode for mode in OptimizationMode]
+    lines = [
+        "| Сценарий | Режим | Baseline: срок, ч | Baseline: ресурс, ч "
+        "| Эвристика: срок, ч | Эвристика: ресурс, ч | Δ срока | Δ ресурса |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    for path in paths:
+        scenario = load_scenario(path)
+        for mode in modes:
+            cells: list[str] = []
+            metrics = {}
+            for allocator in ("baseline", "constructive"):
+                run = run_pipeline(scenario, catalog=catalog, mode=mode, allocator=allocator)
+                metrics[allocator] = run.mission.metrics
+                if run.mission.metrics is None:
+                    cells.extend(["невыполним", "—"])
+                else:
+                    cells.extend(
+                        [
+                            _hours(run.mission.metrics.makespan_s),
+                            _hours(run.mission.metrics.resource_s),
+                        ]
+                    )
+            old, new = metrics["baseline"], metrics["constructive"]
+            if old is not None and new is not None:
+                cells.extend(
+                    [
+                        _change(new.makespan_s, old.makespan_s),
+                        _change(new.resource_s, old.resource_s),
+                    ]
+                )
+            else:
+                cells.extend(["—", "—"])
+            line = f"| `{scenario.id}` | {mode.value} | " + " | ".join(cells) + " |"
+            lines.append(line)
+            print(line, flush=True)
+    table = "\n".join(lines) + "\n"
+    if args.output:
+        target = Path(args.output)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(table, encoding="utf-8")
+        print(f"\nзаписано: {target}")
+    return 0
 
 
 def command_import_layers(args: argparse.Namespace) -> int:
@@ -437,6 +518,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     plan.add_argument("--alpha", type=float, help="вес срока в свёртке 0..1 (фронт Парето)")
     plan.add_argument("--seed", type=int, help="зерно ГПСЧ, перекрывает сценарий")
+    plan.add_argument(
+        "--allocator",
+        choices=ALLOCATORS,
+        default=ALLOCATORS[0],
+        help="алгоритм распределения: эвристика (по умолчанию) или baseline",
+    )
     plan.add_argument("--vehicles", help="путь к каталогу техники вместо data/vehicles.yaml")
     plan.add_argument("--dump-stages", help="каталог для выгрузки промежуточных стадий")
     plan.set_defaults(handler=command_plan)
@@ -465,6 +552,19 @@ def build_parser() -> argparse.ArgumentParser:
     export_layers.add_argument("scenario", help="путь к JSON-сценарию")
     export_layers.add_argument("-o", "--output", required=True, help="каталог комплекта")
     export_layers.set_defaults(handler=command_export_layers)
+
+    compare = subparsers.add_parser(
+        "compare", help="сравнить распределение baseline и эвристики на сценариях (E12)"
+    )
+    compare.add_argument("scenarios", nargs="+", help="файлы сценариев или каталоги с ними")
+    compare.add_argument(
+        "--mode",
+        choices=[mode.value for mode in OptimizationMode],
+        help="только этот режим; по умолчанию оба",
+    )
+    compare.add_argument("--vehicles", help="путь к каталогу техники вместо data/vehicles.yaml")
+    compare.add_argument("-o", "--output", help="куда записать таблицу Markdown")
+    compare.set_defaults(handler=command_compare)
 
     relayout = subparsers.add_parser(
         "relayout-area", help="разложить островки настоящей области по новому месту"

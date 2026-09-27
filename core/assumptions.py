@@ -598,6 +598,19 @@ CELL_MERGE_FRACTION = _register(
     "Четверть ячейки: слитая ячейка не больше 1,25 обычной.",
 )
 
+ALLOCATE_FILL_ATTEMPTS = _register(
+    "ALLOCATE_FILL_ATTEMPTS",
+    3,
+    "попыток",
+    Kind.TEAM,
+    "ДОПУЩЕНИЕ КОМАНДЫ: сколько ближайших подобластей подряд пробовать добавить в вылет, "
+    "прежде чем закрыть его",
+    "Конструктивная эвристика (E6) добирает вылет ближайшими подобластями. Не "
+    "поместилась ближайшая — следующая может оказаться меньше и влезть; три попытки "
+    "дозаполняют вылет, не превращая сборку в перебор. Каждая попытка — точная "
+    "сборка вылета моделью полёта.",
+)
+
 AZIMUTH_SEARCH_STEP_DEG = _register(
     "AZIMUTH_SEARCH_STEP_DEG",
     15.0,
@@ -654,6 +667,7 @@ def separation_minimum_m(is_fixed_wing: bool) -> float:
 
 
 __all__ = [
+    "ALLOCATE_FILL_ATTEMPTS",
     "AZIMUTH_SEARCH_STEP_DEG",
     "Assumption",
     "BASELINE_ALGORITHM",

@@ -180,7 +180,7 @@ def diagnose(
                     message="Снимите предел числа вылетов (комплекты АКБ) или добавьте борт",
                 )
             )
-        elif reason.code == "validate.deadline":
+        elif reason.code in ("validate.deadline", "allocate.deadline_short"):
             recommendations.append(
                 Recommendation(
                     kind=RecommendationKind.ADD_VEHICLE,
