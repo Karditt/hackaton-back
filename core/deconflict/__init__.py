@@ -14,6 +14,6 @@
 from __future__ import annotations
 
 from core.deconflict.levels import assign_transit_levels
-from core.deconflict.schedule import build_schedule
+from core.deconflict.schedule import PreparedSortie, ScheduleBook, build_schedule
 
-__all__ = ["assign_transit_levels", "build_schedule"]
+__all__ = ["PreparedSortie", "ScheduleBook", "assign_transit_levels", "build_schedule"]
