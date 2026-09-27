@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from collections import OrderedDict
 from dataclasses import dataclass, field
 
 from shapely.ops import unary_union
@@ -24,12 +25,14 @@ from shapely.ops import unary_union
 from core.advise import diagnose, stub_warning
 from core.allocate.baseline import build_baseline_allocation
 from core.allocate.fleet import FleetInstance, expand_fleet
-from core.allocate.greedy import build_greedy_allocation
+from core.allocate.greedy import SortieBounds, build_greedy_allocation
 from core.allocate.objective import objective_value, resource_s, weighted_value
+from core.allocate.search import improve_allocation
 from core.catalog import VehicleCatalog, load_catalog, user_vehicle_warnings
 from core.coverage.decompose import decompose
 from core.coverage.oracle import CoverageOracle
-from core.deconflict import assign_transit_levels, build_schedule
+from core.deconflict import ScheduleBook, assign_transit_levels, build_schedule
+from core.deconflict.placer import BookPlacer
 from core.errors import GeometryError
 from core.flight.cost import build_sortie, endurance_limit_s, exceeds_range
 from core.geo.mask import WorkArea, build_survey_mask, build_work_area
@@ -60,9 +63,10 @@ from core.validate import validate_plan
 #: и напрямую попадает в `Mission.stub_stages`, KML и GeoJSON.
 STUB_STAGES: tuple[Stage, ...] = (Stage.SCHEDULE,)
 
-#: Алгоритмы распределения. По умолчанию — конструктивная эвристика (E6);
-#: baseline всегда доступен для сравнения (инвариант 8, E12).
-ALLOCATORS = ("constructive", "baseline")
+#: Алгоритмы распределения. По умолчанию — конструктивная эвристика с
+#: локальным поиском (E6, шаги 2 и 3); эвристика без поиска и baseline всегда
+#: доступны для сравнения (инвариант 8, E12).
+ALLOCATORS = ("local_search", "constructive", "baseline")
 
 
 @dataclass
@@ -168,6 +172,16 @@ def _metrics(
 
 def _errors(warnings: list[PlanWarning]) -> list[PlanWarning]:
     return [warning for warning in warnings if warning.severity is Severity.ERROR]
+
+
+#: Вылет-проба: борт, площадка (взлёт и посадка), подобласти по порядку.
+_ProbeKey = tuple[str, int, str, tuple[str, ...]]
+
+#: Сколько последних проб держать собранными: распределение оценивает
+#: длительность вылета пробой и тут же ставит её в расписание, локальный
+#: поиск переоценивает вылеты плана. На результат размер не влияет — только
+#: на число повторных сборок.
+_PROBE_CACHE_SIZE = 1024
 
 
 @dataclass
@@ -364,6 +378,20 @@ def run_pipeline(
             trip_index=trip_index,
         )
 
+    probes: OrderedDict[_ProbeKey, Sortie] = OrderedDict()
+
+    def probe_sortie(instance: FleetInstance, site_id: str, cell_ids: list[str]) -> Sortie:
+        """Вылет-проба с площадки на неё же; последние пробы — из кеша."""
+        key = (*instance.key, site_id, tuple(cell_ids))
+        if key in probes:
+            probes.move_to_end(key)
+            return probes[key]
+        sortie = make_sortie(instance, cell_ids, site_id, site_id, "probe", 0)
+        probes[key] = sortie
+        if len(probes) > _PROBE_CACHE_SIZE:
+            probes.popitem(last=False)
+        return sortie
+
     def sortie_cost(instance: FleetInstance, site_id: str, cell_ids: list[str]) -> float | None:
         """Длительность вылета — той же моделью, что собирает итоговый вылет.
 
@@ -371,7 +399,7 @@ def run_pipeline(
         автономности, либо паспортной протяжённости маршрута (долг №43).
         Оба предела проверяет и краш-тест, независимо от этой стадии.
         """
-        probe = make_sortie(instance, cell_ids, site_id, site_id, "probe", 0)
+        probe = probe_sortie(instance, site_id, cell_ids)
         if probe.duration_s > endurance_limit_s(instance.vehicle):
             return None
         if exceeds_range(probe, instance.vehicle):
@@ -397,6 +425,9 @@ def run_pipeline(
             sortie_cost,
         )
     else:
+        placer = BookPlacer(
+            ScheduleBook(work_area.zones), probe_sortie, oracle, survey_plan, work_area.crs
+        )
         allocation = build_greedy_allocation(
             scenario,
             work_area.crs,
@@ -407,7 +438,19 @@ def run_pipeline(
             sortie_cost,
             survey_plan,
             survey_time,
+            placer,
         )
+        if allocator == "local_search":
+            allocation = improve_allocation(
+                allocation,
+                scenario,
+                instances,
+                decomposition.cells,
+                oracle.serviceable,
+                sortie_cost,
+                SortieBounds(survey_plan, survey_time, decomposition.cells, primary_sites),
+                placer,
+            )
     assembler.allocation = allocation
     clock.lap("allocate")
 
@@ -429,7 +472,12 @@ def run_pipeline(
     ]
     clock.lap("flight")
 
-    sorties, schedule = build_schedule(sorties, vehicles, work_area, scenario, coverage)
+    # Эвристика ставила вылеты в расписание сама, когда собирала, — расписание
+    # повторяет её порядок и получает те же старты. Baseline расписания не
+    # видит: у него первые вылеты всех бортов, потом вторые.
+    sorties, schedule = build_schedule(
+        sorties, vehicles, work_area, scenario, coverage, keep_order=allocator != "baseline"
+    )
     schedule.warnings[:0] = level_warnings
     clock.lap("schedule")
 

@@ -20,6 +20,16 @@ Baseline (`baseline.py`) делит подобласти поровну по **�
    ближние остаются для всех. Дальше вылет добирается ближайшими к
    последней добавленной подобластями, пока помещается в заряд и запас хода.
 
+4. **Расписание видно сразу** (долг №54). Собранный вылет ставится в книгу
+   расписания (`SortiePlacer`) — ту же, что потом строит расписание, — и
+   эвристика узнаёт его настоящий старт: разведение с уже поставленными
+   бортами может сдвинуть его на часы (самолёты на одной высоте съёмки в
+   соседних подобластях). Если старт сдвинут, вылет собирается заново без
+   подобластей, из-за которых сдвиг, и так до `ALLOCATE_DELAY_RETRIES` раз;
+   берётся вариант, который снимает больше площади за время, занятое бортом
+   от готовности до посадки. Борт освобождается по настоящей посадке, а
+   очередь «кто раньше освободится» считает уже с задержками.
+
 Время вылета — **та же модель полёта**, что собирает итоговый план
 (`SortieCost`, долг №14). Нижняя граница по прямой без обходов отсекает
 безнадёжных кандидатов до точной сборки. Случайности нет: одно и то же на
@@ -34,6 +44,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Protocol
 
 from shapely.geometry import Point
 
@@ -64,6 +75,38 @@ ALGORITHM_NAME = "constructive:earliest_free"
 SurveyTime = Callable[[str, str], float]
 
 
+class SortiePlacer(Protocol):
+    """Книга расписания, которую видит распределение (E14 → E6, долг №54).
+
+    Вылет задаётся бортом, площадкой (взлёт и посадка — на ней) и порядком
+    подобластей; время — секунды от начала работ.
+    """
+
+    def earliest_start(
+        self, instance: FleetInstance, site_id: str, cell_ids: list[str], ready_s: float
+    ) -> float | None:
+        """Самый ранний взлёт не раньше `ready_s` без сближений с поставленными; None — нет."""
+        ...
+
+    def blocking_cells(
+        self, instance: FleetInstance, site_id: str, cell_ids: list[str], start_s: float
+    ) -> set[str]:
+        """Подобласти вылета, из-за которых нельзя взлететь в `start_s`."""
+        ...
+
+    def crowded_cells(
+        self, instance: FleetInstance, cell_ids: list[str], from_s: float, to_s: float
+    ) -> set[str]:
+        """Подобласти, у которых в этот промежуток работают другие самолёты на той же высоте."""
+        ...
+
+    def commit(
+        self, instance: FleetInstance, site_id: str, cell_ids: list[str], start_s: float
+    ) -> None:
+        """Поставить вылет со взлётом в `start_s`."""
+        ...
+
+
 @dataclass
 class _Board:
     """Борт в очереди эвристики."""
@@ -79,7 +122,7 @@ def _distance(a: MetricPoint, b: MetricPoint) -> float:
     return math.hypot(a.x_m - b.x_m, a.y_m - b.y_m)
 
 
-class _Bounds:
+class SortieBounds:
     """Нижние границы времени вылета по прямой — чтобы не собирать безнадёжные вылеты."""
 
     def __init__(
@@ -148,7 +191,7 @@ def _place_boards(
     instances: list[FleetInstance],
     sites: dict[str, MetricPoint],
     serviceable: ServiceablePredicate,
-    bounds: _Bounds,
+    bounds: SortieBounds,
 ) -> dict[tuple[str, int], str]:
     """Расставить борта по площадкам (п. 1 докстринга модуля).
 
@@ -221,7 +264,7 @@ def _orphan_needs(
     instances: list[FleetInstance],
     site_ids: list[str],
     serviceable: ServiceablePredicate,
-    bounds: _Bounds,
+    bounds: SortieBounds,
 ) -> list[tuple[str, set[str]]]:
     """Площадки с «сиротской» работой и модели, которые могут её снять.
 
@@ -262,6 +305,7 @@ def build_greedy_allocation(
     cost: SortieCost,
     survey_plan: SurveyPlan,
     survey_time: SurveyTime,
+    placer: SortiePlacer | None = None,
 ) -> Allocation:
     """Распределить подобласти по вылетам: время делится, а не площадь.
 
@@ -276,11 +320,14 @@ def build_greedy_allocation(
             вылет не помещается в заряд или запас хода.
         survey_plan: параметры съёмки бортов.
         survey_time: время галсов подобласти бортом, секунды.
+        placer: книга расписания. None — задержек расписания эвристика не
+            видит: борт взлетает, как только готов.
 
     Returns:
-        Распределение с невзятыми подобластями и причинами.
+        Распределение с невзятыми подобластями и причинами. Вылеты — в том
+        порядке, в каком эвристика ставила их в книгу расписания.
     """
-    bounds = _Bounds(survey_plan, survey_time, cells, sites)
+    bounds = SortieBounds(survey_plan, survey_time, cells, sites)
     by_id = {cell.id: cell for cell in cells}
     placed = _place_boards(cells, instances, sites, serviceable, bounds)
     turnaround_s = (
@@ -311,19 +358,23 @@ def build_greedy_allocation(
             board = min(ready, key=lambda item: (item.free_at_s, boards.index(item)))
         # В режиме «минимум ресурса» дедлайн — ограничение: вылет собирается не
         # длиннее, чем осталось до срока (№23).
+        deadline_s = scenario.deadline_s if minimum_resource else None
         cap_s = endurance_limit_s(board.instance.vehicle)
-        if minimum_resource and scenario.deadline_s is not None:
-            cap_s = min(cap_s, scenario.deadline_s - board.free_at_s)
-        sortie = _build_sortie(
-            board, remaining, by_id, sites, serviceable, cost, bounds, weakest, cap_s
+        if deadline_s is not None:
+            cap_s = min(cap_s, deadline_s - board.free_at_s)
+        build = _SortieBuild(board, by_id, sites, serviceable, cost, bounds, weakest)
+        sortie, late = _plan_sortie(
+            build, remaining, cap_s, placer, deadline_s, patient=minimum_resource
         )
         if sortie is None:
             board.active = False
-            stopped_by_deadline |= cap_s < endurance_limit_s(board.instance.vehicle)
+            stopped_by_deadline |= late or cap_s < endurance_limit_s(board.instance.vehicle)
             continue
-        cell_ids, duration_s = sortie
-        ends_s = board.free_at_s + duration_s
+        cell_ids, duration_s, start_s = sortie
+        ends_s = start_s + duration_s
         instance = board.instance
+        if placer is not None:
+            placer.commit(instance, board.site_id, cell_ids, start_s)
         assignments.append(
             SortieAssignment(
                 sortie_id=sortie_id(instance.vehicle.id, instance.index, board.trips),
@@ -380,7 +431,7 @@ def _weakest_reach(
     boards: list[_Board],
     sites: dict[str, MetricPoint],
     serviceable: ServiceablePredicate,
-    bounds: _Bounds,
+    bounds: SortieBounds,
 ) -> dict[str, float]:
     """Дальность самого «короткого» борта, который может снять подобласть, метры.
 
@@ -400,16 +451,92 @@ def _weakest_reach(
     return weakest
 
 
-def _build_sortie(
-    board: _Board,
+@dataclass(frozen=True)
+class _SortieBuild:
+    """Всё, что нужно для сборки очередного вылета борта."""
+
+    board: _Board
+    cells: dict[str, Cell]
+    sites: dict[str, MetricPoint]
+    serviceable: ServiceablePredicate
+    cost: SortieCost
+    bounds: SortieBounds
+    weakest: dict[str, float]
+
+
+def _plan_sortie(
+    build: _SortieBuild,
     remaining: set[str],
-    cells: dict[str, Cell],
-    sites: dict[str, MetricPoint],
-    serviceable: ServiceablePredicate,
-    cost: SortieCost,
-    bounds: _Bounds,
-    weakest: dict[str, float],
     cap_s: float,
+    placer: SortiePlacer | None,
+    deadline_s: float | None,
+    patient: bool,
+) -> tuple[tuple[list[str], float, float] | None, bool]:
+    """Собрать вылет борта с оглядкой на расписание (п. 4 докстринга модуля).
+
+    Args:
+        build: борт и всё для сборки.
+        remaining: непокрытые подобласти.
+        cap_s: предел длительности вылета, секунды.
+        placer: книга расписания; None — взлёт сразу по готовности.
+        deadline_s: вылет должен закончиться к этому моменту, секунды от
+            начала работ; None — срока нет.
+        patient: задержку старта не лечить — ожидание на земле не тратит
+            ресурс (режим «минимум ресурса»); другой вылет собирается, только
+            если задержанный не успевает к сроку.
+
+    Returns:
+        Пара: (подобласти, длительность вылета в секундах, взлёт в секундах от
+        начала работ) либо None — и признак «вылет был, но не успевал к сроку».
+    """
+    board = build.board
+    ready_s = board.free_at_s
+    built = _build_sortie(build, remaining, cap_s)
+    if placer is None:
+        return (None if built is None else (built[0], built[1], ready_s)), False
+
+    best: tuple[list[str], float, float] | None = None
+    best_rate = -math.inf
+    late = False
+    excluded: set[str] = set()
+    crowded_tried = False
+    for _attempt in range(assumptions.ALLOCATE_DELAY_RETRIES + 1):
+        if built is None:
+            break
+        cell_ids, duration_s = built
+        start_s = placer.earliest_start(board.instance, board.site_id, cell_ids, ready_s)
+        if start_s is not None and deadline_s is not None and start_s + duration_s > deadline_s:
+            # Сдвиг старта съел время до срока: короче вылет — ближе посадка.
+            late = True
+            cap_s = min(cap_s, deadline_s - start_s)
+            built = _build_sortie(build, remaining - excluded, cap_s)
+            continue
+        if start_s is not None:
+            area_m2 = sum(build.cells[cell_id].area_m2 for cell_id in cell_ids)
+            rate = area_m2 / (start_s + duration_s - ready_s)
+            if rate > best_rate:
+                best, best_rate = (cell_ids, duration_s, start_s), rate
+            if patient or start_s <= ready_s:
+                break
+        # Сначала — без подобластей, из-за которых сдвиг. Не помогло (затравка
+        # снова ведёт в тот же район) — без всего района, где в это время
+        # работают другие самолёты на той же высоте.
+        blocking = placer.blocking_cells(board.instance, board.site_id, cell_ids, ready_s)
+        blocking -= excluded
+        if not crowded_tried and (excluded or not blocking):
+            crowded_tried = True
+            blocking |= placer.crowded_cells(
+                board.instance, sorted(remaining - excluded), ready_s, ready_s + cap_s
+            )
+        if not blocking:
+            break
+        excluded |= blocking
+        built = _build_sortie(build, remaining - excluded, cap_s)
+    return best, late and best is None
+
+
+def _build_sortie(
+    build: _SortieBuild, remaining: set[str], cap_s: float
 ) -> tuple[list[str], float] | None:
     """Собрать следующий вылет борта (п. 3 докстринга модуля); None — нечего взять.
 
@@ -418,6 +545,8 @@ def _build_sortie(
     работу у коптера, пока у него есть работа, до которой коптер не долетит.
     Вылет не длиннее `cap_s` секунд (заряд или время до дедлайна).
     """
+    board, cells, sites = build.board, build.cells, build.sites
+    serviceable, cost, bounds, weakest = build.serviceable, build.cost, build.bounds, build.weakest
     instance = board.instance
     limit_s = cap_s
     if limit_s <= 0.0:
@@ -493,4 +622,10 @@ def _classify_leftovers(
     return unserviceable, out_of_reach, no_trips_left
 
 
-__all__ = ["ALGORITHM_NAME", "SurveyTime", "build_greedy_allocation"]
+__all__ = [
+    "ALGORITHM_NAME",
+    "SortieBounds",
+    "SortiePlacer",
+    "SurveyTime",
+    "build_greedy_allocation",
+]
