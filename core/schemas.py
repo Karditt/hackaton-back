@@ -1090,6 +1090,71 @@ class PipelineResult(Model):
         return items
 
 
+# --------------------------------------------------------------------------
+# Подсказки по пулу техники (заказчик, №51): поверх конвейера, E6
+# --------------------------------------------------------------------------
+
+
+class HintKind(str, Enum):
+    """Вопрос подсказки (заказчик, №51)."""
+
+    BOARDS = "boards"  # сколько времени займёт работа при N бортах
+    DEADLINE = "deadline"  # сколько бортов нужно, чтобы успеть к сроку
+    SWEEP = "sweep"  # срок при каждом N — от одного борта до всего пула
+
+
+class HintBoard(Model):
+    """Борт пула — в том порядке, в каком подсказка привлекает борта."""
+
+    vehicle_id: str
+    vehicle_name: str
+    productivity_m2ps: float = Field(
+        gt=0, description="Шаг галсов × путевая скорость на галсе, м²/с"
+    )
+    site_id: str | None = Field(default=None, description="Приписка к площадке из сценария")
+
+
+class HintRun(Model):
+    """Один прогон конвейера на N бортах пула."""
+
+    boards: int = Field(ge=1, description="Число бортов N")
+    fleet: list[FleetUnit] = Field(description="Состав флота этого прогона")
+    status: MissionStatus
+    makespan_s: float | None = Field(
+        default=None, ge=0, description="Срок, секунды; None — план невыполним"
+    )
+    resource_s: float | None = Field(default=None, ge=0, description="Ресурс, секунды")
+    sortie_count: int | None = Field(default=None, ge=0)
+    meets_deadline: bool | None = Field(
+        default=None, description="Успевает к сроку; None — срок не задан или план невыполним"
+    )
+    reasons: list[PlanWarning] = Field(
+        default_factory=list, description="Причины невыполнимости, по одной на код"
+    )
+    note: str = Field(default="", description="Как подобран состав, если не по порядку пула")
+    elapsed_s: float = Field(ge=0, description="Время расчёта, секунды")
+
+
+class HintReport(Model):
+    """Ответ-подсказка: вопрос, прогоны конвейера и ответ одной фразой."""
+
+    scenario_id: str
+    kind: HintKind
+    boards: int | None = Field(default=None, ge=1, description="Вопрос: число бортов")
+    deadline_s: float | None = Field(
+        default=None, gt=0, description="Срок от начала работ, секунды: из вопроса или сценария"
+    )
+    pool: list[HintBoard] = Field(
+        default_factory=list, description="Пул — флот сценария — в порядке привлечения"
+    )
+    runs: list[HintRun] = Field(default_factory=list, description="Прогоны по возрастанию N")
+    answer_boards: int | None = Field(
+        default=None, description="Число бортов в ответе; None — ответа нет"
+    )
+    answer: str = Field(description="Ответ одной фразой — для человека")
+    warnings: list[PlanWarning] = Field(default_factory=list)
+
+
 __all__ = [
     "AltitudeCorridor",
     "AltitudeMode",
@@ -1105,6 +1170,10 @@ __all__ = [
     "GeoMultiPolygon",
     "GeoPoint",
     "GeoPolygon",
+    "HintBoard",
+    "HintKind",
+    "HintReport",
+    "HintRun",
     "ImportReport",
     "LayerStats",
     "Leg",

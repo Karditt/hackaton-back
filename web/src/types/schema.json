@@ -15,6 +15,9 @@
     },
     "importReport": {
       "$ref": "#/definitions/ImportReport"
+    },
+    "hintReport": {
+      "$ref": "#/definitions/HintReport"
     }
   },
   "definitions": {
@@ -2443,6 +2446,250 @@
         }
       },
       "title": "ImportReport",
+      "type": "object"
+    },
+    "HintBoard": {
+      "additionalProperties": false,
+      "description": "Борт пула — в том порядке, в каком подсказка привлекает борта.",
+      "properties": {
+        "vehicle_id": {
+          "title": "Vehicle Id",
+          "type": "string"
+        },
+        "vehicle_name": {
+          "title": "Vehicle Name",
+          "type": "string"
+        },
+        "productivity_m2ps": {
+          "description": "Шаг галсов × путевая скорость на галсе, м²/с",
+          "exclusiveMinimum": 0,
+          "title": "Productivity M2Ps",
+          "type": "number"
+        },
+        "site_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Приписка к площадке из сценария",
+          "title": "Site Id"
+        }
+      },
+      "required": [
+        "vehicle_id",
+        "vehicle_name",
+        "productivity_m2ps"
+      ],
+      "title": "HintBoard",
+      "type": "object"
+    },
+    "HintKind": {
+      "description": "Вопрос подсказки (заказчик, №51).",
+      "enum": [
+        "boards",
+        "deadline",
+        "sweep"
+      ],
+      "title": "HintKind",
+      "type": "string"
+    },
+    "HintRun": {
+      "additionalProperties": false,
+      "description": "Один прогон конвейера на N бортах пула.",
+      "properties": {
+        "boards": {
+          "description": "Число бортов N",
+          "minimum": 1,
+          "title": "Boards",
+          "type": "integer"
+        },
+        "fleet": {
+          "description": "Состав флота этого прогона",
+          "items": {
+            "$ref": "#/definitions/FleetUnit"
+          },
+          "title": "Fleet",
+          "type": "array"
+        },
+        "status": {
+          "$ref": "#/definitions/MissionStatus"
+        },
+        "makespan_s": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Срок, секунды; None — план невыполним",
+          "title": "Makespan S"
+        },
+        "resource_s": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Ресурс, секунды",
+          "title": "Resource S"
+        },
+        "sortie_count": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sortie Count"
+        },
+        "meets_deadline": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Успевает к сроку; None — срок не задан или план невыполним",
+          "title": "Meets Deadline"
+        },
+        "reasons": {
+          "description": "Причины невыполнимости, по одной на код",
+          "items": {
+            "$ref": "#/definitions/PlanWarning"
+          },
+          "title": "Reasons",
+          "type": "array"
+        },
+        "note": {
+          "default": "",
+          "description": "Как подобран состав, если не по порядку пула",
+          "title": "Note",
+          "type": "string"
+        },
+        "elapsed_s": {
+          "description": "Время расчёта, секунды",
+          "minimum": 0,
+          "title": "Elapsed S",
+          "type": "number"
+        }
+      },
+      "required": [
+        "boards",
+        "fleet",
+        "status",
+        "elapsed_s"
+      ],
+      "title": "HintRun",
+      "type": "object"
+    },
+    "HintReport": {
+      "additionalProperties": false,
+      "description": "Ответ-подсказка: вопрос, прогоны конвейера и ответ одной фразой.",
+      "properties": {
+        "scenario_id": {
+          "title": "Scenario Id",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/definitions/HintKind"
+        },
+        "boards": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Вопрос: число бортов",
+          "title": "Boards"
+        },
+        "deadline_s": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Срок от начала работ, секунды: из вопроса или сценария",
+          "title": "Deadline S"
+        },
+        "pool": {
+          "description": "Пул — флот сценария — в порядке привлечения",
+          "items": {
+            "$ref": "#/definitions/HintBoard"
+          },
+          "title": "Pool",
+          "type": "array"
+        },
+        "runs": {
+          "description": "Прогоны по возрастанию N",
+          "items": {
+            "$ref": "#/definitions/HintRun"
+          },
+          "title": "Runs",
+          "type": "array"
+        },
+        "answer_boards": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Число бортов в ответе; None — ответа нет",
+          "title": "Answer Boards"
+        },
+        "answer": {
+          "description": "Ответ одной фразой — для человека",
+          "title": "Answer",
+          "type": "string"
+        },
+        "warnings": {
+          "items": {
+            "$ref": "#/definitions/PlanWarning"
+          },
+          "title": "Warnings",
+          "type": "array"
+        }
+      },
+      "required": [
+        "scenario_id",
+        "kind",
+        "answer"
+      ],
+      "title": "HintReport",
       "type": "object"
     }
   }

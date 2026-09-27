@@ -611,6 +611,19 @@ ALLOCATE_FILL_ATTEMPTS = _register(
     "сборка вылета моделью полёта.",
 )
 
+HINT_NEAR_BEST_FRACTION = _register(
+    "HINT_NEAR_BEST_FRACTION",
+    0.05,
+    "доля",
+    Kind.TEAM,
+    "ДОПУЩЕНИЕ КОМАНДЫ: срок, отличающийся от лучшего в переборе не больше чем на эту "
+    "долю, подсказка называет «почти лучшим»",
+    "Подсказка «срок при каждом N» (заказчик, №51) называет наименьшее N с почти лучшим "
+    "сроком: на `real_nw` 4 борта дают 36,4 ч при ресурсе 115 ч, все 12 — 35,5 ч при "
+    "288 ч. Пять процентов — меньше скачков срока между соседними N из-за задержек "
+    "расписания (на `real_msk` — до 16%), но заметная человеку разница.",
+)
+
 AZIMUTH_SEARCH_STEP_DEG = _register(
     "AZIMUTH_SEARCH_STEP_DEG",
     15.0,
@@ -685,6 +698,7 @@ __all__ = [
     "FIXED_WING_CRUISE_FRACTION_OF_RANGE",
     "FULL_FRAME_SENSOR_MM",
     "GEOMETRY_TOLERANCE_M",
+    "HINT_NEAR_BEST_FRACTION",
     "G_MPS2",
     "Kind",
     "LANDING_TIME_S",
