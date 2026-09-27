@@ -57,11 +57,7 @@ from core.validate import validate_plan
 
 #: Стадии, работающие на заглушках. Список сокращается по мере закрытия эпиков
 #: и напрямую попадает в `Mission.stub_stages`, KML и GeoJSON.
-STUB_STAGES: tuple[Stage, ...] = (
-    Stage.DECOMPOSE,
-    Stage.COVERAGE,
-    Stage.SCHEDULE,
-)
+STUB_STAGES: tuple[Stage, ...] = (Stage.SCHEDULE,)
 
 
 @dataclass

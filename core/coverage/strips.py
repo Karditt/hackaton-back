@@ -1,17 +1,22 @@
 """Галсы подобласти для конкретного борта и защитные зоны манёвра.
 
-ЗАГЛУШКА E3 в части выбора направления: берётся длинная сторона описанного
-прямоугольника маски, одна на всю область. Настоящий E3 перебирает угол с
-целевой функцией, учитывающей ветер (заказчик, №45) и число разворотов.
-Геометрия честная: метры, обрезка по подобласти, змейка, шаг — свой у
-каждого борта (№27).
+Геометрия: метры, обрезка по подобласти, змейка, шаг — свой у каждого борта
+(№27). Направление галсов выбирается на подобласть и борт (E3, как у
+GeoScan Planner — docs/planner_reference.md §4): `candidate_azimuths` даёт
+кандидатов в порядке числа разворотов, покрытие (`CoverageOracle`) берёт
+первого, при котором зона манёвра самолёта не задевает запрещённого.
+
+Ветер в выбор направления не входит: путевая скорость на галсе рассчитана так,
+что удерживается на любом курсе (E2), и время от направления не зависит
+(№45). Выгода галсов поперёк ветра — более высокая путевая скорость — требует
+скорости по курсу, это долг №52.
 """
 
 from __future__ import annotations
 
 import math
 
-from shapely import affinity
+import numpy as np
 from shapely.geometry import LineString, MultiLineString, MultiPolygon, Point, Polygon
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
@@ -20,8 +25,8 @@ from core import assumptions
 from core.geo.project import polygon_from_shapely, polygons_of
 from core.schemas import MetricLineString, MetricPoint, MetricPolygon, Strip, SurveyParams, Vehicle
 
-#: Запас, на который линия-резак выпускается за габариты подобласти, метры.
-#: Ровно по габаритам резать нельзя: после поворота диагональ длиннее стороны.
+#: Запас, на который линия-резак выпускается за габариты подобласти, метры:
+#: резак ровно по крайним вершинам касался бы контура, а не пересекал его.
 _CUT_MARGIN_M = 10.0
 
 
@@ -41,14 +46,11 @@ def azimuth_from_vector(dx: float, dy: float) -> float:
 def dominant_azimuth_deg(geometry: BaseGeometry) -> float:
     """Направление длинной стороны минимального описанного прямоугольника.
 
-    TODO(E3): заменить перебором по углу с целевой функцией «число
-    разворотов + длина галсов + угол к ветру» (заказчик, №45).
-
     Args:
-        geometry: рабочая маска в метрах.
+        geometry: геометрия в метрах.
 
     Returns:
-        Азимут галсов, градусы 0..180.
+        Азимут, градусы 0..180.
     """
     rectangle = geometry.minimum_rotated_rectangle
     coords = list(rectangle.exterior.coords)[:4]
@@ -62,6 +64,53 @@ def dominant_azimuth_deg(geometry: BaseGeometry) -> float:
             best_length = length
             best_azimuth = azimuth_from_vector(dx, dy)
     return best_azimuth % 180.0
+
+
+def _width_across(hull: np.ndarray, azimuth_deg: float) -> float:
+    """Ширина выпуклой оболочки поперёк галсов данного направления, метры."""
+    radians = math.radians(azimuth_deg)
+    # Нормаль к направлению галсов (азимут от севера по часовой стрелке).
+    normal = np.array([math.cos(radians), -math.sin(radians)])
+    projection = hull @ normal
+    return float(projection.max() - projection.min())
+
+
+def candidate_azimuths(cell: Polygon, spacing_m: float) -> list[float]:
+    """Кандидаты направления галсов подобласти, лучшие — первыми.
+
+    Кандидаты: длинная сторона описанного прямоугольника, направления рёбер
+    подобласти не короче шага галсов (вдоль ребра у границы запретной зоны
+    крайний галс идёт параллельно ей, и разворот не смотрит в зону) и перебор
+    с шагом `AZIMUTH_SEARCH_STEP_DEG`. Порядок — по числу галсов: ширина
+    подобласти поперёк направления, делённая на шаг. Длина галсов в сумме от
+    направления почти не зависит (площадь, делённая на шаг), а каждый лишний
+    галс — лишний разворот.
+
+    Args:
+        cell: полигон подобласти, метры.
+        spacing_m: шаг галсов борта, метры.
+
+    Returns:
+        Азимуты, градусы 0..180, без повторов; при равном числе галсов —
+        в порядке перечисления выше.
+    """
+    candidates = [dominant_azimuth_deg(cell)]
+    coords = np.asarray(cell.exterior.coords)
+    edges = np.diff(coords, axis=0)
+    lengths = np.hypot(edges[:, 0], edges[:, 1])
+    for index in np.argsort(-lengths, kind="stable"):
+        if lengths[index] < spacing_m:
+            break
+        candidates.append(azimuth_from_vector(*edges[index]) % 180.0)
+    step = assumptions.AZIMUTH_SEARCH_STEP_DEG
+    candidates.extend(float(value) for value in np.arange(0.0, 180.0, step))
+
+    unique = list(dict.fromkeys(round(azimuth % 180.0, 6) for azimuth in candidates))
+    hull = np.asarray(cell.convex_hull.exterior.coords)
+    spacing = max(spacing_m, assumptions.GEOMETRY_TOLERANCE_M)
+    strips = [math.ceil(_width_across(hull, azimuth) / spacing) for azimuth in unique]
+    order = sorted(range(len(unique)), key=lambda index: strips[index])
+    return [unique[index] for index in order]
 
 
 def _lines_from(geometry: BaseGeometry) -> list[LineString]:
@@ -97,11 +146,25 @@ def cover_cell(
     Returns:
         Галсы змейкой в порядке облёта.
     """
-    math_angle_deg = 90.0 - azimuth_deg
-    pivot = cell.centroid
-    rotated = affinity.rotate(cell, -math_angle_deg, origin=pivot, use_radians=False)
-    min_x, min_y, max_x, max_y = rotated.bounds
+    # Оси галсов: вдоль — направление азимута, поперёк — влево от него.
+    # Поворачиваются линии-резаки, а не подобласть: повёрнутый полигон с узким
+    # выступом из-за округления становится самопересекающимся, и пересечение
+    # с ним даёт куски вне подобласти (так было на данных заказчика).
+    radians = math.radians(azimuth_deg)
+    along = (math.sin(radians), math.cos(radians))
+    across = (-math.cos(radians), math.sin(radians))
+    ring = np.asarray(cell.exterior.coords)
+    x_along = ring @ np.array(along)
+    y_across = ring @ np.array(across)
+    min_x, max_x = float(x_along.min()), float(x_along.max())
+    min_y, max_y = float(y_across.min()), float(y_across.max())
     spacing_m = max(params.strip_spacing_m, assumptions.GEOMETRY_TOLERANCE_M)
+
+    def point(x: float, y: float) -> tuple[float, float]:
+        return (x * along[0] + y * across[0], x * along[1] + y * across[1])
+
+    def position(xy: tuple[float, ...]) -> float:
+        return xy[0] * along[0] + xy[1] * along[1]
 
     offsets: list[float] = []
     y = min_y + spacing_m / 2.0
@@ -114,14 +177,19 @@ def cover_cell(
     strips: list[Strip] = []
     forward = True
     for index, offset_y in enumerate(offsets):
-        cutter = LineString([(min_x - _CUT_MARGIN_M, offset_y), (max_x + _CUT_MARGIN_M, offset_y)])
-        pieces = _lines_from(rotated.intersection(cutter))
-        pieces.sort(key=lambda line: line.coords[0][0], reverse=not forward)
-        for piece_index, piece in enumerate(pieces):
-            if piece.length <= assumptions.GEOMETRY_TOLERANCE_M:
+        cutter = LineString(
+            [point(min_x - _CUT_MARGIN_M, offset_y), point(max_x + _CUT_MARGIN_M, offset_y)]
+        )
+        pieces = []
+        for piece in _lines_from(cell.intersection(cutter)):
+            coords = list(piece.coords)
+            if position(coords[-1]) < position(coords[0]):
+                coords.reverse()
+            pieces.append((position(coords[0]), coords, piece.length))
+        pieces.sort(key=lambda item: item[0], reverse=not forward)
+        for piece_index, (_start, coords, length_m) in enumerate(pieces):
+            if length_m <= assumptions.GEOMETRY_TOLERANCE_M:
                 continue
-            restored = affinity.rotate(piece, math_angle_deg, origin=pivot, use_radians=False)
-            coords = list(restored.coords)
             if not forward:
                 coords.reverse()
             heading = azimuth_from_vector(
@@ -133,7 +201,7 @@ def cover_cell(
                     cell_id=cell_id,
                     vehicle_id=params.vehicle_id,
                     line=MetricLineString(points=[MetricPoint(x_m=x, y_m=y) for x, y in coords]),
-                    length_m=restored.length,
+                    length_m=length_m,
                     altitude_agl_m=params.altitude_agl_m,
                     speed_mps=params.survey_speed_mps,
                     azimuth_deg=heading,
@@ -143,16 +211,74 @@ def cover_cell(
     return strips
 
 
+def _turn_zone(
+    point: MetricPoint,
+    along: tuple[float, float],
+    partner: MetricPoint | None,
+    radius_m: float,
+    turn_radius_m: float,
+) -> BaseGeometry:
+    """Зона манёвра у одного конца галса, метры.
+
+    Круг радиусом `radius_m` вокруг конца галса. Если известно, к какому
+    соседнему галсу идёт разворот, круг срезается поперёк: петля минимального
+    радиуса между параллельными линиями на расстоянии d выходит за каждую из
+    них на R − d/2 (при d ≥ 2R — не выходит), и зона — полоса от своего галса
+    минус эта выпуклость до соседнего плюс она. Сосед на той же линии (кусок
+    галса за отверстием) или его нет — полный круг: куда разворачиваться, не
+    известно.
+
+    Args:
+        point: конец галса.
+        along: единичный вектор направления галса.
+        partner: точка соседнего галса, к которому или от которого разворот.
+        radius_m: радиус защитной зоны, метры.
+        turn_radius_m: радиус разворота борта, метры.
+    """
+    disc = Point(point.x_m, point.y_m).buffer(radius_m)
+    if partner is None:
+        return disc
+    normal = (-along[1], along[0])
+    lateral = (partner.x_m - point.x_m) * normal[0] + (partner.y_m - point.y_m) * normal[1]
+    if abs(lateral) <= assumptions.GEOMETRY_TOLERANCE_M:
+        return disc
+    side = (normal[0] * math.copysign(1.0, lateral), normal[1] * math.copysign(1.0, lateral))
+    bulge_m = max(turn_radius_m - abs(lateral) / 2.0, 0.0)
+    # Петля между соседними галсами лежит в полосе от своего галса минус
+    # выпуклость до соседнего плюс выпуклость; вдоль — ±radius.
+    far_m = min(radius_m, abs(lateral) + bulge_m)
+    corners = [
+        (
+            point.x_m + side[0] * across + along[0] * length,
+            point.y_m + side[1] * across + along[1] * length,
+        )
+        for across, length in (
+            (-bulge_m, -radius_m),
+            (-bulge_m, radius_m),
+            (far_m, radius_m),
+            (far_m, -radius_m),
+        )
+    ]
+    return disc.intersection(Polygon(corners))
+
+
 def maneuver_zones(strips: list[Strip], vehicle: Vehicle) -> list[MetricPolygon]:
     """Защитные зоны манёвра на концах галсов (заказчик, №37, №38).
 
     Самолёт не разворачивается на месте: на концах галсов ему нужна зона, в
-    которой он маневрирует так, как сам считает нужным. Зона — объединение
-    кругов радиусом `MANEUVER_ZONE_RADIUS_FACTOR` × радиус разворота вокруг
-    концов галсов. Геометрия петли не строится. У мультиротора зон нет.
+    которой он маневрирует так, как сам считает нужным. Геометрия петли не
+    строится. Зона у конца галса — круг радиусом `MANEUVER_ZONE_RADIUS_FACTOR`
+    × радиус разворота, срезанный с внешней стороны: разворот идёт к соседнему
+    галсу змейки (`_turn_zone`). У начала первого и конца последнего галса сосед
+    — второй и предпоследний галсы: заход и выход тоже со стороны подобласти.
+    У мультиротора зон нет.
+
+    Срез — то, что делает самолёту доступной подобласть вдоль запретной зоны:
+    крайний галс параллелен её границе, и полный круг вокруг его концов задевал
+    бы зону при любом направлении галсов (долг №51).
 
     Args:
-        strips: галсы подобласти.
+        strips: галсы подобласти в порядке облёта.
         vehicle: борт.
 
     Returns:
@@ -161,11 +287,22 @@ def maneuver_zones(strips: list[Strip], vehicle: Vehicle) -> list[MetricPolygon]
     if not vehicle.is_fixed_wing() or vehicle.turn_radius_m <= 0.0 or not strips:
         return []
     radius_m = assumptions.MANEUVER_ZONE_RADIUS_FACTOR * vehicle.turn_radius_m
-    discs = []
-    for strip in strips:
-        for point in (strip.start(), strip.end()):
-            discs.append(Point(point.x_m, point.y_m).buffer(radius_m))
-    return [polygon_from_shapely(part) for part in polygons_of(unary_union(discs))]
+    zones = []
+    last = len(strips) - 1
+    for index, strip in enumerate(strips):
+        start, end = strip.start(), strip.end()
+        length = math.hypot(end.x_m - start.x_m, end.y_m - start.y_m)
+        if length <= assumptions.GEOMETRY_TOLERANCE_M:
+            zones.append(Point(start.x_m, start.y_m).buffer(radius_m))
+            continue
+        along = ((end.x_m - start.x_m) / length, (end.y_m - start.y_m) / length)
+        before = strips[index - 1].end() if index > 0 else None
+        after = strips[index + 1].start() if index < last else None
+        start_partner = before if before is not None else after
+        end_partner = after if after is not None else before
+        zones.append(_turn_zone(start, along, start_partner, radius_m, vehicle.turn_radius_m))
+        zones.append(_turn_zone(end, along, end_partner, radius_m, vehicle.turn_radius_m))
+    return [polygon_from_shapely(part) for part in polygons_of(unary_union(zones))]
 
 
 def covered_area_m2(strips: list[Strip], swath_width_m: float, region: BaseGeometry) -> float:
@@ -186,6 +323,7 @@ def covered_area_m2(strips: list[Strip], swath_width_m: float, region: BaseGeome
 
 __all__ = [
     "azimuth_from_vector",
+    "candidate_azimuths",
     "cover_cell",
     "covered_area_m2",
     "dominant_azimuth_deg",

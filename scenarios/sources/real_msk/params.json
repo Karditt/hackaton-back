@@ -10,10 +10,12 @@
   "mode": "min_makespan",
   "sites": [
     { "id": "site-south", "name": "Южная площадка", "position": [38.55096, 54.85846] },
-    { "id": "site-north", "name": "Северная площадка", "position": [38.49815, 55.13821] }
+    { "id": "site-north", "name": "Северная площадка", "position": [38.49815, 55.13821] },
+    { "id": "site-east", "name": "Восточная площадка (по рекомендации)", "position": [38.75, 55.055] }
   ],
   "fleet": [
     { "vehicle_id": "geoscan-201", "count": 5, "payload_id": "riebo-r4" },
-    { "vehicle_id": "geoscan-gemini", "count": 10, "payload_id": "geoscan-pf1b" }
+    { "vehicle_id": "geoscan-gemini", "count": 9, "payload_id": "geoscan-pf1b" },
+    { "vehicle_id": "geoscan-gemini", "count": 1, "payload_id": "geoscan-pf1b", "site_id": "site-east" }
   ]
 }
