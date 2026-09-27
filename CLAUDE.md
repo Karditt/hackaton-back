@@ -48,6 +48,10 @@ python -m core.cli import-layers --area data/samples/survey_area_msk.kml \
     --zones data/samples/zones_msk.kml --obstacles data/samples/obstacles_msk.kml \
     --params scenarios/sources/real_msk/params.json -o scenarios/real/real_msk.json
 
+# второй сценарий того же рода: островки заказчика в новой раскладке (отложенный real_nw)
+python -m core.cli relayout-area --area data/samples/survey_area_msk.kml \
+    --center 36.75,56.07 --size-km 60 58 --seed 1 -o scenarios/sources/real_nw/area.kml
+
 # сценарий комплектом файлов заказчика (слои KML + параметры) и сверка всех сценариев с их файлами
 python -m core.cli export-layers scenarios/simple.json -o scenarios/sources/simple
 python -m core.cli check-sources

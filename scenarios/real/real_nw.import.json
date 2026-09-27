@@ -1,0 +1,74 @@
+{
+  "area": {
+    "read": 549,
+    "kept": 548,
+    "fixed": 0,
+    "dropped": 0,
+    "skipped": 0
+  },
+  "zones": {
+    "read": 341,
+    "kept": 16,
+    "fixed": 0,
+    "dropped": 0,
+    "skipped": 325
+  },
+  "obstacles": {
+    "read": 5164,
+    "kept": 297,
+    "fixed": 0,
+    "dropped": 2,
+    "skipped": 4865
+  },
+  "area_km2": 244.95539567173148,
+  "warnings": [
+    {
+      "code": "import.geometry_merged",
+      "severity": "warning",
+      "stage": "geo",
+      "message": "Соседние куски области слиты: 549 записей файла дают 548 раздельных кусков — у остальных общая граница",
+      "context": {},
+      "geometry": null
+    },
+    {
+      "code": "import.zone_window_unknown",
+      "severity": "warning",
+      "stage": "geo",
+      "message": "Зона UUR344_1: тип «врем_ограничение», но времени действия в файле нет — зона считается действующей всегда. Формат окон — docs/input_formats.md §3.2",
+      "context": {},
+      "geometry": null
+    },
+    {
+      "code": "import.zone_datum_unverified",
+      "severity": "warning",
+      "stage": "geo",
+      "message": "Высоты зон заданы над уровнем моря, а рельеф не задан: отметки прочитаны как высоты над поверхностью (ЦМР — E1, P1)",
+      "context": {},
+      "geometry": null
+    },
+    {
+      "code": "import.obstacle_dropped",
+      "severity": "warning",
+      "stage": "geo",
+      "message": "Препятствие без координат или с координатами 0,0 выброшено",
+      "context": {},
+      "geometry": null
+    },
+    {
+      "code": "import.obstacle_altitude_mode_nonstandard",
+      "severity": "warning",
+      "stage": "geo",
+      "message": "Значение altitudeMode «relativetoseafloor» не из словаря KML — прочитано как отметка над уровнем моря (docs/input_formats.md §4.2)",
+      "context": {},
+      "geometry": null
+    },
+    {
+      "code": "import.obstacle_line_buffered",
+      "severity": "warning",
+      "stage": "geo",
+      "message": "Линейные препятствия развёрнуты в полосу шириной 10 м (допущение команды)",
+      "context": {},
+      "geometry": null
+    }
+  ]
+}

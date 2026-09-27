@@ -36,6 +36,18 @@
         "available": true,
         "note": "Данные заказчика: 549 участков, 547 препятствий. Расчёт идёт около полуминуты."
       }
+    },
+    "real_nw": {
+      "scenario": "../real/real_nw.json",
+      "area": "real_nw/area.kml",
+      "zones": "../../data/samples/zones_msk.kml",
+      "obstacles": "../../data/samples/obstacles_msk.kml",
+      "params": "real_nw/params.json",
+      "report": "../real/real_nw.import.json",
+      "planning": {
+        "available": true,
+        "note": "Отложенный сценарий: настоящие зоны и препятствия заказчика, его островки в новой раскладке (relayout-area, зерно 1). Расчёт идёт около минуты."
+      }
     }
   }
 }
