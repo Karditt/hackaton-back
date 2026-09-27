@@ -11,12 +11,14 @@
   "sites": [
     { "id": "site-west", "name": "Западная площадка", "position": [36.44508, 56.14768] },
     { "id": "site-centre", "name": "Центральная площадка", "position": [36.74465, 55.92701] },
-    { "id": "site-east", "name": "Восточная площадка", "position": [36.9931, 56.16838] }
+    { "id": "site-east", "name": "Восточная площадка", "position": [36.9931, 56.16838] },
+    { "id": "site-north-west", "name": "Северо-западная площадка (по рекомендации)", "position": [36.33475, 56.24984] }
   ],
   "fleet": [
     { "vehicle_id": "geoscan-201", "count": 2, "payload_id": "sony-rx1rm3" },
     { "vehicle_id": "geoscan-lite", "count": 2, "payload_id": "sony-rx1rm2" },
     { "vehicle_id": "geoscan-401", "count": 2, "payload_id": "riebo-r6" },
-    { "vehicle_id": "geoscan-gemini", "count": 6, "payload_id": "geoscan-pf1b" }
+    { "vehicle_id": "geoscan-gemini", "count": 5, "payload_id": "geoscan-pf1b" },
+    { "vehicle_id": "geoscan-gemini", "count": 1, "payload_id": "geoscan-pf1b", "site_id": "site-north-west" }
   ]
 }
