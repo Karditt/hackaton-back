@@ -69,6 +69,8 @@ class BookPlacer:
         )
         self._closing_zones: dict[str, list[tuple[float, PreparedGeometry]]] = {}
         self._closing: dict[tuple[str, str], list[float]] = {}
+        self._flown: list[tuple[float, float]] = []
+        """Поставленные вылеты: (посадка, длительность), секунды — для оценки плана."""
 
     def _prepare(
         self, instance: FleetInstance, site_id: str, cell_ids: list[str]
@@ -190,11 +192,26 @@ class BookPlacer:
         self, instance: FleetInstance, site_id: str, cell_ids: list[str], start_s: float
     ) -> None:
         """Поставить вылет со взлётом в `start_s` секунд от начала работ."""
-        self._book.add(self._prepare(instance, site_id, cell_ids), start_s)
+        prepared = self._prepare(instance, site_id, cell_ids)
+        self._book.add(prepared, start_s)
+        self._flown.append((start_s + prepared.sortie.duration_s, prepared.sortie.duration_s))
 
     def rewind(self, count: int) -> None:
         """Оставить в книге только первые `count` поставленных вылетов."""
         self._book.rewind(count)
+        del self._flown[count:]
+
+    def totals(self) -> tuple[float, float, int]:
+        """Поставленное: последняя посадка, суммарный налёт (секунды) и число вылетов.
+
+        Расписание ставит итоговые вылеты в том же порядке и получает те же
+        старты, поэтому это срок и налёт плана без его сборки.
+        """
+        return (
+            max((end for end, _duration in self._flown), default=0.0),
+            sum(duration for _end, duration in self._flown),
+            len(self._flown),
+        )
 
 
 __all__ = ["BookPlacer", "SortieProbe"]

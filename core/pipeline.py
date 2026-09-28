@@ -586,7 +586,18 @@ def run_pipeline(
 
         def greedy(
             strategy: GreedyStrategy, target_s: float | None, basis: Scenario = scenario
-        ) -> _Variant:
+        ) -> tuple[Allocation, tuple[bool, bool, float, float], float]:
+            """Эвристика и её оценка по книге расписания, без сборки плана.
+
+            Расписание ставит итоговые вылеты в том же порядке, что эвристика
+            ставила их в книгу, и получает те же старты (долг №54) — поэтому
+            срок и налёт из книги равны сроку и налёту плана, а собирать план
+            ради сравнения вариантов незачем (долг №62).
+
+            Returns:
+                Распределение, ключ критерия режима `basis` и срок, секунды.
+            """
+            placer = placer_for()
             candidate = build_greedy_allocation(
                 basis,
                 work_area.crs,
@@ -597,19 +608,27 @@ def run_pipeline(
                 sortie_cost,
                 survey_plan,
                 survey_time,
-                placer_for(),
+                placer,
                 ends_of,
                 strategy,
                 target_s,
             )
-            return (candidate, *realize(candidate))
+            end_s, flight_s, count = placer.totals()
+            key = criterion_key(
+                basis.mode,
+                basis.deadline_s,
+                end_s,
+                resource_s(flight_s, count),
+                complete=not candidate.unassigned_cell_ids and count > 0,
+            )
+            return candidate, key, end_s
 
-        def improve(variant: _Variant, basis: Scenario = scenario) -> _Variant:
-            """Довести вариант локальным поиском по критерию режима `basis`."""
+        def improve(allocation: Allocation, basis: Scenario = scenario) -> Allocation:
+            """Довести распределение локальным поиском по критерию режима `basis`."""
             if allocator != "local_search":
-                return variant
-            improved = improve_allocation(
-                variant[0],
+                return allocation
+            return improve_allocation(
+                allocation,
                 basis,
                 instances,
                 decomposition.cells,
@@ -620,9 +639,9 @@ def run_pipeline(
                 primary_sites,
                 ends_of,
             )
-            if improved.assignments == variant[0].assignments:
-                return (improved, *variant[1:])
-            return (improved, *realize(improved))
+
+        def variant_of(allocation: Allocation) -> _Variant:
+            return (allocation, *realize(allocation))
 
         def key_of(
             item: tuple[GreedyStrategy, Allocation, CoverageSet, list[Sortie], Schedule],
@@ -641,20 +660,21 @@ def run_pipeline(
             def key(variant: _Variant) -> tuple[bool, bool, float, float]:
                 return _plan_key(basis, variant[0], variant[2])
 
-            plain = greedy(strategy, None, basis)
+            plain, plain_key, makespan_s = greedy(strategy, None, basis)
             candidates = [plain]
-            if targets and basis.mode is OptimizationMode.MIN_MAKESPAN and plain[2]:
-                makespan_s = max(sortie.end_time_s() for sortie in plain[2])
-                aimed = min(
+            if targets and basis.mode is OptimizationMode.MIN_MAKESPAN and plain.assignments:
+                aimed, aimed_key, _end_s = min(
                     (
                         greedy(strategy, makespan_s * factor, basis)
                         for factor in assumptions.ALLOCATE_TARGET_FACTORS
                     ),
-                    key=key,
+                    key=lambda item: item[1],
                 )
-                if key(aimed) < key(plain):
+                if aimed_key < plain_key:
                     candidates.append(aimed)
-            return min((improve(variant, basis) for variant in candidates), key=key)
+            return min(
+                (variant_of(improve(allocation, basis)) for allocation in candidates), key=key
+            )
 
         tried: list[tuple[GreedyStrategy, Allocation, CoverageSet, list[Sortie], Schedule]] = []
         for strategy in STRATEGIES:
@@ -671,7 +691,8 @@ def run_pipeline(
                 fast = scenario.model_copy(update={"mode": OptimizationMode.MIN_MAKESPAN})
                 for strategy in STRATEGIES:
                     fallback = replace(strategy, name=f"{strategy.name}, от плана по сроку")
-                    tried.append((fallback, *improve(best_plan(strategy, fast))))
+                    quickest = best_plan(strategy, fast)[0]
+                    tried.append((fallback, *variant_of(improve(quickest))))
 
         best = min(range(len(tried)), key=lambda index: (key_of(tried[index]), index))
         _strategy, allocation, coverage, sorties, schedule = tried[best]

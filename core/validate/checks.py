@@ -540,8 +540,8 @@ def _check_deadline(scenario: Scenario, sorties: list[Sortie]) -> list[PlanWarni
     return [
         _violation(
             "validate.deadline",
-            f"Работы занимают {makespan / 3600:.1f} ч при ограничении "
-            f"{scenario.deadline_s / 3600:.1f} ч",
+            f"Работы занимают {makespan / 3600:.2f} ч при ограничении "
+            f"{scenario.deadline_s / 3600:.2f} ч",
         )
     ]
 
