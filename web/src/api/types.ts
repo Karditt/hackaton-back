@@ -7,7 +7,7 @@
  * и которых в контракте нет: сводка сценария, статус задачи, выгрузка GeoJSON.
  */
 
-import type { HintKind, HintReport, LayerStats, PlanWarning } from '../types/schema';
+import type { HintKind, HintReport, ImportReport, LayerStats, PlanWarning } from '../types/schema';
 
 export type {
   AltitudeCorridor,
@@ -70,6 +70,9 @@ export type ScenarioFiles = {
   area_km2?: number;
   warnings: PlanWarning[];
 };
+
+/** Ответ `POST /scenarios/import`: сохранённый сценарий и что импорт сделал со слоями. */
+export type ImportedScenario = { id: string; name: string; report: ImportReport };
 
 /** Файл хранилища, не прочитанный по контракту, — `GET /scenarios`, поле `rejected`. */
 export type RejectedScenario = { file: string; reason: string };

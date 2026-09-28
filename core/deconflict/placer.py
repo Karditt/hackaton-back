@@ -19,7 +19,7 @@ from __future__ import annotations
 from collections import OrderedDict
 from collections.abc import Callable
 
-from shapely.prepared import prep
+from shapely.prepared import PreparedGeometry, prep
 
 from core import assumptions
 from core.allocate.fleet import FleetInstance
@@ -67,6 +67,8 @@ class BookPlacer:
         self._prepared: OrderedDict[tuple[str, int, str, tuple[str, ...]], PreparedSortie] = (
             OrderedDict()
         )
+        self._closing_zones: dict[str, list[tuple[float, PreparedGeometry]]] = {}
+        self._closing: dict[tuple[str, str], list[float]] = {}
 
     def _prepare(
         self, instance: FleetInstance, site_id: str, cell_ids: list[str]
@@ -133,6 +135,56 @@ class BookPlacer:
             if any(near.intersects(shape) for shape in shapes):
                 crowded.add(cell_id)
         return crowded
+
+    def daylight_room(self, ready_s: float) -> list[float] | None:
+        """Остаток окна по Солнцу и длины следующих окон, секунды; None — ограничения нет."""
+        return self._book.daylight_room(ready_s)
+
+    def closing_cells(
+        self, instance: FleetInstance, cell_ids: list[str], after_s: float
+    ) -> dict[str, float]:
+        """Подобласти, которые временная зона закроет позже `after_s`, и когда.
+
+        Подобласть закрывается, если её полигон или её зона манёвра у этого
+        борта задевает временную зону, запрещающую высоту съёмки. До открытия
+        зоны её можно снять, потом — только после закрытия.
+
+        Args:
+            instance: борт.
+            cell_ids: подобласти-кандидаты.
+            after_s: с какого момента смотреть, секунды от начала работ.
+
+        Returns:
+            Момент ближайшего открытия зоны над подобластью, секунды от начала
+            работ; только подобласти, которые закроются позже `after_s`.
+        """
+        vehicle_id = instance.vehicle.id
+        if vehicle_id not in self._closing_zones:
+            params = self._survey_plan.for_vehicle(vehicle_id)
+            assert params is not None
+            self._closing_zones[vehicle_id] = [
+                (opens_s, prep(zone))
+                for opens_s, zone in self._book.closing_zones(params.altitude_agl_m)
+            ]
+        zones = self._closing_zones[vehicle_id]
+        if not zones:
+            return {}
+        result: dict[str, float] = {}
+        for cell_id in cell_ids:
+            key = (cell_id, vehicle_id)
+            if key not in self._closing:
+                shapes = [self._oracle.cell_geometry(cell_id)]
+                coverage = self._oracle.get(cell_id, vehicle_id)
+                shapes.extend(polygon_to_shapely(zone) for zone in coverage.maneuver_zones)
+                self._closing[key] = [
+                    opens_s
+                    for opens_s, zone in zones
+                    if any(zone.intersects(shape) for shape in shapes)
+                ]
+            later = [opens_s for opens_s in self._closing[key] if opens_s > after_s]
+            if later:
+                result[cell_id] = min(later)
+        return result
 
     def commit(
         self, instance: FleetInstance, site_id: str, cell_ids: list[str], start_s: float

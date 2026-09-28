@@ -74,7 +74,10 @@ def criterion_key(
 
     Сначала полнота (частичных планов нет, инвариант 10), затем — как у
     локального поиска: «минимум срока» — T, при равенстве R; «минимум ресурса»
-    — дедлайн как ограничение, затем R, при равенстве T.
+    — дедлайн как ограничение, затем R, при равенстве T. Из планов, не
+    успевающих к дедлайну, лучше тот, что ближе к нему (T, затем R): он
+    невыполним в любом случае, и отчёт о невыполнимости называет срок,
+    которого можно достичь.
 
     Args:
         mode: режим оптимизации.
@@ -85,6 +88,8 @@ def criterion_key(
     """
     if mode is OptimizationMode.MIN_RESOURCE:
         late = deadline_s is not None and makespan_s > deadline_s
+        if late:
+            return not complete, late, makespan_s, resource
         return not complete, late, resource, makespan_s
     return not complete, False, makespan_s, resource
 

@@ -8,9 +8,9 @@
  * расчёт, отбор карты и парк не теряются при переходе между вкладками.
  *
  * Ввода и редактирования геометрии на карте нет и не будет: заказчик это
- * исключил (docs/customer_qa.md, №8, №12). Сценарии приходят файлами через
- * API; правятся только параметры задания (E10), загрузка файлов в вебе —
- * заглушка (долг №29).
+ * исключил (docs/customer_qa.md, №8, №12). Сценарии приходят файлами:
+ * загрузкой в менеджере данных (слои KML и параметры — через ядро, с отчётом
+ * импорта) или из хранилища API; правятся только параметры задания (E10).
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -42,11 +42,12 @@ const DEFAULT_MODE: OptimizationMode = 'min_makespan';
 
 export default function App() {
   const { tab, open } = useTab();
-  const { scenarios, rejected, error: loadError } = useScenarios();
+  const { scenarios, rejected, error: loadError, reload } = useScenarios();
   const { vehicles, error: catalogError } = useVehicles();
   const park = usePark();
-  const uploads = useUploads();
   const [chosenScenarioId, setChosenScenarioId] = useState('');
+  // Сценарий, собранный из файлов под тем же id, перечитывается заново.
+  const [revision, setRevision] = useState(0);
   const [mode, setMode] = useState<OptimizationMode>(DEFAULT_MODE);
   const [filter, setFilter] = useState<MapFilter>(allLayers);
   const planPage = useRef<HTMLDivElement | null>(null);
@@ -54,9 +55,19 @@ export default function App() {
 
   // Пока пользователь ничего не выбрал, берётся первый сценарий из списка.
   const scenarioId = chosenScenarioId || scenarios[0]?.id || '';
-  const draft = useScenarioOptions(scenarioId);
-  const { layers, error: layersError } = useScenarioLayers(scenarioId);
-  const { files, error: filesError } = useScenarioFiles(scenarioId);
+  const draft = useScenarioOptions(scenarioId, revision);
+  const { layers, error: layersError } = useScenarioLayers(scenarioId, revision);
+  const { files, error: filesError } = useScenarioFiles(scenarioId, revision);
+  const uploads = useUploads({
+    scenarioId,
+    scenario: draft.scenario,
+    sourceId: files?.source_id ?? null,
+    onCreated: (createdId) => {
+      reload();
+      setChosenScenarioId(createdId);
+      setRevision((current) => current + 1);
+    },
+  });
   const summary = scenarios.find((item) => item.id === scenarioId);
   const planningNote =
     summary?.planning_available === false
@@ -194,9 +205,7 @@ export default function App() {
             files={files}
             filter={filter}
             onFilterChange={setFilter}
-            uploads={uploads.files}
-            onUpload={uploads.add}
-            onRemoveUpload={uploads.remove}
+            uploads={uploads}
             boards={run ? (run.document.properties?.boards ?? []) : null}
           />
         </main>

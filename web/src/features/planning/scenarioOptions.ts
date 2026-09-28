@@ -4,7 +4,7 @@
  * Заказчик исключил ввод и редактирование геометрии (№8, №12), поэтому
  * область, зоны, препятствия и площадки берутся из выбранного сценария как
  * есть. Правится только то, что заказчик называет параметрами задания: GSD и
- * тип съёмки, состав флота, ветер, коридор высот, время.
+ * тип съёмки, состав флота, ветер, коридор высот, время, высота Солнца.
  *
  * Здесь нет ни одного расчёта плана: значения формы переводятся в поля
  * контракта `core/schemas.py` и отправляются серверу, а он их проверяет
@@ -64,6 +64,8 @@ export type ScenarioOptions = {
   deadline_h: string;
   /** Межвылетная подготовка, минуты; пусто — допущение ядра (№32). */
   turnaround_min: string;
+  /** Снимать только при Солнце не ниже, градусы; пусто — время суток не учитывается. */
+  min_sun_elevation_deg: string;
   fleet: FleetRow[];
 };
 
@@ -110,6 +112,7 @@ export function optionsOf(scenario: Scenario): ScenarioOptions {
       scenario.turnaround_s === null || scenario.turnaround_s === undefined
         ? ''
         : String(scenario.turnaround_s / SECONDS_IN_MINUTE),
+    min_sun_elevation_deg: numberText(scenario.min_sun_elevation_deg),
     fleet: (scenario.fleet ?? []).map(fleetRow),
   };
 }
@@ -214,6 +217,7 @@ export function applyOptions(
 
   const deadlineHours = parseOptional(options.deadline_h, 'Дедлайн');
   const turnaroundMinutes = parseOptional(options.turnaround_min, 'Межвылетная подготовка');
+  const sunDegrees = parseOptional(options.min_sun_elevation_deg, 'Солнце не ниже');
 
   return {
     ...scenario,
@@ -234,5 +238,6 @@ export function applyOptions(
     start_time: options.start_time === '' ? null : `${options.start_time}:00Z`,
     deadline_s: deadlineHours === null ? null : deadlineHours * SECONDS_IN_HOUR,
     turnaround_s: turnaroundMinutes === null ? null : turnaroundMinutes * SECONDS_IN_MINUTE,
+    min_sun_elevation_deg: sunDegrees,
   };
 }

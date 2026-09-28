@@ -175,3 +175,29 @@
   background: var(--warning-bg);
   border-radius: var(--radius);
 }
+
+.assemble {
+  margin-top: 8px;
+}
+
+.assembleButton {
+  width: 100%;
+  padding: 6px 10px;
+  font-weight: 600;
+  color: var(--panel);
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.assembleButton:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.help {
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: var(--muted);
+}

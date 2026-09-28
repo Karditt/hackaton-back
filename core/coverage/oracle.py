@@ -5,7 +5,8 @@
 распределение действительно рассматривает, — и кешируется.
 
 Направление галсов выбирается на пару «подобласть × борт»: кандидаты из
-`candidate_azimuths` пробуются в порядке числа галсов, берётся первый, при
+`candidate_azimuths` пробуются в порядке времени съёмки — с ветром скорость на
+галсах своя у каждого направления (№45, долг №52), — берётся первый, при
 котором пара пригодна. У мультиротора это всегда первый кандидат.
 
 Пара непригодна, если при всех направлениях зона манёвра самолёта задевает
@@ -16,11 +17,20 @@
 
 from __future__ import annotations
 
+from functools import partial
+
 from shapely.geometry import Polygon
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 
-from core.coverage.strips import candidate_azimuths, cover_cell, covered_area_m2, maneuver_zones
+from core.coverage.strips import (
+    AxisSpeed,
+    candidate_azimuths,
+    cover_cell,
+    covered_area_m2,
+    maneuver_zones,
+)
+from core.flight.cost import interlace_step, loop_length_m
 from core.geo.mask import WorkArea
 from core.geo.project import polygon_to_shapely
 from core.schemas import (
@@ -36,7 +46,9 @@ from core.schemas import (
     SurveyParams,
     SurveyPlan,
     Vehicle,
+    Wind,
 )
+from core.survey.plan import axis_survey_speed_mps
 
 
 def maneuver_hazard(work_area: WorkArea, altitude_m: float) -> BaseGeometry:
@@ -74,6 +86,28 @@ def _problem(
     return None
 
 
+def strip_interlace(params: SurveyParams, vehicle: Vehicle) -> int:
+    """Через сколько линий борт облетает галсы (`interlace_step`); мультиротор — 1."""
+    if not vehicle.is_fixed_wing():
+        return 1
+    return interlace_step(vehicle.turn_radius_m, params.strip_spacing_m)
+
+
+def turn_time_s(params: SurveyParams, vehicle: Vehicle) -> float:
+    """Время перехода на следующий галс, секунды — для выбора направления.
+
+    Самолёт — разворот на галс через `strip_interlace` линий (`loop_length_m`,
+    долг №61), мультиротор — по прямой на шаг; оба — на путевой скорости
+    перелёта.
+    """
+    if vehicle.is_fixed_wing() and vehicle.turn_radius_m > 0.0:
+        lateral_m = strip_interlace(params, vehicle) * params.strip_spacing_m
+        length_m = loop_length_m(vehicle.turn_radius_m, lateral_m)
+    else:
+        length_m = params.strip_spacing_m
+    return length_m / params.transit_speed_mps
+
+
 def fit_strips(
     cell_id: str,
     cell: Polygon,
@@ -81,12 +115,13 @@ def fit_strips(
     vehicle: Vehicle,
     hazard: BaseGeometry,
     airspace: BaseGeometry | None,
+    wind: Wind | None = None,
 ) -> tuple[list[Strip], list[MetricPolygon], str | None]:
     """Галсы подобласти в первом пригодном направлении.
 
-    Кандидаты `candidate_azimuths` пробуются в порядке числа галсов; берётся
-    первый, при котором зона манёвра ничего не задевает. Не подошёл ни один —
-    возвращается лучший по числу галсов вместе с причиной.
+    Кандидаты `candidate_azimuths` пробуются в порядке времени съёмки (без
+    ветра — числа галсов); берётся первый, при котором зона манёвра ничего не
+    задевает. Не подошёл ни один — возвращается лучший вместе с причиной.
 
     Args:
         cell_id: идентификатор подобласти.
@@ -95,13 +130,25 @@ def fit_strips(
         vehicle: борт.
         hazard: что не должна задевать зона манёвра (`maneuver_hazard`), метры.
         airspace: граница разрешённого пространства, метры; None — не задана.
+        wind: ветер сценария. Задан и не штиль — скорость на галсах своя у
+            каждого направления (`axis_survey_speed_mps`, долг №52), и
+            направление выбирается по времени; None — скорость на любой курс.
 
     Returns:
         Галсы, зоны манёвра и причина непригодности (None — пригодна).
     """
+    axis_speed: AxisSpeed | None = None
+    if wind is not None and wind.speed_mps > 0.0:
+        axis_speed = partial(axis_survey_speed_mps, vehicle, params, wind)
+
     first: tuple[list[Strip], list[MetricPolygon], str | None] | None = None
-    for azimuth in candidate_azimuths(cell, params.strip_spacing_m):
-        strips = cover_cell(cell_id, cell, params, azimuth)
+    for azimuth in candidate_azimuths(
+        cell, params.strip_spacing_m, axis_speed, turn_time_s(params, vehicle)
+    ):
+        speed_mps = axis_speed(azimuth) if axis_speed is not None else None
+        strips = cover_cell(
+            cell_id, cell, params, azimuth, speed_mps, strip_interlace(params, vehicle)
+        )
         zones = maneuver_zones(strips, vehicle)
         problem = _problem(strips, zones, hazard, airspace)
         if problem is None:
@@ -121,11 +168,21 @@ class CoverageOracle:
         survey_plan: SurveyPlan,
         vehicles: dict[str, Vehicle],
         work_area: WorkArea,
+        wind: Wind | None = None,
     ) -> None:
+        """Args:
+        decomposition: подобласти.
+        survey_plan: параметры съёмки бортов.
+        vehicles: каталог бортов.
+        work_area: рабочая область.
+        wind: ветер сценария — направление галсов выбирается с ним (`fit_strips`);
+            None — скорость на галсах на любой курс.
+        """
         self._decomposition = decomposition
         self._survey_plan = survey_plan
         self._vehicles = vehicles
         self._work_area = work_area
+        self._wind = wind
         self._cells = {cell.id: polygon_to_shapely(cell.polygon) for cell in decomposition.cells}
         self._cache: dict[tuple[str, str], CellCoverage] = {}
         self._hazards: dict[float, BaseGeometry] = {}
@@ -175,6 +232,7 @@ class CoverageOracle:
             vehicle,
             self.hazard_at(params.altitude_agl_m),
             self._work_area.airspace,
+            self._wind,
         )
         result = CellCoverage(
             cell_id=cell_id,
@@ -211,9 +269,10 @@ class CoverageOracle:
                 severity=Severity.INFO,
                 stage=Stage.COVERAGE,
                 message=(
-                    "Направление галсов выбрано на каждую подобласть и борт — наименьшее число "
-                    "разворотов, при котором зона манёвра не задевает запретного. Ветер в выбор "
-                    "не входит: скорость на галсе рассчитана на любой курс"
+                    "Направление галсов выбрано на каждую подобласть и борт — наименьшее время "
+                    "съёмки, при котором зона манёвра не задевает запретного. Время — галсы на "
+                    "путевой скорости, которую борт удержит в обе стороны этого направления при "
+                    "ветре сценария (поперёк ветра — выше), плюс развороты"
                 ),
             )
         ]

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from datetime import timedelta
 
 from shapely.geometry import LineString, Point
 from shapely.geometry.base import BaseGeometry
@@ -26,7 +27,8 @@ from core.flight.cost import exceeds_range, sortie_is_feasible
 from core.flight.maneuver import ManeuverWindow, maneuver_overlap, maneuver_windows
 from core.flight.track import build_track, first_conflict
 from core.flight.wind import required_airspeed_mps
-from core.geo.mask import WorkArea
+from core.geo.mask import WorkArea, as_utc
+from core.geo.sun import sun_elevation_deg
 from core.schemas import (
     CoverageSet,
     Decomposition,
@@ -544,6 +546,45 @@ def _check_deadline(scenario: Scenario, sorties: list[Sortie]) -> list[PlanWarni
     ]
 
 
+def _check_daylight(
+    scenario: Scenario, work_area: WorkArea, sorties: list[Sortie]
+) -> list[PlanWarning]:
+    """Галсы — при Солнце не ниже порога сценария (долг №55).
+
+    Высота Солнца считается заново по времени начала и конца каждого галса в
+    центре области — окна, по которым строилось расписание, не используются.
+    Центр, а не точка галса — та же точка, по которой считаются окна: на
+    область в десятки километров высота Солнца меняется меньше чем на 0,3°.
+    """
+    threshold = scenario.min_sun_elevation_deg
+    if threshold is None or scenario.start_time is None:
+        return []
+    origin = as_utc(scenario.start_time)
+    center = work_area.projector.xy_to_geo(work_area.area.centroid.x, work_area.area.centroid.y)
+    items: list[PlanWarning] = []
+    for sortie in sorties:
+        for leg in sortie.legs:
+            if leg.phase is not FlightPhase.STRIP:
+                continue
+            low = min(
+                sun_elevation_deg(origin + timedelta(seconds=point.time_s), center.lat, center.lon)
+                for point in (leg.waypoints[0], leg.waypoints[-1])
+            )
+            if low < threshold - assumptions.DAYLIGHT_TOLERANCE_DEG:
+                items.append(
+                    _violation(
+                        "validate.daylight",
+                        f"Вылет {sortie.id}: галс снимается при Солнце {low:.1f}° — ниже "
+                        f"заданных {threshold:.0f}°",
+                        _leg_line(leg),
+                        sortie_id=sortie.id,
+                        strip_id=leg.strip_id or "",
+                    )
+                )
+                break
+    return items
+
+
 def _derived_specs(vehicles: dict[str, Vehicle], sorties: list[Sortie]) -> list[PlanWarning]:
     """Какие числа плана выведены допущением, а не взяты из ТТХ (инвариант 6)."""
     items = []
@@ -602,6 +643,7 @@ def validate_plan(
     report.violations.extend(_check_maneuver_separation(sorties, coverage, vehicles))
     report.violations.extend(_check_continuity(sorties))
     report.violations.extend(_check_deadline(scenario, sorties))
+    report.violations.extend(_check_daylight(scenario, work_area, sorties))
     report.warnings.extend(_derived_specs(vehicles, sorties))
     report.warnings.append(
         PlanWarning(

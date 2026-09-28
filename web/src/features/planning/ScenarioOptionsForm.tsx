@@ -109,8 +109,8 @@ export function ScenarioOptionsForm(props: Props) {
           </label>
         </div>
         <span className={styles.hint}>
-          направление — метеорологическое: 0° — ветер с севера. Во время полёта и расход
-          не входит, влияет на выполнимость
+          направление — метеорологическое: 0° — ветер с севера. В расход не входит; влияет на
+          выполнимость и на направление галсов — поперёк ветра борт держит скорость выше
         </span>
       </fieldset>
 
@@ -140,6 +140,25 @@ export function ScenarioOptionsForm(props: Props) {
         <span className={styles.hint}>
           пусто — время в плане относительное, «T+чч:мм:сс»; окна временных зон тогда не
           проверяются
+        </span>
+      </label>
+
+      <label className={styles.field}>
+        Снимать при Солнце не ниже, °
+        <input
+          className={styles.control}
+          type="number"
+          min={0}
+          max={60}
+          step={1}
+          placeholder="не учитывать"
+          value={options.min_sun_elevation_deg}
+          onChange={(event) => set({ min_sun_elevation_deg: event.target.value })}
+          disabled={disabled}
+        />
+        <span className={styles.hint}>
+          норма аэрофотосъёмки — 25° на цветную, 20° на черно-белую. Галсы — только в окнах по
+          Солнцу, перелёты — в любое время; нужно начало работ
         </span>
       </label>
 

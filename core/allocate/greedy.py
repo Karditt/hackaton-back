@@ -54,7 +54,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Protocol
 
 from shapely.geometry import Point
@@ -110,6 +110,16 @@ class SortiePlacer(Protocol):
         self, instance: FleetInstance, cell_ids: list[str], from_s: float, to_s: float
     ) -> set[str]:
         """Подобласти, у которых в этот промежуток работают другие самолёты на той же высоте."""
+        ...
+
+    def closing_cells(
+        self, instance: FleetInstance, cell_ids: list[str], after_s: float
+    ) -> dict[str, float]:
+        """Подобласти, которые временная зона закроет позже `after_s`: момент закрытия."""
+        ...
+
+    def daylight_room(self, ready_s: float) -> list[float] | None:
+        """Остаток окна по Солнцу и длины следующих окон, секунды; None — ограничения нет."""
         ...
 
     def commit(
@@ -393,6 +403,7 @@ def build_greedy_allocation(
     placer: SortiePlacer | None = None,
     cell_ends: CellEndsOf | None = None,
     strategy: GreedyStrategy | None = None,
+    target_s: float | None = None,
 ) -> Allocation:
     """Распределить подобласти по вылетам: время делится, а не площадь.
 
@@ -414,6 +425,10 @@ def build_greedy_allocation(
             остаётся порядком добора.
         strategy: как делить работу между бортами одной площадки; None —
             первая из `STRATEGIES`.
+        target_s: целевой срок, секунды от начала работ (режим «минимум
+            срока»). Вылеты борта нарезаются так, чтобы его вылеты до этого
+            срока были равной длины (`_sized_cap`), а не первый — на весь
+            заряд и последний — огрызок. None — каждый вылет на весь заряд.
 
     Returns:
         Распределение с невзятыми подобластями и причинами. Вылеты — в том
@@ -457,12 +472,38 @@ def build_greedy_allocation(
         cap_s = endurance_limit_s(board.instance.vehicle)
         if deadline_s is not None:
             cap_s = min(cap_s, deadline_s - board.free_at_s)
+        deadline_cap_s = cap_s
+        # Съёмка — только в окнах по Солнцу (долг №55): вылет не длиннее, чем
+        # осталось от окна; не выходит ничего — не длиннее самого длинного из
+        # следующих окон, и книга расписания переносит его туда.
+        room = placer.daylight_room(board.free_at_s) if placer is not None else None
+        if room is not None:
+            cap_s = min(cap_s, max(room, default=0.0))
+        full_cap_s = cap_s
+        if room:
+            cap_s = min(cap_s, room[0])
+        if target_s is not None and not minimum_resource:
+            cap_s = min(cap_s, _sized_cap(target_s, board.free_at_s, cap_s, turnaround_s))
         # Самый короткий борт флота начинает вылет с ближней работы (долг №59):
         # «самая дальняя посильная» для него — подлёт на весь заряд ради минут
         # съёмки, а дальнюю работу быстрее снимут те, кто летит дальше.
         nearest_first = (
             bounds.reach_m(board.instance) <= shortest_m + assumptions.GEOMETRY_TOLERANCE_M
         )
+        # Срочная работа: подобласти, которые позже закроет временная зона, —
+        # если борт успеет снять их до открытия. Иначе их придётся ждать до
+        # закрытия зоны, и срок плана — не раньше него.
+        closing = (
+            placer.closing_cells(board.instance, sorted(remaining), board.free_at_s)
+            if placer is not None
+            else {}
+        )
+        urgent = {
+            cell_id: opens_s
+            for cell_id, opens_s in closing.items()
+            if board.free_at_s + bounds.single_floor_s(board.instance, board.site_id, cell_id)
+            <= opens_s
+        }
         build = _SortieBuild(
             board,
             by_id,
@@ -476,12 +517,36 @@ def build_greedy_allocation(
             zones.get(board.instance.key),
             strategy.fill_zone_first,
         )
-        sortie, late = _plan_sortie(
-            build, remaining, cap_s, placer, deadline_s, patient=minimum_resource
-        )
+        sortie: tuple[list[str], float, float] | None = None
+        late = False
+        if urgent:
+            # Срочный вылет — весь до открытия ближайшей зоны: тогда его
+            # подобласти не попадут под запрет, в каком бы порядке их ни облететь.
+            urgent_cap_s = min(cap_s, min(urgent.values()) - board.free_at_s)
+            sortie, _late = _plan_sortie(
+                replace(build, urgent=urgent),
+                remaining,
+                urgent_cap_s,
+                placer,
+                deadline_s,
+                patient=minimum_resource,
+            )
+            if sortie is not None and not any(cell_id in urgent for cell_id in sortie[0]):
+                sortie = None
+        if sortie is None:
+            sortie, late = _plan_sortie(
+                build, remaining, cap_s, placer, deadline_s, patient=minimum_resource
+            )
+        if sortie is None and cap_s < full_cap_s:
+            # Под целевой срок не уложиться — вылет на весь заряд.
+            sortie, late = _plan_sortie(
+                build, remaining, full_cap_s, placer, deadline_s, patient=minimum_resource
+            )
         if sortie is None:
             board.active = False
-            stopped_by_deadline |= late or cap_s < endurance_limit_s(board.instance.vehicle)
+            stopped_by_deadline |= late or deadline_cap_s < endurance_limit_s(
+                board.instance.vehicle
+            )
             continue
         cell_ids, duration_s, start_s = sortie
         ends_s = start_s + duration_s
@@ -539,6 +604,32 @@ def build_greedy_allocation(
     )
 
 
+def _sized_cap(target_s: float, free_at_s: float, cap_s: float, turnaround_s: float) -> float:
+    """Длительность вылета, при которой вылеты борта до целевого срока равны, секунды.
+
+    Борт свободен в `free_at_s`, до срока — `target_s − free_at_s`. Вылетов
+    на весь заряд `cap_s` с подготовкой между ними туда влезает n (с
+    округлением вверх); делить остаток поровну на n вылетов — значит не
+    оставлять последнему огрызок, который ради пары подобластей тратит
+    взлёт, подлёт и возврат и кончается после срока. Срок уже прошёл —
+    ограничения нет.
+
+    Args:
+        target_s: целевой срок, секунды от начала работ.
+        free_at_s: когда борт свободен, секунды от начала работ.
+        cap_s: предел вылета по заряду, секунды.
+        turnaround_s: подготовка между вылетами, секунды.
+
+    Returns:
+        Предел длительности вылета, секунды (не больше `cap_s`).
+    """
+    horizon_s = target_s - free_at_s
+    if horizon_s <= 0.0 or cap_s <= 0.0:
+        return cap_s
+    count = max(1, math.ceil((horizon_s + turnaround_s) / (cap_s + turnaround_s)))
+    return min(cap_s, (horizon_s - (count - 1) * turnaround_s) / count)
+
+
 def _weakest_reach(
     cells: list[Cell],
     boards: list[_Board],
@@ -582,6 +673,8 @@ class _SortieBuild:
     """Своя зона борта (`_board_zones`). None — зон нет, своё — всё."""
     fill_zone_first: bool = False
     """Добор — сначала из своей зоны (`GreedyStrategy.fill_zone_first`)."""
+    urgent: dict[str, float] | None = None
+    """Срочные подобласти: закроются временной зоной в этот момент, секунды."""
 
 
 @dataclass(frozen=True)
@@ -849,8 +942,12 @@ def _build_sortie(
     zone = build.zone
     mine = set(candidates) if zone is None else {item for item in candidates if item in zone}
     direction = 1.0 if build.nearest_first else -1.0
+    # Срочная работа (закроется временной зоной) — раньше всего, ближняя к
+    # закрытию — первой.
+    urgent = build.urgent or {}
     candidates.sort(
         key=lambda cell_id: (
+            urgent.get(cell_id, math.inf),
             cell_id not in mine,
             cell_id not in own,
             (direction if cell_id in mine else 1.0) * _distance(site, cells[cell_id].centroid),
@@ -886,9 +983,13 @@ def _build_sortie(
             ]
             if not fitting:
                 break
-            # Добор не уходит из своей зоны, пока в ней есть что взять: иначе
-            # вылет растекается на зону соседа и ждёт его на разведении.
-            if build.fill_zone_first:
+            # Срочная работа — первой. Добор не уходит из своей зоны, пока в ней
+            # есть что взять: иначе вылет растекается на зону соседа и ждёт его
+            # на разведении.
+            pressing = [item for item in fitting if item in urgent]
+            if pressing:
+                preferred = pressing
+            elif build.fill_zone_first:
                 preferred = (
                     [item for item in fitting if item in own and item in mine]
                     or [item for item in fitting if item in mine]

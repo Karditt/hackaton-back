@@ -212,7 +212,11 @@ def test_fixed_wing_climbs_on_the_move(catalog: VehicleCatalog) -> None:
 
 
 def test_short_hop_keeps_hovering_climb(catalog: VehicleCatalog) -> None:
-    """Перелёт короче набора и снижения — высота набирается на месте."""
+    """Перелёт короче набора и снижения — недостающая высота набирается над точкой.
+
+    С 2026-09-29 не вся: что помещается на длину перелёта, набирается на ходу
+    (`tests/test_turns_wind.py`), над точкой — только остаток.
+    """
     vehicle = catalog.get("geoscan-201")
     params = _params(vehicle.id, 450.0, 27.0)
     cells = [_cell("a", vehicle.id, 100.0, 400.0, 0.0, 450.0)]

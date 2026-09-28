@@ -14,8 +14,9 @@
 повторит стадия расписания. Меняется хвост порядка — заново ставится только
 хвост.
 
-Ходы. Первые четыре — в режиме «минимум срока»; первые три — над
-**критическим вылетом** (тот, что кончается последним):
+Ходы. Первые три — в режиме «минимум срока», над **критическим вылетом**
+(тот, что кончается последним); четвёртый и пятый — в обоих режимах, в
+режиме «минимум ресурса» — не позже дедлайна:
 
 1. **Раздать хвост.** Подобласти критического вылета — все или последние по
    порядку облёта (`ALLOCATE_SEARCH_TAIL_SHARES`) — отдаются другим бортам: в
@@ -31,7 +32,8 @@
    порядке и расходится с соседями в другое время.
 4. **Лишний борт — на землю.** Работа борта с наименьшей снятой площадью
    раздаётся остальным: борт на общей площадке и высоте съёмки может
-   задерживать других сильнее, чем помогает.
+   задерживать других сильнее, чем помогает, а его подлёты и циклы
+   взлёт-посадка — ресурс.
 5. **Ресурс** (оба режима). Короткий вылет растворяется в последних вылетах
    бортов: каждый лишний цикл взлёт-посадка — ресурс (№23). Срок при этом не
    растёт («минимум срока») или остаётся в дедлайне («минимум ресурса»).
@@ -496,6 +498,16 @@ class _Search:
                 variants.append(reversed_trips)
         return variants
 
+    def _finish_by(self, outcome: _Outcome) -> float:
+        """До какого момента раздача может заканчивать вылеты, секунды.
+
+        «Минимум срока» — не позже нынешнего срока; «минимум ресурса» — до
+        дедлайна, если он есть (№23).
+        """
+        if not self.minimum_resource:
+            return outcome.makespan_s + _TIME_EPS_S
+        return self.scenario.deadline_s if self.scenario.deadline_s is not None else math.inf
+
     def drop_moves(self, trips: list[_Trip], outcome: _Outcome) -> Iterator[list[_Trip]]:
         """Ход 4: лишний борт — на землю.
 
@@ -504,7 +516,7 @@ class _Search:
         раздаётся остальным; кандидаты — борта с наименьшей снятой площадью,
         не больше `ALLOCATE_SEARCH_DROP_CANDIDATES`. Варианты — по одному.
         """
-        finish_by = outcome.makespan_s + _TIME_EPS_S
+        finish_by = self._finish_by(outcome)
         area: dict[tuple[str, int], float] = {}
         for trip in trips:
             area[trip.instance.key] = area.get(trip.instance.key, 0.0) + sum(
@@ -538,11 +550,7 @@ class _Search:
 
         Варианты выдаются по одному: поиск берёт первый, который улучшил план.
         """
-        finish_by = (
-            outcome.makespan_s + _TIME_EPS_S
-            if not self.minimum_resource
-            else (self.scenario.deadline_s if self.scenario.deadline_s is not None else math.inf)
-        )
+        finish_by = self._finish_by(outcome)
         order = sorted(range(len(trips)), key=lambda index: (trips[index].duration_s, index))
         for index in order[: assumptions.ALLOCATE_SEARCH_MERGE_CANDIDATES]:
             victim = trips[index]
@@ -654,6 +662,14 @@ def improve_allocation(
                     stuck = tail
         if chosen is None:
             for variant in search.merge_moves(trips, current):
+                outcome = replay.evaluate(variant)
+                if outcome is not None and search.better(outcome, current):
+                    chosen = (variant, outcome)
+                    break
+        if chosen is None and search.minimum_resource:
+            # Лишний борт — на землю и ради ресурса: его подлёты и циклы
+            # взлёт-посадка уходят, работа — тем, кто успевает до дедлайна.
+            for variant in search.drop_moves(trips, current):
                 outcome = replay.evaluate(variant)
                 if outcome is not None and search.better(outcome, current):
                     chosen = (variant, outcome)

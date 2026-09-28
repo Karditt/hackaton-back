@@ -18,10 +18,11 @@ from __future__ import annotations
 import time
 import uuid
 from collections import OrderedDict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from shapely.ops import unary_union
 
+from core import assumptions
 from core.advise import diagnose, stub_warning
 from core.allocate.baseline import build_baseline_allocation
 from core.allocate.fleet import FleetInstance, expand_fleet
@@ -226,6 +227,9 @@ def _strategy_note(
 #: Вылет-проба: борт, площадка (взлёт и посадка), подобласти по порядку.
 _ProbeKey = tuple[str, int, str, tuple[str, ...]]
 
+#: Вариант распределения вместе с его покрытием, вылетами и расписанием.
+_Variant = tuple[Allocation, CoverageSet, list[Sortie], Schedule]
+
 #: Сколько последних проб держать собранными: распределение оценивает
 #: длительность вылета пробой и тут же ставит её в расписание, локальный
 #: поиск переоценивает вылеты плана. На результат размер не влияет — только
@@ -321,6 +325,7 @@ def run_pipeline(
     alpha: float | None = None,
     seed: int | None = None,
     allocator: str = ALLOCATORS[0],
+    targets: bool = True,
 ) -> PlanningRun:
     """Прогнать сценарий через весь конвейер.
 
@@ -331,6 +336,10 @@ def run_pipeline(
         alpha: переопределение веса срока в свёртке, 0..1. None — из сценария.
         seed: переопределение зерна ГПСЧ. None — из сценария.
         allocator: алгоритм распределения из `ALLOCATORS`.
+        targets: пробовать ли эвристику под целевые сроки
+            (`ALLOCATE_TARGET_FACTORS`) — в режиме «минимум срока» это ещё
+            столько же прогонов эвристики на стратегию. False — быстрее
+            (подсказки по пулу считают десятки планов).
 
     Returns:
         Прогон: стадии конвейера и итог — план или отчёт о невыполнимости.
@@ -398,7 +407,7 @@ def run_pipeline(
     usable = [params.vehicle_id for params in survey_plan.per_vehicle]
     instances = expand_fleet(scenario, vehicles, usable)
     levels, level_warnings = assign_transit_levels(instances, survey_plan, work_area.corridor_max_m)
-    oracle = CoverageOracle(decomposition, survey_plan, vehicles, work_area)
+    oracle = CoverageOracle(decomposition, survey_plan, vehicles, work_area, scenario.wind)
     router = make_router(work_area)
     hops = SurveyHopPolicy(decomposition.cells, survey_plan, vehicles, work_area)
     slope = SlopeClearance(work_area)
@@ -462,10 +471,8 @@ def run_pipeline(
 
     def survey_time(cell_id: str, vehicle_id: str) -> float:
         """Время галсов подобласти бортом, секунды — нижняя граница вылета."""
-        params = survey_plan.for_vehicle(vehicle_id)
-        assert params is not None
         strips = oracle.get(cell_id, vehicle_id).strips
-        return sum(strip.length_m for strip in strips) / params.survey_speed_mps
+        return sum(strip.length_m / strip.speed_mps for strip in strips)
 
     def ends_of(cell_id: str, vehicle_id: str) -> CellEnds:
         """Вход и выход змейки подобласти у модели борта, метры."""
@@ -509,14 +516,23 @@ def run_pipeline(
         coverage, sorties, schedule = realize(allocation)
     else:
         # Эвристика хаотична: пробуются все стратегии, берётся лучший план по
-        # критерию режима (`GreedyStrategy`).
-        tried: list[tuple[GreedyStrategy, Allocation, CoverageSet, list[Sortie], Schedule]] = []
-        for strategy in STRATEGIES:
-            placer = BookPlacer(
-                ScheduleBook(work_area.zones), probe_sortie, oracle, survey_plan, work_area.crs
+        # критерию режима (`GreedyStrategy`). В режиме «минимум срока» каждая
+        # ещё и под несколько целевых сроков — долей срока своего плана без
+        # цели (`ALLOCATE_TARGET_FACTORS`); поиск доводит лучший вариант.
+        def placer_for() -> BookPlacer:
+            return BookPlacer(
+                ScheduleBook(work_area.zones, work_area.daylight),
+                probe_sortie,
+                oracle,
+                survey_plan,
+                work_area.crs,
             )
+
+        def greedy(
+            strategy: GreedyStrategy, target_s: float | None, basis: Scenario = scenario
+        ) -> _Variant:
             candidate = build_greedy_allocation(
-                scenario,
+                basis,
                 work_area.crs,
                 decomposition.cells,
                 instances,
@@ -525,28 +541,83 @@ def run_pipeline(
                 sortie_cost,
                 survey_plan,
                 survey_time,
-                placer,
+                placer_for(),
                 ends_of,
                 strategy,
+                target_s,
             )
-            if allocator == "local_search":
-                candidate = improve_allocation(
-                    candidate,
-                    scenario,
-                    instances,
-                    decomposition.cells,
-                    oracle.serviceable,
-                    sortie_cost,
-                    SortieBounds(survey_plan, survey_time, decomposition.cells, primary_sites),
-                    placer,
-                    primary_sites,
-                    ends_of,
+            return (candidate, *realize(candidate))
+
+        def improve(variant: _Variant, basis: Scenario = scenario) -> _Variant:
+            """Довести вариант локальным поиском по критерию режима `basis`."""
+            if allocator != "local_search":
+                return variant
+            improved = improve_allocation(
+                variant[0],
+                basis,
+                instances,
+                decomposition.cells,
+                oracle.serviceable,
+                sortie_cost,
+                SortieBounds(survey_plan, survey_time, decomposition.cells, primary_sites),
+                placer_for(),
+                primary_sites,
+                ends_of,
+            )
+            if improved.assignments == variant[0].assignments:
+                return (improved, *variant[1:])
+            return (improved, *realize(improved))
+
+        def key_of(
+            item: tuple[GreedyStrategy, Allocation, CoverageSet, list[Sortie], Schedule],
+        ) -> tuple[bool, bool, float, float]:
+            return _plan_key(scenario, item[1], item[3])
+
+        def best_plan(strategy: GreedyStrategy, basis: Scenario) -> _Variant:
+            """Лучший план стратегии по критерию режима `basis`, доведённый поиском.
+
+            Эвристика — без цели и, в режиме «минимум срока», под целевые
+            сроки. Поиск доводит вариант без цели и лучший из целевых, если тот
+            лучше: лучший до поиска не всегда лучший после (`medium`: 1,025 ч
+            против 1,067 ч).
+            """
+
+            def key(variant: _Variant) -> tuple[bool, bool, float, float]:
+                return _plan_key(basis, variant[0], variant[2])
+
+            plain = greedy(strategy, None, basis)
+            candidates = [plain]
+            if targets and basis.mode is OptimizationMode.MIN_MAKESPAN and plain[2]:
+                makespan_s = max(sortie.end_time_s() for sortie in plain[2])
+                aimed = min(
+                    (
+                        greedy(strategy, makespan_s * factor, basis)
+                        for factor in assumptions.ALLOCATE_TARGET_FACTORS
+                    ),
+                    key=key,
                 )
-            tried.append((strategy, candidate, *realize(candidate)))
-        best = min(
-            range(len(tried)),
-            key=lambda index: (_plan_key(scenario, tried[index][1], tried[index][3]), index),
-        )
+                if key(aimed) < key(plain):
+                    candidates.append(aimed)
+            return min((improve(variant, basis) for variant in candidates), key=key)
+
+        tried: list[tuple[GreedyStrategy, Allocation, CoverageSet, list[Sortie], Schedule]] = []
+        for strategy in STRATEGIES:
+            tried.append((strategy, *best_plan(strategy, scenario)))
+
+        # «Минимум ресурса при сроке» (№23, №52): эвристика ресурса занимает
+        # самые производительные борта до срока и может не успеть там, где
+        # план «минимум срока» успевает. Тогда пробуется он, а поиск по
+        # критерию ресурса сливает его вылеты и убирает лишние борта, не
+        # выходя за срок.
+        if scenario.mode is OptimizationMode.MIN_RESOURCE and scenario.deadline_s is not None:
+            incomplete, late, *_rest = key_of(min(tried, key=key_of))
+            if incomplete or late:
+                fast = scenario.model_copy(update={"mode": OptimizationMode.MIN_MAKESPAN})
+                for strategy in STRATEGIES:
+                    fallback = replace(strategy, name=f"{strategy.name}, от плана по сроку")
+                    tried.append((fallback, *improve(best_plan(strategy, fast))))
+
+        best = min(range(len(tried)), key=lambda index: (key_of(tried[index]), index))
         _strategy, allocation, coverage, sorties, schedule = tried[best]
         if len(tried) > 1:
             assembler.warnings.append(_strategy_note(scenario, tried, best))

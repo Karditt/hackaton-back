@@ -10,7 +10,7 @@ import { isEdited, optionsOf, type ScenarioOptions } from './scenarioOptions';
  * Геометрия сценария в черновик не попадает — она не редактируется (№8, №12),
  * а переносится в производный сценарий как есть.
  */
-export function useScenarioOptions(scenarioId: string) {
+export function useScenarioOptions(scenarioId: string, revision = 0) {
   const [scenario, setScenario] = useState<Scenario | null>(null);
   const [options, setOptions] = useState<ScenarioOptions | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -38,7 +38,7 @@ export function useScenarioOptions(scenarioId: string) {
     return () => {
       cancelled = true;
     };
-  }, [scenarioId]);
+  }, [scenarioId, revision]);
 
   /** Вернуть значения сохранённого сценария. */
   const reset = useCallback(() => {

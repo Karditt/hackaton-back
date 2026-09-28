@@ -7,10 +7,11 @@ import {
   type ScenarioLayers,
 } from '../../api';
 import { decimal, fileSize, plural } from '../../shared/format';
+import { Notice } from '../../shared/ui/Notice';
 import { Toggle } from '../../shared/ui/Toggle';
 import { toggleGroup, type MapFilter } from '../map/layers';
-import { DATA_KINDS, type DataKind, type DataKindId } from './dataKinds';
-import type { UploadedFile } from './useUploads';
+import { DATA_KINDS, type DataKind } from './dataKinds';
+import type { Uploads } from './useUploads';
 import styles from './FileManager.module.css';
 
 type Props = {
@@ -22,10 +23,22 @@ type Props = {
   files: ScenarioFiles | null;
   filter: MapFilter;
   onFilterChange: (filter: MapFilter) => void;
-  uploads: UploadedFile[];
-  onUpload: (kind: DataKindId, files: FileList | null) => void;
-  onRemove: (id: string) => void;
+  uploads: Uploads;
 };
+
+/** Что возьмётся у выбранного сценария, если файла вида не загрузили. */
+function borrowedNote(uploads: Uploads, scenarioId: string): string | null {
+  const kinds = new Set(uploads.files.map((file) => file.kind));
+  if (kinds.has('scenario')) return null;
+  const missing = [
+    !kinds.has('area') && 'область',
+    !kinds.has('no_fly_zone') && 'зоны',
+    !kinds.has('obstacle') && 'препятствия',
+    !(kinds.has('params') || kinds.has('site') || kinds.has('airspace')) && 'параметры задания',
+  ].filter(Boolean);
+  if (missing.length === 0) return null;
+  return `У сценария «${scenarioId}» возьмутся: ${missing.join(', ')}.`;
+}
 
 /** Сколько объектов вида в сценарии — подпись раздела. */
 function describeCount(kind: DataKind, layers: ScenarioLayers | null): string {
@@ -48,7 +61,7 @@ function describeStats(stats: LayerStats): string {
 }
 
 /** Кнопка выбора файла: сам ввод файла спрятан, кнопка доступна с клавиатуры. */
-function UploadButton({ kind, onPick }: { kind: DataKind; onPick: Props['onUpload'] }) {
+function UploadButton({ kind, onPick }: { kind: DataKind; onPick: Uploads['add'] }) {
   const input = useRef<HTMLInputElement | null>(null);
   return (
     <>
@@ -111,13 +124,15 @@ function SourceFile({
  *
  * У каждого вида — исходный файл выбранного сценария: слой KML в формате
  * заказчика или файл параметров, со ссылкой на скачивание и итогом импорта.
- * Кнопки «Загрузить» — заглушка (`useUploads`): файл виден в списке, но на
- * сервер не отправляется. Геометрия не рисуется и не правится — заказчик это
- * исключил.
+ * Кнопки «Загрузить» копят свои файлы, «Собрать сценарий» отправляет их
+ * серверу (`useUploads`): слои читает ядро, отвечает отчётом импорта, новый
+ * сценарий сразу выбирается. Геометрия не рисуется и не правится — заказчик
+ * это исключил.
  */
 export function FileManager(props: Props) {
   const { layers, files, filter, uploads } = props;
-  const pending = uploads.length;
+  const pending = uploads.files.length;
+  const borrowed = borrowedNote(uploads, props.scenarioId);
   const sourceId = files?.source_id ?? null;
   const byKind = new Map((files?.files ?? []).map((file) => [file.kind, file]));
   const warnings = files?.warnings ?? [];
@@ -136,7 +151,7 @@ export function FileManager(props: Props) {
 
       <ul className={styles.kinds}>
         {DATA_KINDS.map((kind) => {
-          const own = uploads.filter((file) => file.kind === kind.id);
+          const own = uploads.files.filter((file) => file.kind === kind.id);
           const count =
             kind.countKey && layers ? (layers.properties.counts[kind.countKey] ?? 0) : 0;
           const source = byKind.get(kind.source);
@@ -161,14 +176,18 @@ export function FileManager(props: Props) {
                   <span className={styles.label}>{kind.label}</span>
                   <span className={styles.count}>{describeCount(kind, layers)}</span>
                 </span>
-                <UploadButton kind={kind} onPick={props.onUpload} />
+                <UploadButton kind={kind} onPick={uploads.add} />
               </div>
 
               {(source || own.length > 0) && (
                 <ul className={styles.files}>
-                  {source && sourceId && (count > 0 || kind.countKey === null) && (
-                    <SourceFile scenarioId={sourceId} file={source} shared={shared} />
-                  )}
+                  {/* Файл слоя, все объекты которого вне области, тоже виден: иначе
+                      не видно, что импорт его прочитал и отбросил. */}
+                  {source &&
+                    sourceId &&
+                    (count > 0 || kind.countKey === null || (source.stats?.read ?? 0) > 0) && (
+                      <SourceFile scenarioId={sourceId} file={source} shared={shared} />
+                    )}
                   {own.map((file) => (
                     <li key={file.id} className={styles.file}>
                       <span className={styles.fileName} title={file.name}>
@@ -177,14 +196,14 @@ export function FileManager(props: Props) {
                       <span className={styles.fileSize}>{fileSize(file.size)}</span>
                       <span
                         className={styles.stub}
-                        title="Файл не отправлен на сервер: приём файлов в интерфейсе ещё не сделан"
+                        title="Уйдёт на сервер по кнопке «Собрать сценарий»"
                       >
-                        не обработан
+                        ждёт сборки
                       </span>
                       <button
                         type="button"
                         className={styles.remove}
-                        onClick={() => props.onRemove(file.id)}
+                        onClick={() => uploads.remove(file.id)}
                         title="Убрать из списка"
                         aria-label={`Убрать ${file.name}`}
                       >
@@ -210,11 +229,39 @@ export function FileManager(props: Props) {
         </details>
       )}
 
-      <p className={styles.note}>
-        {pending > 0 ? `Выбрано файлов: ${pending}. ` : ''}
-        Загрузка своих файлов пока заглушка: файл попадает в список, но на сервер не уходит и в
-        расчёт не входит.
-      </p>
+      {uploads.error && <Notice tone="error">{uploads.error}</Notice>}
+      {uploads.imported && uploads.imported.id === props.scenarioId && (
+        <Notice tone="success">
+          Сценарий «{uploads.imported.name}» собран из файлов: площадь{' '}
+          {decimal(uploads.imported.report.area_km2 ?? 0, 1)} км². Что импорт сделал с каждым слоем
+          — под видами выше.
+        </Notice>
+      )}
+
+      {pending > 0 ? (
+        <div className={styles.assemble}>
+          <button
+            type="button"
+            className={styles.assembleButton}
+            onClick={() => void uploads.assemble()}
+            disabled={uploads.busy}
+          >
+            {uploads.busy ? 'Сборка…' : 'Собрать сценарий'}
+          </button>
+          <p className={styles.help}>
+            Выбрано файлов: {pending}.{' '}
+            {uploads.files.some((file) => file.kind === 'scenario')
+              ? 'Сценарий целиком уйдёт на сервер как есть; сервер проверит его на приёме.'
+              : `Слои KML прочитает ядро и ответит отчётом импорта. ${borrowed ?? ''}`}
+          </p>
+        </div>
+      ) : (
+        <p className={styles.help}>
+          Свои данные — кнопками «Загрузить»: слои KML в формате заказчика, параметры задания или
+          сценарий целиком (JSON). Недостающие виды возьмутся у выбранного сценария — так можно
+          заменить один слой.
+        </p>
+      )}
     </div>
   );
 }

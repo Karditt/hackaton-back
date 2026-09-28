@@ -24,6 +24,7 @@ from core import assumptions
 from core.errors import GeometryError, ScenarioError
 from core.geo.crs import pick_working_crs
 from core.geo.project import Projector, polygons_of
+from core.geo.sun import daylight_windows
 from core.schemas import (
     CrsInfo,
     MetricPoint,
@@ -116,6 +117,9 @@ class WorkArea:
     sites: dict[str, MetricPoint] = field(default_factory=dict)
     """Площадки взлёта-посадки в метрах, по идентификаторам."""
     warnings: list[PlanWarning] = field(default_factory=list)
+    daylight: list[tuple[float, float]] | None = None
+    """Окна съёмки по высоте Солнца (`Scenario.min_sun_elevation_deg`), секунды от
+    начала работ, по порядку; None — ограничения нет."""
 
     @property
     def area_m2(self) -> float:
@@ -295,6 +299,16 @@ def build_work_area(scenario: Scenario) -> WorkArea:
         sites[site.id] = point
         warnings.extend(_check_site(site.id, point, zones, airspace))
 
+    daylight: list[tuple[float, float]] | None = None
+    if scenario.min_sun_elevation_deg is not None and scenario.start_time is not None:
+        # Окна — по центру области: на 30 км высота Солнца меняется меньше
+        # чем на 0,3°; краш-тест проверяет каждый галс в его точке.
+        center = projector.xy_to_geo(area.centroid.x, area.centroid.y)
+        daylight = daylight_windows(
+            as_utc(scenario.start_time), center.lat, center.lon, scenario.min_sun_elevation_deg
+        )
+        warnings.append(_daylight_note(scenario.min_sun_elevation_deg, daylight))
+
     return WorkArea(
         crs=crs,
         projector=projector,
@@ -305,6 +319,28 @@ def build_work_area(scenario: Scenario) -> WorkArea:
         corridor_max_m=scenario.altitude_corridor.max_altitude_agl_m,
         sites=sites,
         warnings=warnings,
+        daylight=daylight,
+    )
+
+
+def _daylight_note(threshold_deg: float, windows: list[tuple[float, float]]) -> PlanWarning:
+    """Предупреждение с окнами съёмки по Солнцу: первые сутки и сколько их всего."""
+    hours = sum(end - start for start, end in windows) / 3600.0
+    first = (
+        f"первое — {windows[0][0] / 3600.0:.1f}–{windows[0][1] / 3600.0:.1f} ч от начала работ"
+        if windows
+        else "окон нет"
+    )
+    return PlanWarning(
+        code="geo.daylight",
+        severity=Severity.INFO if windows else Severity.WARNING,
+        stage=Stage.GEO,
+        message=(
+            f"Съёмка — только при Солнце не ниже {threshold_deg:.0f}°: "
+            f"{len(windows)} окон за {assumptions.DAYLIGHT_HORIZON_DAYS} суток, "
+            f"всего {hours:.1f} ч; {first}. Галсы — внутри окон, перелёты — в любое время"
+        ),
+        context={"windows": str(len(windows))},
     )
 
 
