@@ -190,7 +190,10 @@ def test_converging_maneuver_zones_are_caught(runs: dict[str, PlanningRun]) -> N
         if run.vehicles[sortie.vehicle_id].is_fixed_wing()
         and with_zones.intersection(sortie.cell_ids)
     )
-    codes = _check(run, [*run.mission.sorties, _moved(plane, dx_m=1500.0)])
+    # Только пара «вылет и его двойник»: двойник всё время в 1,5 км от
+    # оригинала, а с другими вылетами плана его траектория может и сойтись —
+    # это уже другое нарушение, не то, что проверяется здесь.
+    codes = _check(run, [plane, _moved(plane, dx_m=1500.0)])
     assert "validate.maneuver_separation" in codes
     assert "validate.separation" not in codes
 
