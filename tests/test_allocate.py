@@ -7,6 +7,7 @@ import pytest
 from core.allocate.baseline import ALGORITHM_NAME as BASELINE
 from core.allocate.fleet import FleetInstance
 from core.allocate.greedy import ALGORITHM_NAME as CONSTRUCTIVE
+from core.allocate.objective import service_share
 from core.allocate.search import ALGORITHM_NAME as LOCAL_SEARCH
 from core.catalog import VehicleCatalog
 from core.cli import load_scenario
@@ -227,6 +228,16 @@ def test_unassigned_boards_are_placed_where_their_work_is(catalog: VehicleCatalo
     run = run_pipeline(_long_area(), catalog=catalog)
     assert run.mission.status is MissionStatus.FEASIBLE, [r.message for r in run.mission.reasons]
     assert {sortie.takeoff_site_id for sortie in run.mission.sorties} == {"west", "east"}
+
+
+def test_service_wear_follows_customer_norms(runs: dict[str, PlanningRun]) -> None:
+    """Долг №44: износ по нормативам ТО (№50) — в плане информацией, без выдуманных чисел."""
+    assert service_share("geoscan-201", 3, 7200.0) == pytest.approx(3 / 80)
+    assert service_share("geoscan-801", 1, 8 * 3600.0) == pytest.approx(8 / 160)
+    assert service_share("geoscan-gemini", 5, 3600.0) is None
+    notes = [w for w in runs["medium"].mission.warnings if w.code == "plan.service_wear"]
+    assert len(notes) == 1
+    assert "Gemini норматива нет" in notes[0].message
 
 
 def test_unknown_allocator_is_refused(simple_scenario: Scenario, catalog: VehicleCatalog) -> None:

@@ -32,7 +32,13 @@ from core.allocate.greedy import (
     SortieBounds,
     build_greedy_allocation,
 )
-from core.allocate.objective import criterion_key, objective_value, resource_s, weighted_value
+from core.allocate.objective import (
+    criterion_key,
+    objective_value,
+    resource_s,
+    service_share,
+    weighted_value,
+)
 from core.allocate.search import improve_allocation
 from core.catalog import VehicleCatalog, load_catalog, user_vehicle_warnings
 from core.coverage.decompose import decompose
@@ -179,6 +185,50 @@ def _metrics(
     )
 
 
+def _service_note(sorties: list[Sortie], vehicles: dict[str, Vehicle]) -> PlanWarning | None:
+    """Износ по нормативам ТО заказчика (№50, долг №44): доля межсервисного интервала.
+
+    По каждой модели — самый нагруженный её борт. Модели без норматива
+    перечисляются отдельно: число не выдумывается.
+    """
+    flights: dict[tuple[str, int], int] = {}
+    flight_s: dict[tuple[str, int], float] = {}
+    for sortie in sorties:
+        key = (sortie.vehicle_id, sortie.vehicle_instance)
+        flights[key] = flights.get(key, 0) + 1
+        flight_s[key] = flight_s.get(key, 0.0) + sortie.duration_s
+    worst: dict[str, float] = {}
+    missing: set[str] = set()
+    for key, count in flights.items():
+        share = service_share(key[0], count, flight_s[key])
+        if share is None:
+            missing.add(key[0])
+        else:
+            worst[key[0]] = max(worst.get(key[0], 0.0), share)
+    if not worst:
+        return None
+    parts = [
+        f"{vehicles[model].name} — до {share * 100:.1f}% интервала на борт"
+        for model, share in sorted(worst.items())
+    ]
+    tail = (
+        f"; у {', '.join(sorted(vehicles[model].name for model in missing))} норматива нет"
+        if missing
+        else ""
+    )
+    return PlanWarning(
+        code="plan.service_wear",
+        severity=Severity.INFO,
+        stage=Stage.ALLOCATE,
+        message=(
+            "Износ по нормативам ТО (201, 401 — 80 полётов, 801 — 160 ч): "
+            + "; ".join(parts)
+            + tail
+        ),
+        context={model: f"{share:.4f}" for model, share in worst.items()},
+    )
+
+
 def _errors(warnings: list[PlanWarning]) -> list[PlanWarning]:
     return [warning for warning in warnings if warning.severity is Severity.ERROR]
 
@@ -277,6 +327,10 @@ class _Assembler:
             )
             mission_warnings.append(stub_warning())
             stages.append(Stage.ADVISE)
+        else:
+            wear = _service_note(sorties or [], self.vehicles)
+            if wear is not None:
+                mission_warnings.append(wear)
 
         area_center = self.work_area.area.centroid
         mission = Mission(
