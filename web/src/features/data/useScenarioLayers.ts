@@ -6,7 +6,7 @@ import { getScenarioLayers, type ScenarioLayers } from '../../api';
  * Документ собирает ядро (`GET /scenarios/{id}/layers`), фронт его только
  * рисует и прячет по видам.
  */
-export function useScenarioLayers(scenarioId: string) {
+export function useScenarioLayers(scenarioId: string, revision = 0) {
   const [layers, setLayers] = useState<ScenarioLayers | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -25,7 +25,7 @@ export function useScenarioLayers(scenarioId: string) {
     return () => {
       cancelled = true;
     };
-  }, [scenarioId]);
+  }, [scenarioId, revision]);
 
   return { layers, error };
 }

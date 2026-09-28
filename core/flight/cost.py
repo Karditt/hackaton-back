@@ -211,9 +211,15 @@ class _SortieBuilder:
         и перепад высоты за это время ровно тот, что даёт вертикальная
         скорость. Наклонные куски режутся по `SLOPE_LEG_STEP_M` высоты, и
         каждый проверяется `check` в своём диапазоне высот: маршрутизатор
-        прокладывал ломаную на эшелоне и не знает, что мешает ниже. Не хватает
-        длины на набор и снижение или кусок не прошёл проверку — участок не
-        строится, и вызывающий набирает высоту на месте, как раньше.
+        прокладывал ломаную на эшелоне и не знает, что мешает ниже. Кусок не
+        прошёл проверку — участок не строится, и вызывающий набирает высоту на
+        месте, как раньше.
+
+        Не хватает длины на весь набор и снижение (короткий переход между
+        островками) — недостающая часть набирается над точкой в начале, а если
+        не помещается и снижение — теряется над точкой в конце: самолёт
+        кружит, а не висит, и время перелёта — max(длина / скорость, время
+        вертикали), а не их сумма.
 
         Args:
             points: ломаная перелёта от текущего положения, метры.
@@ -222,17 +228,26 @@ class _SortieBuilder:
             end_alt_m: высота в конце ломаной, м AGL.
             check: свободен ли кусок ломаной в диапазоне высот.
         """
-        start_alt_m = self.altitude_m
         cum = [0.0]
         for a, b in zip(points, points[1:], strict=False):
             cum.append(cum[-1] + _distance_m(a, b))
         length_m = cum[-1]
-        climb_m = max(cruise_alt_m - start_alt_m, 0.0)
-        drop_m = max(cruise_alt_m - end_alt_m, 0.0)
-        climb_run_m = speed_mps * climb_m / assumptions.CLIMB_RATE_MPS
-        drop_run_m = speed_mps * drop_m / assumptions.DESCENT_RATE_MPS
-        if length_m <= 0.0 or climb_run_m + drop_run_m > length_m:
+        if length_m <= 0.0:
             return False
+        climb_m = max(cruise_alt_m - self.altitude_m, 0.0)
+        drop_m = max(cruise_alt_m - end_alt_m, 0.0)
+        climb_rate, drop_rate = assumptions.CLIMB_RATE_MPS, assumptions.DESCENT_RATE_MPS
+        # Сколько высоты набрать и потерять над точкой, чтобы остальное легло
+        # на длину ломаной.
+        excess_m = speed_mps * (climb_m / climb_rate + drop_m / drop_rate) - length_m
+        spiral_up_m = min(climb_m, max(excess_m, 0.0) * climb_rate / speed_mps)
+        excess_m -= spiral_up_m * speed_mps / climb_rate
+        spiral_down_m = min(drop_m, max(excess_m, 0.0) * drop_rate / speed_mps)
+        climb_m -= spiral_up_m
+        drop_m -= spiral_down_m
+        start_alt_m = self.altitude_m + spiral_up_m
+        climb_run_m = min(speed_mps * climb_m / climb_rate, length_m)
+        drop_run_m = min(speed_mps * drop_m / drop_rate, length_m - climb_run_m)
 
         # Куски: (от, до) по длине ломаной и высоты на концах.
         pieces: list[tuple[float, float, float, float]] = []
@@ -265,6 +280,7 @@ class _SortieBuilder:
             if a0 != a1 and not check(part, min(a0, a1), max(a0, a1)):
                 return False
 
+        self.vertical(start_alt_m)
         for part, s0, s1, a0, a1 in cut:
             span = s1 - s0
             walked = 0.0
@@ -312,7 +328,8 @@ class _SortieBuilder:
                 )
             )
         self.position = points[-1]
-        self.altitude_m = end_alt_m
+        self.altitude_m = end_alt_m + spiral_down_m
+        self.vertical(end_alt_m)
         return True
 
     def turn(self, end: MetricPoint, length_m: float, speed_mps: float, cell_id: str) -> None:
@@ -353,16 +370,115 @@ class _SortieBuilder:
         self.position = end
 
 
-def turn_length_m(vehicle: Vehicle, start: MetricPoint, end: MetricPoint) -> float:
+def loop_length_m(turn_radius_m: float, lateral_m: float, along_m: float = 0.0) -> float:
+    """Длина разворота самолёта на встречный курс, метры (долг №61).
+
+    Соседний галс — на `lateral_m` вбок, его начало — на `along_m` вдоль курса
+    от конца текущего. Шаг не меньше двух радиусов: четверть круга, прямая
+    `lateral − 2R`, четверть круга — πR + (d − 2R). Шаг меньше двух радиусов:
+    полуокружностью на соседний галс не попасть, нужна петля «омега» — отворот
+    от соседнего галса, дуга большого круга, отворот обратно:
+    R·(π + 4·arccos((2R + d) / 4R)); при d = 2R это та же полуокружность, при
+    d = 0 — разворот на ту же линию, 7πR/3. Выпуклость петли наружу — R − d/2,
+    её и держит зона манёвра (`core.coverage.strips._turn_zone`). Сдвиг вдоль
+    курса проходится по прямой — оценка сверху, а не снизу: план не
+    оптимистичнее самолёта.
+
+    Args:
+        turn_radius_m: радиус разворота, метры.
+        lateral_m: расстояние между галсами поперёк курса, метры.
+        along_m: сдвиг начала следующего галса вдоль курса, метры.
+
+    Returns:
+        Длина манёвра, метры.
+    """
+    radius = turn_radius_m
+    lateral = abs(lateral_m)
+    if lateral >= 2.0 * radius:
+        loop = math.pi * radius + lateral - 2.0 * radius
+    else:
+        loop = radius * (math.pi + 4.0 * math.acos((2.0 * radius + lateral) / (4.0 * radius)))
+    return loop + abs(along_m)
+
+
+def interlace_step(turn_radius_m: float, spacing_m: float) -> int:
+    """Через сколько галсов самолёту выгоднее переходить, чем на соседний.
+
+    Шаг галсов меньше двух радиусов разворота — на соседний галс только
+    петлёй «омега» (`loop_length_m`). Если облетать галсы вперемежку — сначала
+    каждый k-й в одну сторону, затем пропущенные на обратном пути, — переход
+    между ними шире двух радиусов и проходится полукругом с прямой вставкой:
+    πR + (k·d − 2R). Петля остаётся одна на смену серии.
+
+    Вперемежку самолёт выходит из подобласти у той же стороны, где вошёл, и
+    связка с соседней подобластью может стать длиннее. Поэтому облёт через
+    галс берётся, только если переход короче петли хотя бы на
+    `INTERLACE_MIN_GAIN` (на данных заказчика шаг 205 м при радиусе 128 м даёт
+    12% — и срок плана от облёта вперемежку рос на 6%).
+
+    Args:
+        turn_radius_m: радиус разворота, метры (0 — мультиротор).
+        spacing_m: шаг галсов, метры.
+
+    Returns:
+        k ≥ 1: 1 — обычная змейка по соседним галсам.
+    """
+    if turn_radius_m <= 0.0 or spacing_m <= 0.0 or spacing_m >= 2.0 * turn_radius_m:
+        return 1
+    step = math.ceil(2.0 * turn_radius_m / spacing_m)
+    wide = loop_length_m(turn_radius_m, step * spacing_m)
+    if wide <= (1.0 - assumptions.INTERLACE_MIN_GAIN) * loop_length_m(turn_radius_m, spacing_m):
+        return step
+    return 1
+
+
+def turn_length_m(
+    vehicle: Vehicle,
+    start: MetricPoint,
+    end: MetricPoint,
+    heading: tuple[float, float] | None = None,
+    next_heading: tuple[float, float] | None = None,
+) -> float:
     """Длина перехода между концом галса и началом следующего, метры.
 
-    Мультиротор переходит по прямой. Самолёт не может развернуться короче
-    полуокружности минимального радиуса.
+    Мультиротор переходит по прямой. Самолёт на встречный галс
+    разворачивается петлёй (`loop_length_m`); на следующий кусок того же галса
+    за отверстием (курс тот же) — летит по прямой. Без направления галса весь
+    промежуток считается боковым.
+
+    Args:
+        vehicle: борт.
+        start: конец галса, метры.
+        end: начало следующего галса, метры.
+        heading: единичный вектор курса на законченном галсе; None — неизвестен.
+        next_heading: единичный вектор курса на следующем галсе; None — встречный.
     """
     gap_m = _distance_m(start, end)
-    if vehicle.is_fixed_wing() and vehicle.turn_radius_m > 0.0:
-        return max(math.pi * vehicle.turn_radius_m, gap_m)
-    return gap_m
+    if not vehicle.is_fixed_wing() or vehicle.turn_radius_m <= 0.0:
+        return gap_m
+    if heading is None:
+        return loop_length_m(vehicle.turn_radius_m, gap_m)
+    dx, dy = end.x_m - start.x_m, end.y_m - start.y_m
+    along = dx * heading[0] + dy * heading[1]
+    lateral = abs(dx * heading[1] - dy * heading[0])
+    if next_heading is not None and heading[0] * next_heading[0] + heading[1] * next_heading[1] > 0:
+        # Курс тот же: следующий кусок того же галса впереди — по прямой;
+        # иначе (галс через пустую линию) — полный круг, оценка сверху.
+        if lateral <= assumptions.GEOMETRY_TOLERANCE_M and along >= 0.0:
+            return gap_m
+        return 2.0 * math.pi * vehicle.turn_radius_m + gap_m
+    return loop_length_m(vehicle.turn_radius_m, lateral, along)
+
+
+def strip_heading(strip: Strip, backward: bool = False) -> tuple[float, float] | None:
+    """Единичный вектор курса на галсе в порядке облёта; None — галс нулевой длины."""
+    start, end = strip.start(), strip.end()
+    if backward:
+        start, end = end, start
+    length = _distance_m(start, end)
+    if length <= 0.0:
+        return None
+    return ((end.x_m - start.x_m) / length, (end.y_m - start.y_m) / length)
 
 
 def _strip_points(strip: Strip, backward: bool) -> list[MetricPoint]:
@@ -566,7 +682,13 @@ def build_sortie(
                 if hop_area is None or hop.within(hop_area):
                     builder.turn(
                         target,
-                        turn_length_m(vehicle, builder.position, target),
+                        turn_length_m(
+                            vehicle,
+                            builder.position,
+                            target,
+                            strip_heading(strips[index - 1], reverse),
+                            strip_heading(strip, reverse),
+                        ),
                         params.transit_speed_mps,
                         cell.cell_id,
                     )
@@ -580,10 +702,12 @@ def build_sortie(
                         params.transit_speed_mps,
                         cell_id=cell.cell_id,
                     )
+            # Скорость — своя у галсов подобласти: поперёк ветра борт удержит
+            # больше, чем на любом курсе (`axis_survey_speed_mps`, долг №52).
             builder.polyline(
                 FlightPhase.STRIP,
                 points,
-                params.survey_speed_mps,
+                strip.speed_mps,
                 strip_id=strip.id,
                 cell_id=cell.cell_id,
             )
@@ -693,8 +817,11 @@ __all__ = [
     "cell_passes",
     "endurance_limit_s",
     "exceeds_range",
+    "interlace_step",
+    "loop_length_m",
     "pass_directions",
     "retime_sortie",
     "sortie_is_feasible",
+    "strip_heading",
     "turn_length_m",
 ]

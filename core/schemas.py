@@ -657,6 +657,15 @@ class Scenario(Model):
     turnaround_s: float | None = Field(
         default=None, ge=0, description="Межвылетная подготовка, секунды; None — допущение"
     )
+    min_sun_elevation_deg: float | None = Field(
+        default=None,
+        ge=0.0,
+        lt=90.0,
+        description=(
+            "Снимать только при высоте Солнца не ниже этой, градусы (норма — 25° на цветную, "
+            "20° на черно-белую). None — время суток не учитывается. Нужно время начала работ"
+        ),
+    )
     seed: int = Field(
         default=assumptions.DEFAULT_SEED,
         description="Зерно ГПСЧ: один сценарий + один seed = один план",
@@ -691,6 +700,11 @@ class Scenario(Model):
             # docs/customer_qa.md — рабочий файл команды.
             raise ValueError(
                 "Нужна хотя бы одна штатная площадка: резервные для работы не используются"
+            )
+        if self.min_sun_elevation_deg is not None and self.start_time is None:
+            raise ValueError(
+                "Ограничение по высоте Солнца требует время начала работ (start_time): "
+                "без даты и времени окна съёмки не посчитать"
             )
         total = sum(unit.count for unit in self.fleet)
         if total > assumptions.MAX_FLEET_VEHICLES:

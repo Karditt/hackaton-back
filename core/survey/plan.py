@@ -9,7 +9,9 @@
 постоянную путевую скорость, и она выбирается такой, чтобы борт удержал её на
 любом курсе — против ветра воздушная скорость не выше максимальной, по ветру
 у самолёта не ниже минимальной. Борт, для которого такой скорости нет,
-исключается с объяснением.
+исключается с объяснением. Когда направление галсов подобласти выбрано,
+скорость на них — своя (`axis_survey_speed_mps`): поперёк ветра борт удержит
+больше, и выбор направления это учитывает (№45, долг №52).
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ from __future__ import annotations
 import math
 
 from core import assumptions
+from core.flight.wind import wind_vector
 from core.schemas import (
     FleetUnit,
     Payload,
@@ -29,6 +32,7 @@ from core.schemas import (
     SurveyPlan,
     SurveyType,
     Vehicle,
+    Wind,
 )
 from core.survey.presets import resolve_overlaps
 
@@ -121,6 +125,81 @@ def ground_speed_band_mps(vehicle: Vehicle, wind_speed_mps: float) -> tuple[floa
     if vehicle.is_fixed_wing() and vehicle.min_speed_mps is not None:
         lower = vehicle.min_speed_mps + wind_speed_mps
     return lower, upper
+
+
+def _axis_airspeed_band(vehicle: Vehicle, wind: Wind, axis_deg: float) -> tuple[float, float]:
+    """Путевые скорости, которые борт удержит в обе стороны оси галсов.
+
+    Змейка проходит ось туда и обратно. Нужная воздушная скорость на курсе с
+    единичным вектором u при путевой g и ветре w (куда дует) — |g·u − w|;
+    в худшую из двух сторон это sqrt(g² + W² + 2·g·W·|cos φ|), в лучшую —
+    sqrt(g² + W² − 2·g·W·|cos φ|), где φ — угол между осью и ветром. Отсюда
+    верхняя граница g — корень первого выражения, равного максимальной
+    воздушной скорости, нижняя (у самолёта) — корень второго, равного
+    минимальной. Поперёк ветра (cos φ = 0) верхняя граница — sqrt(Vmax² − W²),
+    вдоль — Vmax − W, как в `ground_speed_band_mps`.
+
+    Args:
+        vehicle: борт.
+        wind: ветер, метеорологическая конвенция.
+        axis_deg: направление оси галсов, градусы от севера (любая из двух сторон).
+
+    Returns:
+        Пара «нижняя, верхняя» граница путевой скорости, м/с.
+    """
+    wind_x, wind_y = wind_vector(wind)
+    radians = math.radians(axis_deg)
+    along = abs(wind_x * math.sin(radians) + wind_y * math.cos(radians))
+    across_sq = max(wind.speed_mps**2 - along**2, 0.0)
+    airspeed_max = vehicle.max_speed_mps or vehicle.cruise_speed_mps
+    upper = -along + math.sqrt(max(airspeed_max**2 - across_sq, 0.0))
+    lower = 0.0
+    minimum = vehicle.min_speed_mps if vehicle.is_fixed_wing() else None
+    if minimum is not None and minimum**2 > across_sq:
+        lower = along + math.sqrt(minimum**2 - across_sq)
+    return lower, upper
+
+
+def _shot_speed_cap_mps(payload: Payload, gsd_m: float, forward_overlap: float) -> float | None:
+    """Предел путевой скорости по интервалу съёмки камеры, м/с; None — не ограничена."""
+    if not payload.min_shot_interval_s or not payload.image_height_px:
+        return None
+    base_m = payload.image_height_px * gsd_m * (1.0 - forward_overlap)
+    return base_m / payload.min_shot_interval_s
+
+
+def axis_survey_speed_mps(
+    vehicle: Vehicle, params: SurveyParams, wind: Wind, axis_deg: float
+) -> float:
+    """Путевая скорость на галсах данного направления (№45, долг №52).
+
+    `SurveyParams.survey_speed_mps` рассчитана на любой курс. Когда
+    направление галсов известно, борт удержит больше: поперёк ветра нужная
+    воздушная скорость меньше, чем против него (`_axis_airspeed_band`).
+    Правило выбора то же, что у скорости на любой курс: крейсерская, если
+    удерживается, иначе ближайшая удерживаемая, и не быстрее интервала съёмки.
+    Диапазон оси шире диапазона «на любой курс», поэтому скорость всегда
+    найдётся.
+
+    Args:
+        vehicle: борт.
+        params: параметры съёмки борта (GSD, перекрытие, скорость на любой курс).
+        wind: ветер, метеорологическая конвенция.
+        axis_deg: направление галсов, градусы от севера.
+
+    Returns:
+        Путевая скорость на галсе, м/с.
+    """
+    lower, upper = _axis_airspeed_band(vehicle, wind, axis_deg)
+    payload = vehicle.payload(params.payload_id)
+    cap = upper
+    if payload is not None:
+        shot_cap = _shot_speed_cap_mps(payload, params.gsd_m, params.forward_overlap)
+        if shot_cap is not None:
+            cap = min(cap, shot_cap)
+    if cap <= 0.0 or cap < lower:
+        return params.survey_speed_mps
+    return min(max(vehicle.cruise_speed_mps, lower), cap)
 
 
 def _select_payload(
@@ -281,9 +360,9 @@ def _params_for(
     lower_mps, upper_mps = ground_speed_band_mps(vehicle, wind_mps)
     survey_cap_mps = upper_mps
     shot_interval_s: float | None = None
-    if payload.min_shot_interval_s and payload.image_height_px:
-        base_m = payload.image_height_px * gsd_m * (1.0 - forward_overlap)
-        survey_cap_mps = min(survey_cap_mps, base_m / payload.min_shot_interval_s)
+    shot_cap_mps = _shot_speed_cap_mps(payload, gsd_m, forward_overlap)
+    if shot_cap_mps is not None:
+        survey_cap_mps = min(survey_cap_mps, shot_cap_mps)
 
     if survey_cap_mps <= 0.0 or survey_cap_mps < lower_mps:
         return None, [
@@ -301,20 +380,6 @@ def _params_for(
 
     survey_mps = min(max(vehicle.cruise_speed_mps, lower_mps), survey_cap_mps)
     transit_mps = min(max(vehicle.cruise_speed_mps, lower_mps), upper_mps)
-    if survey_mps < vehicle.cruise_speed_mps:
-        warnings.append(
-            PlanWarning(
-                code="survey.speed_reduced",
-                severity=Severity.INFO,
-                stage=Stage.SURVEY,
-                message=(
-                    f"{vehicle.name}: путевая скорость на галсе {survey_mps:.1f} м/с вместо "
-                    f"крейсерской {vehicle.cruise_speed_mps:.1f} м/с — иначе против ветра "
-                    f"{wind_mps:.1f} м/с не хватит воздушной скорости или интервала съёмки"
-                ),
-                context={"vehicle_id": vehicle.id},
-            )
-        )
     if payload.image_height_px:
         shot_interval_s = payload.image_height_px * gsd_m * (1.0 - forward_overlap) / survey_mps
 
@@ -332,6 +397,25 @@ def _params_for(
         side_overlap=side_overlap,
         shot_interval_s=shot_interval_s,
     )
+    if survey_mps < vehicle.cruise_speed_mps:
+        across_mps = axis_survey_speed_mps(
+            vehicle, params, scenario.wind, scenario.wind.direction_deg + 90.0
+        )
+        warnings.append(
+            PlanWarning(
+                code="survey.speed_reduced",
+                severity=Severity.INFO,
+                stage=Stage.SURVEY,
+                message=(
+                    f"{vehicle.name}: путевая скорость на галсах вдоль ветра {survey_mps:.1f} м/с "
+                    f"вместо крейсерской {vehicle.cruise_speed_mps:.1f} м/с — иначе против ветра "
+                    f"{wind_mps:.1f} м/с не хватит воздушной скорости или интервала съёмки. На "
+                    f"галсах поперёк ветра — {across_mps:.1f} м/с: направление галсов "
+                    "выбирается с учётом этого"
+                ),
+                context={"vehicle_id": vehicle.id},
+            )
+        )
     return params, warnings
 
 

@@ -32,16 +32,18 @@ def demo_greedy(
 ) -> tuple[PlanningRun, list[tuple[tuple[str, int], tuple[str, ...], float]]]:
     """Демо: эвристика без поиска и старты, с которыми она ставила вылеты в расписание.
 
-    Конвейер пробует несколько стратегий эвристики, у каждой своя книга
-    расписания; возвращаются постановки той, чей план взят.
+    Конвейер пробует несколько стратегий эвристики и целевых сроков, у каждого
+    прогона своя книга расписания; возвращаются постановки той, чей план взят.
+    Книги различаются самими объектами, а не `id()`: освобождённую книгу
+    сборщик мусора отдаёт, и её `id` достаётся следующей.
     """
-    commits: dict[int, list[tuple[tuple[str, int], tuple[str, ...], float]]] = {}
+    commits: dict[BookPlacer, list[tuple[tuple[str, int], tuple[str, ...], float]]] = {}
     original = BookPlacer.commit
 
     def spy(
         self: BookPlacer, instance: FleetInstance, site_id: str, cell_ids: list[str], start_s: float
     ) -> None:
-        commits.setdefault(id(self), []).append((instance.key, tuple(cell_ids), start_s))
+        commits.setdefault(self, []).append((instance.key, tuple(cell_ids), start_s))
         original(self, instance, site_id, cell_ids, start_s)
 
     with pytest.MonkeyPatch.context() as patch:
@@ -134,16 +136,18 @@ def test_local_search_improves_on_the_heuristic(
     На 2026-09-27: 4,12 ч → 3,81 ч. С 2026-09-28 эвристика сама разводит борта
     по зонам и переставляет подобласти вылета, и на демо ей остаётся мало
     хвоста: срок 3,43 → 3,42 ч, зато поиск растворяет короткие вылеты — налёт
-    −15%. Критерий режима «минимум срока» — срок, при равенстве — ресурс
-    (`core.allocate.search`); порог с запасом ловит поиск, который перестал
-    принимать ходы, а не колебания в процентах.
+    −15%. С 2026-09-29 эвристика ещё и прогоняется под целевые сроки, и поиску
+    на демо остаётся совсем мало: срок тот же, 2,84 ч, ресурс −2,5%. Критерий
+    режима «минимум срока» — срок, при равенстве — ресурс
+    (`core.allocate.search`); порог ловит поиск, который перестал принимать
+    ходы, а не колебания в процентах.
     """
     default, _ = demo_pair
     greedy, _ = demo_greedy
     fast, slow = default.mission.metrics, greedy.mission.metrics
     assert fast and slow
     assert fast.makespan_s <= slow.makespan_s + 1.0
-    assert fast.makespan_s < 0.97 * slow.makespan_s or fast.resource_s < 0.95 * slow.resource_s
+    assert fast.makespan_s < slow.makespan_s - 60.0 or fast.resource_s < 0.99 * slow.resource_s
 
 
 def test_local_search_is_deterministic(catalog: VehicleCatalog) -> None:

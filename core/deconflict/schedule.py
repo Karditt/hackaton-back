@@ -103,6 +103,41 @@ def _zone_shift(start_s: float, windows: list[_ZoneWindow]) -> float:
     return shift
 
 
+def _survey_span(sortie: Sortie) -> tuple[float, float] | None:
+    """Съёмка вылета — от начала первого галса до конца последнего, секунды от взлёта."""
+    strips = [leg for leg in sortie.legs if leg.phase is FlightPhase.STRIP]
+    if not strips:
+        return None
+    base = sortie.start_time_s
+    return strips[0].waypoints[0].time_s - base, strips[-1].waypoints[-1].time_s - base
+
+
+def daylight_shift(
+    start_s: float, span: tuple[float, float] | None, windows: list[tuple[float, float]] | None
+) -> float:
+    """На сколько сдвинуть старт, чтобы съёмка легла в окно по Солнцу, секунды (долг №55).
+
+    Съёмка вылета — от первого галса до последнего — должна целиком лечь в
+    одно окно; перелёты, взлёт и посадка — в любое время.
+
+    Args:
+        start_s: взлёт, секунды от начала работ.
+        span: съёмка от взлёта, секунды (`_survey_span`); None — галсов нет.
+        windows: окна по порядку, секунды от начала работ; None — ограничения нет.
+
+    Returns:
+        Сдвиг, секунды: 0 — ложится как есть, ∞ — не ложится ни в одно окно.
+    """
+    if windows is None or span is None:
+        return 0.0
+    begin, end = start_s + span[0], start_s + span[1]
+    for window_from, window_to in windows:
+        shift = max(window_from - begin, 0.0)
+        if end + shift <= window_to:
+            return shift
+    return math.inf
+
+
 @dataclass(frozen=True)
 class PreparedSortie:
     """Вылет, готовый к постановке: траектория и занятые им зоны от момента взлёта."""
@@ -111,6 +146,8 @@ class PreparedSortie:
     track: Track
     maneuvers: list[ManeuverWindow]
     zone_windows: list[_ZoneWindow]
+    survey_span: tuple[float, float] | None = None
+    """Съёмка — от первого галса до последнего, секунды от взлёта."""
 
 
 def _conflict_times(candidate: Track, other: Track) -> np.ndarray:
@@ -136,13 +173,18 @@ class ScheduleBook:
     мере сборки и видит сдвиг старта, который вылет получит (долг №54).
     """
 
-    def __init__(self, zones: list[ZoneArea]) -> None:
+    def __init__(
+        self, zones: list[ZoneArea], daylight: list[tuple[float, float]] | None = None
+    ) -> None:
         """Пустая книга.
 
         Args:
             zones: запретные зоны рабочей области; временные из них сдвигают старт.
+            daylight: окна съёмки по высоте Солнца, секунды от начала работ
+                (`WorkArea.daylight`); None — ограничения нет.
         """
         self._zones = zones
+        self._daylight = daylight
         self._tracks: list[Track] = []
         self._maneuvers: list[ManeuverWindow] = []
         self._sizes: list[int] = []
@@ -163,6 +205,7 @@ class ScheduleBook:
             track=build_track(sortie, is_fixed_wing),
             maneuvers=maneuver_windows(sortie, coverage, is_fixed_wing),
             zone_windows=_temporal_crossings(sortie, self._zones, coverage),
+            survey_span=_survey_span(sortie),
         )
 
     def _clear(self, prepared: PreparedSortie, start_s: float) -> bool:
@@ -179,7 +222,9 @@ class ScheduleBook:
         """Самый ранний старт без сближений и без временных зон в их окне, секунды.
 
         Старт сдвигается от `ready_s` шагом `SCHEDULE_SHIFT_STEP_S`, через
-        временную зону — сразу до её закрытия.
+        временную зону — сразу до её закрытия, через ночь (съёмка не ложится
+        в окно по Солнцу) — сразу к следующему окну. Ночь в предел сдвига
+        `SCHEDULE_MAX_DELAY_S` не входит: это не ожидание соседа.
 
         Args:
             prepared: вылет.
@@ -189,7 +234,15 @@ class ScheduleBook:
             Момент взлёта, секунды; None — за `SCHEDULE_MAX_DELAY_S` окна нет.
         """
         start_s = ready_s
-        while start_s - ready_s <= assumptions.SCHEDULE_MAX_DELAY_S:
+        night_s = 0.0
+        while start_s - ready_s - night_s <= assumptions.SCHEDULE_MAX_DELAY_S:
+            dark = daylight_shift(start_s, prepared.survey_span, self._daylight)
+            if dark > 0.0:
+                if math.isinf(dark):
+                    return None
+                start_s += dark
+                night_s += dark
+                continue
             shift = _zone_shift(start_s, prepared.zone_windows)
             if shift > 0.0:
                 if math.isinf(shift):
@@ -276,6 +329,43 @@ class ScheduleBook:
             ]
         )
 
+    def daylight_room(self, ready_s: float) -> list[float] | None:
+        """Сколько времени дают окна по Солнцу, начиная с `ready_s`, секунды.
+
+        Returns:
+            Остаток текущего окна (или всё следующее, если сейчас ночь) и
+            длины следующих окон по порядку; пусто — окон больше нет; None —
+            ограничения по Солнцу нет.
+        """
+        if self._daylight is None:
+            return None
+        return [
+            window_to - max(window_from, ready_s)
+            for window_from, window_to in self._daylight
+            if window_to > ready_s
+        ]
+
+    def closing_zones(self, altitude_m: float) -> list[tuple[float, BaseGeometry]]:
+        """Временные зоны с моментом открытия, запрещающие высоту, метры.
+
+        Зона, которая откроется позже, закроет подобласти под собой до своего
+        закрытия: их выгодно снять раньше (распределение, «срочная» работа).
+
+        Args:
+            altitude_m: высота съёмки, м AGL.
+
+        Returns:
+            Пары «момент открытия, секунды от начала работ; полигон зоны».
+            Зоны, действующие с начала работ (открытый интервал), не входят.
+        """
+        return [
+            (zone.active_from_s, zone.inner)
+            for zone in self._zones
+            if not zone.permanent
+            and not math.isinf(zone.active_from_s)
+            and zone.blocks_altitude(altitude_m, altitude_m)
+        ]
+
     def add(self, prepared: PreparedSortie, start_s: float) -> None:
         """Поставить вылет со взлётом в `start_s` секунд от начала работ."""
         self._tracks.append(prepared.track.shifted(start_s))
@@ -330,7 +420,7 @@ def build_schedule(
         else sorted(range(len(sorties)), key=lambda index: (sorties[index].trip_index, index))
     )
     ready_at: dict[tuple[str, int], float] = {}
-    book = ScheduleBook(work_area.zones)
+    book = ScheduleBook(work_area.zones, work_area.daylight)
     placed: dict[int, Sortie] = {}
     entries: list[ScheduleEntry] = []
     warnings: list[PlanWarning] = []
@@ -354,6 +444,11 @@ def build_schedule(
                         f"Вылет {sortie.id}: за {assumptions.SCHEDULE_MAX_DELAY_S / 3600:.0f} ч "
                         "сдвигов старта не нашлось окна без сближений с другими бортами (включая "
                         "зоны манёвра) и без временных запретных зон"
+                        + (
+                            ", со съёмкой внутри окна по высоте Солнца"
+                            if work_area.daylight is not None
+                            else ""
+                        )
                     ),
                     context={"sortie_id": sortie.id, "vehicle_id": sortie.vehicle_id},
                 )

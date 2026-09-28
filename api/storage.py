@@ -92,6 +92,14 @@ class ScenarioStore:
             if scenario is not None:
                 self._cache[scenario.id] = scenario
 
+    def path_of(self, scenario_id: str) -> Path:
+        """Файл сценария в хранилище (может ещё не существовать)."""
+        return self.directory / f"{scenario_id}.json"
+
+    def uploads_of(self, scenario_id: str) -> Path:
+        """Каталог загруженных исходных файлов сценария: слои KML, параметры, отчёт."""
+        return self.directory / "uploads" / scenario_id
+
     def save(self, scenario: Scenario) -> Scenario:
         """Сохранить сценарий, перезаписав одноимённый.
 
@@ -102,7 +110,7 @@ class ScenarioStore:
             Сохранённый сценарий.
         """
         self._cache[scenario.id] = scenario
-        path = self.directory / f"{scenario.id}.json"
+        path = self.path_of(scenario.id)
         path.write_text(scenario.model_dump_json(indent=2), encoding="utf-8")
         self.rejected.pop(f"{path.parent.name}/{path.name}", None)
         return scenario

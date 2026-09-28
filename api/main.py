@@ -71,6 +71,10 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     sources.update(load_sources())
     for item in sources.values():
         store.seed_file(item.scenario)
+    # Сценарии, собранные из загруженных файлов в прошлых запусках.
+    for scenario_id in store.list_ids():
+        if scenario_id not in sources:
+            _register_uploads(scenario_id)
     yield
 
 
@@ -245,17 +249,20 @@ async def import_scenario(
     if not isinstance(payload, dict):
         raise HTTPException(status_code=422, detail="Параметры задания — объект JSON")
 
-    async def _text(upload: UploadFile | None) -> str | None:
-        if upload is None:
-            return None
-        raw = await upload.read()
-        return raw.decode("utf-8-sig", errors="replace")
+    raw = {
+        "area": await area.read(),
+        "zones": await zones.read() if zones is not None else None,
+        "obstacles": await obstacles.read() if obstacles is not None else None,
+    }
+
+    def _text(content: bytes | None) -> str | None:
+        return None if content is None else content.decode("utf-8-sig", errors="replace")
 
     try:
         layers = import_layers(
-            area_source=await _text(area) or "",
-            zones_source=await _text(zones),
-            obstacles_source=await _text(obstacles),
+            area_source=_text(raw["area"]) or "",
+            zones_source=_text(raw["zones"]),
+            obstacles_source=_text(raw["obstacles"]),
             terrain_min_m=terrain_min_m,
             terrain_max_m=terrain_max_m,
         )
@@ -274,7 +281,57 @@ async def import_scenario(
         raise HTTPException(status_code=422, detail=str(error)) from error
 
     saved = store.save(scenario)
+    _keep_uploads(saved.id, {**raw, "params": params.encode("utf-8")}, layers.report)
     return {"id": saved.id, "name": saved.name, "report": layers.report.model_dump(mode="json")}
+
+
+#: Имена загруженных исходных файлов в каталоге сценария хранилища.
+_UPLOAD_NAMES = {
+    "area": "area.kml",
+    "zones": "zones.kml",
+    "obstacles": "obstacles.kml",
+    "params": "params.json",
+}
+_UPLOAD_REPORT = "import_report.json"
+
+
+def _keep_uploads(
+    scenario_id: str, contents: dict[str, bytes | None], report: ImportReport
+) -> None:
+    """Сохранить загруженные файлы рядом со сценарием и показать их как его исходники.
+
+    Файлы пишутся байт в байт, как пришли. Тогда менеджер данных веба видит у
+    собранного сценария те же файлы, что и у сценариев манифеста: ссылки на
+    скачивание и итог импорта по слою.
+    """
+    folder = store.uploads_of(scenario_id)
+    folder.mkdir(parents=True, exist_ok=True)
+    for stale in folder.iterdir():
+        stale.unlink()
+    for kind, content in contents.items():
+        if content:
+            (folder / _UPLOAD_NAMES[kind]).write_bytes(content)
+    (folder / _UPLOAD_REPORT).write_text(report.model_dump_json(indent=2), encoding="utf-8")
+    _register_uploads(scenario_id)
+
+
+def _register_uploads(scenario_id: str) -> bool:
+    """Сделать загруженные файлы сценария его исходниками; False — их нет."""
+    folder = store.uploads_of(scenario_id)
+    files = {
+        kind: folder / name for kind, name in _UPLOAD_NAMES.items() if (folder / name).is_file()
+    }
+    if "area" not in files:
+        return False
+    report = folder / _UPLOAD_REPORT
+    sources[scenario_id] = ScenarioSources(
+        scenario_id=scenario_id,
+        scenario=store.path_of(scenario_id),
+        files=files,
+        report=report if report.is_file() else None,
+    )
+    _reports.pop(scenario_id, None)
+    return True
 
 
 @app.get("/scenarios/{scenario_id}", tags=["сценарии"])

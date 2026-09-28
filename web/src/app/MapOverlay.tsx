@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { BoardSummary, ScenarioFiles, ScenarioLayers } from '../api';
-import { FileManager, type DataKindId, type UploadedFile } from '../features/data';
+import { FileManager, type Uploads } from '../features/data';
 import { MapControls } from '../features/map/MapControls';
 import { LAYER_GROUPS, type MapFilter } from '../features/map/layers';
 import { Notice } from '../shared/ui/Notice';
@@ -13,9 +13,7 @@ type Props = {
   layersError: string | null;
   filter: MapFilter;
   onFilterChange: (filter: MapFilter) => void;
-  uploads: UploadedFile[];
-  onUpload: (kind: DataKindId, files: FileList | null) => void;
-  onRemoveUpload: (id: string) => void;
+  uploads: Uploads;
   /** Борта рассчитанного плана; null — плана нет. */
   boards: BoardSummary[] | null;
 };
@@ -97,8 +95,6 @@ export function MapOverlay(props: Props) {
           filter={props.filter}
           onFilterChange={props.onFilterChange}
           uploads={props.uploads}
-          onUpload={props.onUpload}
-          onRemove={props.onRemoveUpload}
         />
       </section>
 

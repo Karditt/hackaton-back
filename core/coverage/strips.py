@@ -3,18 +3,20 @@
 Геометрия: метры, обрезка по подобласти, змейка, шаг — свой у каждого борта
 (№27). Направление галсов выбирается на подобласть и борт (E3, как у
 GeoScan Planner — docs/planner_reference.md §4): `candidate_azimuths` даёт
-кандидатов в порядке числа разворотов, покрытие (`CoverageOracle`) берёт
+кандидатов в порядке времени съёмки, покрытие (`CoverageOracle`) берёт
 первого, при котором зона манёвра самолёта не задевает запрещённого.
 
-Ветер в выбор направления не входит: путевая скорость на галсе рассчитана так,
-что удерживается на любом курсе (E2), и время от направления не зависит
-(№45). Выгода галсов поперёк ветра — более высокая путевая скорость — требует
-скорости по курсу, это долг №52.
+Ветер входит в выбор направления (№45, долг №52): скорость на галсах своя у
+каждого направления — поперёк ветра борт удержит больше, чем вдоль
+(`core.survey.plan.axis_survey_speed_mps`), — и направление с лишним галсом,
+но поперёк ветра, может оказаться быстрее. Без ветра порядок — по числу
+разворотов.
 """
 
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 
 import numpy as np
 from shapely.geometry import LineString, MultiLineString, MultiPolygon, Point, Polygon
@@ -28,6 +30,9 @@ from core.schemas import MetricLineString, MetricPoint, MetricPolygon, Strip, Su
 #: Запас, на который линия-резак выпускается за габариты подобласти, метры:
 #: резак ровно по крайним вершинам касался бы контура, а не пересекал его.
 _CUT_MARGIN_M = 10.0
+
+#: Путевая скорость на галсах направления: азимут, градусы → м/с.
+AxisSpeed = Callable[[float], float]
 
 
 def azimuth_from_vector(dx: float, dy: float) -> float:
@@ -75,7 +80,12 @@ def _width_across(hull: np.ndarray, azimuth_deg: float) -> float:
     return float(projection.max() - projection.min())
 
 
-def candidate_azimuths(cell: Polygon, spacing_m: float) -> list[float]:
+def candidate_azimuths(
+    cell: Polygon,
+    spacing_m: float,
+    axis_speed: AxisSpeed | None = None,
+    turn_s: float = 0.0,
+) -> list[float]:
     """Кандидаты направления галсов подобласти, лучшие — первыми.
 
     Кандидаты: длинная сторона описанного прямоугольника, направления рёбер
@@ -86,13 +96,22 @@ def candidate_azimuths(cell: Polygon, spacing_m: float) -> list[float]:
     направления почти не зависит (площадь, делённая на шаг), а каждый лишний
     галс — лишний разворот.
 
+    С ветром (`axis_speed`) порядок — по времени съёмки: длина галсов на
+    скорость, которую борт удержит в обе стороны этого направления, плюс
+    развороты (№45, долг №52). Поперёк ветра скорость выше, и направление с
+    лишним галсом может оказаться быстрее. При одинаковой скорости на всех
+    направлениях порядок тот же, что по числу галсов.
+
     Args:
         cell: полигон подобласти, метры.
         spacing_m: шаг галсов борта, метры.
+        axis_speed: путевая скорость на галсах направления, м/с; None — не
+            зависит от направления.
+        turn_s: время перехода на соседний галс, секунды.
 
     Returns:
-        Азимуты, градусы 0..180, без повторов; при равном числе галсов —
-        в порядке перечисления выше.
+        Азимуты, градусы 0..180, без повторов; при равном числе галсов (и
+        равном времени) — в порядке перечисления выше.
     """
     candidates = [dominant_azimuth_deg(cell)]
     coords = np.asarray(cell.exterior.coords)
@@ -109,7 +128,15 @@ def candidate_azimuths(cell: Polygon, spacing_m: float) -> list[float]:
     hull = np.asarray(cell.convex_hull.exterior.coords)
     spacing = max(spacing_m, assumptions.GEOMETRY_TOLERANCE_M)
     strips = [math.ceil(_width_across(hull, azimuth) / spacing) for azimuth in unique]
-    order = sorted(range(len(unique)), key=lambda index: strips[index])
+    if axis_speed is None:
+        order = sorted(range(len(unique)), key=lambda index: strips[index])
+    else:
+        survey_m = cell.area / spacing
+        times = [
+            survey_m / axis_speed(azimuth) + max(count - 1, 0) * turn_s
+            for azimuth, count in zip(unique, strips, strict=True)
+        ]
+        order = sorted(range(len(unique)), key=lambda index: times[index])
     return [unique[index] for index in order]
 
 
@@ -129,6 +156,8 @@ def cover_cell(
     cell: Polygon,
     params: SurveyParams,
     azimuth_deg: float,
+    speed_mps: float | None = None,
+    interlace: int = 1,
 ) -> list[Strip]:
     """Покрыть подобласть галсами одного борта.
 
@@ -142,10 +171,16 @@ def cover_cell(
         cell: полигон подобласти, метры.
         params: параметры съёмки борта: шаг, высота, путевая скорость.
         azimuth_deg: направление галсов, градусы.
+        speed_mps: путевая скорость на галсах этого направления, м/с; None —
+            скорость на любой курс из `params`.
+        interlace: облёт через столько линий (`core.flight.cost.interlace_step`):
+            самолёту с шагом меньше двух радиусов разворота так короче. 1 —
+            змейка по соседним линиям.
 
     Returns:
-        Галсы змейкой в порядке облёта.
+        Галсы в порядке облёта, направление чередуется.
     """
+    strip_speed_mps = speed_mps if speed_mps is not None else params.survey_speed_mps
     # Оси галсов: вдоль — направление азимута, поперёк — влево от него.
     # Поворачиваются линии-резаки, а не подобласть: повёрнутый полигон с узким
     # выступом из-за округления становится самопересекающимся, и пересечение
@@ -174,8 +209,7 @@ def cover_cell(
     if not offsets:
         offsets.append((min_y + max_y) / 2.0)
 
-    strips: list[Strip] = []
-    forward = True
+    lines: list[tuple[int, list[tuple[float, list[tuple[float, ...]], float]]]] = []
     for index, offset_y in enumerate(offsets):
         cutter = LineString(
             [point(min_x - _CUT_MARGIN_M, offset_y), point(max_x + _CUT_MARGIN_M, offset_y)]
@@ -186,6 +220,25 @@ def cover_cell(
             if position(coords[-1]) < position(coords[0]):
                 coords.reverse()
             pieces.append((position(coords[0]), coords, piece.length))
+        lines.append((index, pieces))
+    if interlace > 1:
+        # Вперемежку (`interlace_step`): серии через `interlace` галсов, чётные
+        # серии — вперёд по линиям, нечётные — обратно. Пустые линии не в счёт:
+        # направление чередуется по порядку облёта.
+        filled = [line for line in lines if line[1]]
+        lines = [
+            filled[position_index]
+            for series in range(interlace)
+            for position_index in (
+                range(series, len(filled), interlace)
+                if series % 2 == 0
+                else reversed(range(series, len(filled), interlace))
+            )
+        ]
+
+    strips: list[Strip] = []
+    forward = True
+    for index, pieces in lines:
         pieces.sort(key=lambda item: item[0], reverse=not forward)
         for piece_index, (_start, coords, length_m) in enumerate(pieces):
             if length_m <= assumptions.GEOMETRY_TOLERANCE_M:
@@ -203,7 +256,7 @@ def cover_cell(
                     line=MetricLineString(points=[MetricPoint(x_m=x, y_m=y) for x, y in coords]),
                     length_m=length_m,
                     altitude_agl_m=params.altitude_agl_m,
-                    speed_mps=params.survey_speed_mps,
+                    speed_mps=strip_speed_mps,
                     azimuth_deg=heading,
                 )
             )

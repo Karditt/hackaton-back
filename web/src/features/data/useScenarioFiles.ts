@@ -5,7 +5,7 @@ import { getScenarioFiles, type ScenarioFiles } from '../../api';
  * Исходные файлы выбранного сценария (E10): из каких KML и JSON он собран и
  * что с ними сделал импорт. Отчёт импорта считает ядро, фронт его показывает.
  */
-export function useScenarioFiles(scenarioId: string) {
+export function useScenarioFiles(scenarioId: string, revision = 0) {
   const [files, setFiles] = useState<ScenarioFiles | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -24,7 +24,7 @@ export function useScenarioFiles(scenarioId: string) {
     return () => {
       cancelled = true;
     };
-  }, [scenarioId]);
+  }, [scenarioId, revision]);
 
   return { files, error };
 }

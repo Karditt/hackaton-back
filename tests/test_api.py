@@ -136,6 +136,18 @@ def test_layers_are_imported_into_a_scenario(client) -> None:
     assert len(stored["area"]["polygons"]) == 549
     assert len(stored["obstacles"]) == 547
 
+    # Долг №49: загруженные файлы — исходники сценария, как у сценариев манифеста:
+    # менеджер данных веба показывает их со ссылкой и итогом импорта по слою.
+    files = client.get("/scenarios/imported/files").json()
+    assert files["source_id"] == "imported"
+    kinds = {item["kind"]: item for item in files["files"]}
+    assert set(kinds) == {"area", "zones", "obstacles", "params", "scenario"}
+    assert kinds["area"]["stats"]["kept"] == 549
+    assert kinds["obstacles"]["stats"]["skipped"] == 4615
+    download = client.get("/scenarios/imported/files/area")
+    assert download.status_code == 200
+    assert download.content == _import_files()["area"][1]
+
 
 def test_import_without_params_is_422(client) -> None:
     """Параметры задания — не JSON: отказ на приёме, а не сбой при разборе слоёв."""

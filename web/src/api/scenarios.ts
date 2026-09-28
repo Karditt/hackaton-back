@@ -1,5 +1,6 @@
 import { API_BASE, request } from './http';
 import type {
+  ImportedScenario,
   RejectedScenario,
   Scenario,
   ScenarioFile,
@@ -40,6 +41,45 @@ export async function getScenarioFiles(scenarioId: string): Promise<ScenarioFile
 /** Ссылка на исходный файл сценария: скачивание — задача браузера. */
 export function scenarioFileUrl(scenarioId: string, kind: ScenarioFile['kind']): string {
   return `${API_BASE}/scenarios/${encodeURIComponent(scenarioId)}/files/${kind}`;
+}
+
+/**
+ * Исходный файл сценария содержимым — чтобы собрать новый сценарий, заменив в
+ * нём один слой (E10). null — такого файла у сценария нет.
+ */
+export async function fetchScenarioFile(
+  scenarioId: string,
+  kind: ScenarioFile['kind'],
+): Promise<Blob | null> {
+  const response = await fetch(scenarioFileUrl(scenarioId, kind));
+  if (response.status === 404) return null;
+  if (!response.ok) {
+    throw new Error(`Файл ${kind} сценария «${scenarioId}» не получен: ${response.status}`);
+  }
+  return response.blob();
+}
+
+/** Файлы для сборки сценария: три слоя KML и параметры задания JSON-текстом. */
+export type ImportFiles = {
+  area: Blob;
+  areaName: string;
+  zones: { file: Blob; name: string } | null;
+  obstacles: { file: Blob; name: string } | null;
+  params: string;
+};
+
+/**
+ * Собрать сценарий из слоёв KML и параметров задания — `POST /scenarios/import`
+ * (E9, E10). Читает слои ядро (`core/geo/kml_import.py`); ответ — сохранённый
+ * сценарий и отчёт импорта по слоям. Отказ — 422 с причиной.
+ */
+export async function importScenario(files: ImportFiles): Promise<ImportedScenario> {
+  const form = new FormData();
+  form.append('params', files.params);
+  form.append('area', files.area, files.areaName);
+  if (files.zones) form.append('zones', files.zones.file, files.zones.name);
+  if (files.obstacles) form.append('obstacles', files.obstacles.file, files.obstacles.name);
+  return request<ImportedScenario>('/scenarios/import', { method: 'POST', body: form });
 }
 
 /**

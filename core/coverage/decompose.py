@@ -31,9 +31,9 @@ from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 
 from core import assumptions
-from core.coverage.oracle import fit_strips, maneuver_hazard
+from core.coverage.oracle import fit_strips, maneuver_hazard, strip_interlace
 from core.coverage.strips import candidate_azimuths, cover_cell, dominant_azimuth_deg
-from core.flight.cost import endurance_limit_s, turn_length_m
+from core.flight.cost import endurance_limit_s, strip_heading, turn_length_m
 from core.geo.mask import WorkArea
 from core.geo.project import polygon_from_shapely, polygons_of
 from core.schemas import (
@@ -336,9 +336,11 @@ def _single_sortie_s(
     считаются — окончательно решает распределение.
     """
     azimuth = candidate_azimuths(piece, params.strip_spacing_m)[0]
-    strips = cover_cell("probe", piece, params, azimuth)
+    strips = cover_cell("probe", piece, params, azimuth, interlace=strip_interlace(params, vehicle))
     turns_m = sum(
-        turn_length_m(vehicle, before.end(), after.start())
+        turn_length_m(
+            vehicle, before.end(), after.start(), strip_heading(before), strip_heading(after)
+        )
         for before, after in zip(strips, strips[1:], strict=False)
     )
     return (

@@ -266,7 +266,9 @@ class _Session:
             }
         )
         started = time.perf_counter()
-        plan = run_pipeline(scenario, catalog=self.catalog, seed=self.seed)
+        # Подсказка считает десятки планов: эвристика — без целевых сроков
+        # (`ALLOCATE_TARGET_FACTORS`), иначе каждый прогон вдвое дольше.
+        plan = run_pipeline(scenario, catalog=self.catalog, seed=self.seed, targets=False)
         elapsed_s = time.perf_counter() - started
 
         mission = plan.mission

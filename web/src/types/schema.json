@@ -966,6 +966,21 @@
           "description": "Межвылетная подготовка, секунды; None — допущение",
           "title": "Turnaround S"
         },
+        "min_sun_elevation_deg": {
+          "anyOf": [
+            {
+              "exclusiveMaximum": 90.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Снимать только при высоте Солнца не ниже этой, градусы (норма — 25° на цветную, 20° на черно-белую). None — время суток не учитывается. Нужно время начала работ",
+          "title": "Min Sun Elevation Deg"
+        },
         "seed": {
           "default": 42,
           "description": "Зерно ГПСЧ: один сценарий + один seed = один план",
