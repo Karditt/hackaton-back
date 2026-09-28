@@ -20,7 +20,10 @@
 1. **Раздать хвост.** Подобласти критического вылета — все или последние по
    порядку облёта (`ALLOCATE_SEARCH_TAIL_SHARES`) — отдаются другим бортам: в
    последний вылет борта, если помещается, или новым вылетом. Подобласть
-   получает тот борт, который по оценке без задержек раньше её закончит.
+   получает тот борт, который по оценке без задержек раньше её закончит; в
+   чужом вылете она встаёт туда, где связки удлинятся меньше всего, и вылет
+   переставляется (`core.allocate.order`). То же — с более ранними вылетами
+   того же борта: разгруженный ранний вылет сдвигает раньше все следующие.
 2. **Переставить целиком** — новым вылетом борта, который раньше освободится.
 3. **Снять задержку.** Кто уступает при разведении, решает порядок
    постановки: критический вылет ставится сразу за предыдущим вылетом своего
@@ -51,8 +54,16 @@ from core.allocate.baseline import ServiceablePredicate, SortieCost
 from core.allocate.fleet import FleetInstance, sortie_id
 from core.allocate.greedy import SortieBounds, SortiePlacer
 from core.allocate.objective import resource_s
+from core.allocate.order import CellEndsOf, cheapest_insertion, improve_order
 from core.flight.cost import endurance_limit_s
-from core.schemas import Allocation, Cell, OptimizationMode, Scenario, SortieAssignment
+from core.schemas import (
+    Allocation,
+    Cell,
+    MetricPoint,
+    OptimizationMode,
+    Scenario,
+    SortieAssignment,
+)
 
 #: Имя алгоритма в отчётах: конструктивная эвристика плюс локальный поиск.
 ALGORITHM_NAME = "constructive:earliest_free+local_search"
@@ -146,6 +157,8 @@ class _Search:
         cost: SortieCost,
         bounds: SortieBounds,
         replay: _Replay,
+        sites: dict[str, MetricPoint] | None = None,
+        cell_ends: CellEndsOf | None = None,
     ) -> None:
         self.scenario = scenario
         self.instances = instances
@@ -154,6 +167,8 @@ class _Search:
         self.cost = cost
         self.bounds = bounds
         self.replay = replay
+        self.sites = sites or {}
+        self.cell_ends = cell_ends
         self.turnaround_s = (
             scenario.turnaround_s
             if scenario.turnaround_s is not None
@@ -206,6 +221,27 @@ class _Search:
             ),
         )
         return (*cell_ids[: nearest + 1], cell_id, *cell_ids[nearest + 1 :])
+
+    def _insert(
+        self, cell_ids: tuple[str, ...], cell_id: str, instance: FleetInstance, site_id: str
+    ) -> tuple[str, ...]:
+        """Вставить подобласть в вылет и переставить его (долг №58).
+
+        Есть концы змеек — вставка туда, где связки удлинятся меньше всего, и
+        перестановка всего вылета (`core.allocate.order`); нет — сразу за
+        ближайшей подобластью.
+        """
+        site = self.sites.get(site_id)
+        if self.cell_ends is None or site is None:
+            return self._insert_near(cell_ids, cell_id)
+        ends = {}
+        for item in (*cell_ids, cell_id):
+            pair = self.cell_ends(item, instance.vehicle.id)
+            if pair is None:
+                return self._insert_near(cell_ids, cell_id)
+            ends[item] = pair
+        order = cheapest_insertion(list(cell_ids), cell_id, ends, site, site)
+        return tuple(improve_order(order, ends, site, site))
 
     def distribute(
         self,
@@ -277,7 +313,7 @@ class _Search:
                     host = trips[index]
                     if host.duration_s + self.bounds.survey_s(instance, cell_id) > limit_s:
                         continue
-                    cell_ids = self._insert_near(host.cell_ids, cell_id)
+                    cell_ids = self._insert(host.cell_ids, cell_id, instance, site_id)
                     duration = self.cost(instance, site_id, list(cell_ids))
                     if duration is None:
                         continue
@@ -351,6 +387,36 @@ class _Search:
             )
             if moved is not None:
                 variants.append(moved)
+
+        # Ход 1б: разгрузить более ранний вылет того же борта — все следующие
+        # его вылеты начнутся раньше, и критический тоже.
+        for position in range(index - 1, -1, -1):
+            earlier = trips[position]
+            if earlier.instance.key != critical.instance.key or len(earlier.cell_ids) < 2:
+                continue
+            tried: set[int] = set()
+            for share in assumptions.ALLOCATE_SEARCH_TAIL_SHARES:
+                count = max(1, math.ceil(len(earlier.cell_ids) * share))
+                if count >= len(earlier.cell_ids) or count in tried:
+                    continue
+                tried.add(count)
+                kept = earlier.cell_ids[: len(earlier.cell_ids) - count]
+                moving = list(earlier.cell_ids[len(earlier.cell_ids) - count :])
+                duration = self.cost(earlier.instance, earlier.site_id, list(kept))
+                if duration is None:
+                    continue
+                rest = list(trips)
+                rest[position] = _Trip(earlier.instance, earlier.site_id, kept, duration)
+                moved = self.distribute(
+                    moving,
+                    rest,
+                    outcome,
+                    critical.instance.key,
+                    new_trips=True,
+                    finish_by_s=finish_by,
+                )
+                if moved is not None:
+                    variants.append(moved)
 
         # Ход 2: весь вылет — новым вылетом борта, который раньше освободится.
         rest = [trip for position, trip in enumerate(trips) if position != index]
@@ -504,6 +570,8 @@ def improve_allocation(
     cost: SortieCost,
     bounds: SortieBounds,
     placer: ReplayPlacer,
+    sites: dict[str, MetricPoint] | None = None,
+    cell_ends: CellEndsOf | None = None,
 ) -> Allocation:
     """Улучшить распределение ходами, оценивая каждый расписанием (докстринг модуля).
 
@@ -517,6 +585,9 @@ def improve_allocation(
         cost: длительность вылета моделью полёта, секунды; None — не помещается.
         bounds: нижние границы времени вылета.
         placer: книга расписания с откатом.
+        sites: штатные площадки, метры — для перестановки подобластей в вылете.
+        cell_ends: концы змейки подобласти у модели борта; None — подобласть
+            вставляется за ближайшей, без перестановки вылета.
 
     Returns:
         Распределение не хуже исходного по критерию режима. Вылеты — в
@@ -544,7 +615,15 @@ def improve_allocation(
     )
     replay = _Replay(placer, turnaround_s)
     search = _Search(
-        scenario, instances, {cell.id: cell for cell in cells}, serviceable, cost, bounds, replay
+        scenario,
+        instances,
+        {cell.id: cell for cell in cells},
+        serviceable,
+        cost,
+        bounds,
+        replay,
+        sites,
+        cell_ends,
     )
     current = replay.evaluate(trips)
     if current is None:

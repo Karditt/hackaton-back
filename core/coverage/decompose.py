@@ -166,7 +166,7 @@ def decompose(
         split += 1
         pieces.extend(split_island(island, size_m))
     pieces, carved = _carve_for_fixed_wing(pieces, work_area, survey_plan, vehicles, size_m, sites)
-    fleet: _Fleet = [(params, vehicles[params.vehicle_id]) for params in survey_plan.per_vehicle]
+    fleet = _fleet_of(survey_plan, vehicles, work_area.corridor_max_m, copters_only=False)
     min_side_m = max(params.strip_spacing_m for params in survey_plan.per_vehicle)
     refined = [part for piece in pieces for part in _refine(piece, fleet, sites, min_side_m)]
     halved = len(refined) - len(pieces)
@@ -282,7 +282,7 @@ def split_island(island: Polygon, size_m: float) -> list[Polygon]:
     return _merge_small(fragments, assumptions.CELL_MERGE_FRACTION * size_m**2)
 
 
-_Fleet = list[tuple[SurveyParams, Vehicle]]
+_Fleet = list[tuple[SurveyParams, Vehicle, float]]
 
 
 def _nearest_site_m(piece: Polygon, sites: list[MetricPoint]) -> float:
@@ -297,13 +297,24 @@ def _nearest_site_m(piece: Polygon, sites: list[MetricPoint]) -> float:
     )
 
 
-def _overhead_s(params: SurveyParams, distance_m: float) -> float:
+def _overhead_s(params: SurveyParams, distance_m: float, top_m: float | None = None) -> float:
     """Взлёт, посадка, набор, снижение и подлёт туда-обратно, секунды.
 
-    Эшелон перелёта неизвестен до назначения эшелонов, но он не ниже высоты
-    съёмки плюс вертикальный интервал: подъём и спуск считаются до него.
+    Эшелон перелёта неизвестен до назначения эшелонов. Он не ниже высоты
+    съёмки плюс вертикальный интервал и не выше `top_m` — потолка борта и
+    коридора. Для проверки «поместится ли подобласть в вылет» берётся верхний:
+    эшелоны делят борта одной модели, и какому достанется верхний, заранее не
+    известно; с нижним подобласть на пределе дальности коптера оказывалась
+    непосильной, когда эшелон выходил выше.
+
+    Args:
+        params: параметры съёмки борта.
+        distance_m: подлёт в одну сторону, метры.
+        top_m: верхний возможный эшелон, м AGL; None — съёмка плюс интервал.
     """
     transit_altitude_m = params.altitude_agl_m + assumptions.VERTICAL_SEPARATION_M
+    if top_m is not None:
+        transit_altitude_m = max(transit_altitude_m, top_m)
     return (
         assumptions.TAKEOFF_TIME_S
         + assumptions.LANDING_TIME_S
@@ -314,14 +325,15 @@ def _overhead_s(params: SurveyParams, distance_m: float) -> float:
 
 
 def _single_sortie_s(
-    piece: Polygon, params: SurveyParams, vehicle: Vehicle, distance_m: float
+    piece: Polygon, params: SurveyParams, vehicle: Vehicle, distance_m: float, top_m: float
 ) -> float:
     """Прикидка вылета на одну подобласть с площадки в `distance_m` метрах, секунды.
 
     По настоящим галсам лучшего направления и той же длине разворота, что в
     модели полёта (`turn_length_m`): у узкой изрезанной подобласти развороты
-    съедают больше, чем даёт оценка ёмкости по площади. Обходы препятствий на
-    подлёте и эшелон перелёта не считаются — окончательно решает распределение.
+    съедают больше, чем даёт оценка ёмкости по площади. Эшелон — верхний
+    возможный `top_m` (`_overhead_s`); обходы препятствий на подлёте не
+    считаются — окончательно решает распределение.
     """
     azimuth = candidate_azimuths(piece, params.strip_spacing_m)[0]
     strips = cover_cell("probe", piece, params, azimuth)
@@ -330,10 +342,24 @@ def _single_sortie_s(
         for before, after in zip(strips, strips[1:], strict=False)
     )
     return (
-        _overhead_s(params, distance_m)
+        _overhead_s(params, distance_m, top_m)
         + turns_m / params.transit_speed_mps
         + sum(strip.length_m for strip in strips) / params.survey_speed_mps
     )
+
+
+def _fleet_of(
+    survey_plan: SurveyPlan, vehicles: dict[str, Vehicle], corridor_m: float, copters_only: bool
+) -> _Fleet:
+    """Борта для прикидок: параметры съёмки, борт и верхний возможный эшелон, м AGL."""
+    fleet: _Fleet = []
+    for params in survey_plan.per_vehicle:
+        vehicle = vehicles[params.vehicle_id]
+        if copters_only and vehicle.is_fixed_wing():
+            continue
+        top_m = min(corridor_m, vehicle.max_altitude_agl_m or corridor_m)
+        fleet.append((params, vehicle, top_m))
+    return fleet
 
 
 def _fits(piece: Polygon, fleet: _Fleet, sites: list[MetricPoint]) -> bool:
@@ -342,8 +368,9 @@ def _fits(piece: Polygon, fleet: _Fleet, sites: list[MetricPoint]) -> bool:
         return False
     distance_m = _nearest_site_m(piece, sites)
     return any(
-        _single_sortie_s(piece, params, vehicle, distance_m) <= endurance_limit_s(vehicle)
-        for params, vehicle in fleet
+        _single_sortie_s(piece, params, vehicle, distance_m, top_m)
+        <= assumptions.DECOMPOSE_FIT_MARGIN * endurance_limit_s(vehicle)
+        for params, vehicle, top_m in fleet
     )
 
 
@@ -362,7 +389,7 @@ def _refine(
     if not fleet or not sites or _fits(piece, fleet, sites):
         return [piece]
     distance_m = _nearest_site_m(piece, sites)
-    if all(_overhead_s(p, distance_m) >= endurance_limit_s(v) for p, v in fleet):
+    if all(_overhead_s(p, distance_m) >= endurance_limit_s(v) for p, v, _top in fleet):
         return [piece]
     halves = _halve(piece, min_side_m)
     if len(halves) < 2:
@@ -371,7 +398,14 @@ def _refine(
 
 
 def _halve(piece: Polygon, min_side_m: float) -> list[Polygon]:
-    """Разрезать подобласть поперёк длинной стороны посередине; короче `min_side_m` — не резать."""
+    """Разрезать подобласть поперёк длинной стороны; короче `min_side_m` — не резать.
+
+    Разрез — через центр масс, а не через середину габарита: у полосы вдоль
+    запретной зоны после вычитания геометрий бывает волосяной хвост на
+    километры без площади, и разрез посередине габарита оставлял всю площадь в
+    одной половине — подобласть не делилась, и коптеру в вылет не помещалась
+    (real_msk, 2026-09-28). Не разрезалось и через центр — посередине габарита.
+    """
     radians = math.radians(dominant_azimuth_deg(piece))
     along = (math.sin(radians), math.cos(radians))
     across = (-math.cos(radians), math.sin(radians))
@@ -381,22 +415,28 @@ def _halve(piece: Polygon, min_side_m: float) -> list[Polygon]:
     low, high = float(x_along.min()), float(x_along.max())
     if high - low < min_side_m:
         return [piece]
-    middle = (low + high) / 2.0
     bottom, top = float(y_across.min()), float(y_across.max())
 
     def point(x: float, y: float) -> tuple[float, float]:
         return (x * along[0] + y * across[0], x * along[1] + y * across[1])
 
-    parts: list[Polygon] = []
-    for start, end in ((low, middle), (middle, high)):
-        frame = Polygon(
-            [point(start, bottom), point(end, bottom), point(end, top), point(start, top)]
-        )
-        parts.extend(
-            part
-            for part in polygons_of(piece.intersection(frame))
-            if part.area > assumptions.GEOMETRY_TOLERANCE_M**2
-        )
+    def cut(middle: float) -> list[Polygon]:
+        parts: list[Polygon] = []
+        for start, end in ((low, middle), (middle, high)):
+            frame = Polygon(
+                [point(start, bottom), point(end, bottom), point(end, top), point(start, top)]
+            )
+            parts.extend(
+                part
+                for part in polygons_of(piece.intersection(frame))
+                if part.area > assumptions.GEOMETRY_TOLERANCE_M**2
+            )
+        return parts
+
+    centre = piece.centroid
+    parts = cut(centre.x * along[0] + centre.y * along[1])
+    if len(parts) < 2:
+        parts = cut((low + high) / 2.0)
     return parts
 
 
@@ -439,11 +479,7 @@ def _carve_for_fixed_wing(
     ]
     if not planes:
         return pieces, 0
-    copters = [
-        (params, vehicles[params.vehicle_id])
-        for params in survey_plan.per_vehicle
-        if not vehicles[params.vehicle_id].is_fixed_wing()
-    ]
+    copters = _fleet_of(survey_plan, vehicles, work_area.corridor_max_m, copters_only=True)
     min_side_m = 2.0 * max(params.strip_spacing_m for params in survey_plan.per_vehicle)
 
     hazards = {
@@ -495,7 +531,14 @@ def _carve_for_fixed_wing(
             for item in pieces_of_band:
                 band_parts.extend(_refine(item, copters, sites, min_side_m))
         if not core_parts:
-            result.append(piece)
+            # Ядра нет: вся подобласть — полоса у запретного, самолёту она
+            # недоступна. Её снимает коптер — значит, и резать её надо ему по
+            # силам. Прежде она оставалась целой: деление по дальности (`_refine`
+            # по всему флоту) считало её посильной по прикидке самолёта, и
+            # коптеру она в вылет не помещалась (2026-09-28).
+            if len(band_parts) > 1:
+                carved += 1
+            result.extend(band_parts or [piece])
             continue
         carved += 1
         result.extend(core_parts)

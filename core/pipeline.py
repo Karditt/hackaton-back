@@ -25,16 +25,22 @@ from shapely.ops import unary_union
 from core.advise import diagnose, stub_warning
 from core.allocate.baseline import build_baseline_allocation
 from core.allocate.fleet import FleetInstance, expand_fleet
-from core.allocate.greedy import SortieBounds, build_greedy_allocation
-from core.allocate.objective import objective_value, resource_s, weighted_value
+from core.allocate.greedy import (
+    STRATEGIES,
+    GreedyStrategy,
+    SortieBounds,
+    build_greedy_allocation,
+)
+from core.allocate.objective import criterion_key, objective_value, resource_s, weighted_value
 from core.allocate.search import improve_allocation
 from core.catalog import VehicleCatalog, load_catalog, user_vehicle_warnings
 from core.coverage.decompose import decompose
 from core.coverage.oracle import CoverageOracle
 from core.deconflict import ScheduleBook, assign_transit_levels, build_schedule
+from core.deconflict.hops import SlopeClearance, SurveyHopPolicy
 from core.deconflict.placer import BookPlacer
 from core.errors import GeometryError
-from core.flight.cost import build_sortie, endurance_limit_s, exceeds_range
+from core.flight.cost import CellEnds, build_sortie, cell_ends, endurance_limit_s, exceeds_range
 from core.geo.mask import WorkArea, build_survey_mask, build_work_area
 from core.schemas import (
     Allocation,
@@ -172,6 +178,49 @@ def _metrics(
 
 def _errors(warnings: list[PlanWarning]) -> list[PlanWarning]:
     return [warning for warning in warnings if warning.severity is Severity.ERROR]
+
+
+def _plan_key(
+    scenario: Scenario, allocation: Allocation, sorties: list[Sortie]
+) -> tuple[bool, bool, float, float]:
+    """Ключ сравнения планов разных стратегий по критерию режима (`criterion_key`)."""
+    return criterion_key(
+        scenario.mode,
+        scenario.deadline_s,
+        max((sortie.end_time_s() for sortie in sorties), default=0.0),
+        resource_s(sum(sortie.duration_s for sortie in sorties), len(sorties)),
+        complete=not allocation.unassigned_cell_ids and bool(sorties),
+    )
+
+
+def _strategy_note(
+    scenario: Scenario,
+    tried: list[tuple[GreedyStrategy, Allocation, CoverageSet, list[Sortie], Schedule]],
+    best: int,
+) -> PlanWarning:
+    """Какие стратегии распределения пробовались и какая взята."""
+    parts = []
+    for strategy, allocation, _coverage, sorties, _schedule in tried:
+        if allocation.unassigned_cell_ids or not sorties:
+            parts.append(f"«{strategy.name}» — невыполнимо")
+            continue
+        makespan_s = max(sortie.end_time_s() for sortie in sorties)
+        flight_h = sum(sortie.duration_s for sortie in sorties) / 3600.0
+        parts.append(
+            f"«{strategy.name}» — срок {makespan_s / 3600.0:.2f} ч, налёт {flight_h:.1f} ч"
+        )
+    return PlanWarning(
+        code="allocate.strategies",
+        severity=Severity.INFO,
+        stage=Stage.ALLOCATE,
+        message=(
+            "Распределение пробовало стратегии: "
+            + "; ".join(parts)
+            + f". Взята «{tried[best][0].name}» — лучшая по критерию режима "
+            f"«{scenario.mode.value}»"
+        ),
+        context={"strategy": tried[best][0].name},
+    )
 
 
 #: Вылет-проба: борт, площадка (взлёт и посадка), подобласти по порядку.
@@ -351,6 +400,8 @@ def run_pipeline(
     levels, level_warnings = assign_transit_levels(instances, survey_plan, work_area.corridor_max_m)
     oracle = CoverageOracle(decomposition, survey_plan, vehicles, work_area)
     router = make_router(work_area)
+    hops = SurveyHopPolicy(decomposition.cells, survey_plan, vehicles, work_area)
+    slope = SlopeClearance(work_area)
 
     def make_sortie(
         instance: FleetInstance,
@@ -362,6 +413,7 @@ def run_pipeline(
     ) -> Sortie:
         params = survey_plan.for_vehicle(instance.vehicle.id)
         assert params is not None
+        own_area = unary_union([oracle.cell_geometry(cell_id) for cell_id in cell_ids])
         return build_sortie(
             sortie_id=sortie_id,
             vehicle=instance.vehicle,
@@ -373,9 +425,11 @@ def run_pipeline(
             cells=[oracle.get(cell_id, instance.vehicle.id) for cell_id in cell_ids],
             transit_altitude_m=levels[instance.key],
             router=router,
-            own_area=unary_union([oracle.cell_geometry(cell_id) for cell_id in cell_ids]),
+            own_area=own_area,
             vehicle_instance=instance.index,
             trip_index=trip_index,
+            survey_hop=hops.check(instance.vehicle.id, set(cell_ids), own_area),
+            slope_check=slope,
         )
 
     probes: OrderedDict[_ProbeKey, Sortie] = OrderedDict()
@@ -413,6 +467,34 @@ def run_pipeline(
         strips = oracle.get(cell_id, vehicle_id).strips
         return sum(strip.length_m for strip in strips) / params.survey_speed_mps
 
+    def ends_of(cell_id: str, vehicle_id: str) -> CellEnds:
+        """Вход и выход змейки подобласти у модели борта, метры."""
+        return cell_ends(oracle.get(cell_id, vehicle_id))
+
+    by_key = {instance.key: instance for instance in instances}
+
+    def realize(allocation: Allocation) -> tuple[CoverageSet, list[Sortie], Schedule]:
+        """Покрытие, итоговые вылеты и расписание распределения."""
+        coverage = oracle.coverage_set(allocation)
+        sorties = [
+            make_sortie(
+                by_key[(assignment.vehicle_id, assignment.vehicle_instance)],
+                assignment.cell_ids,
+                assignment.takeoff_site_id,
+                assignment.landing_site_id,
+                assignment.sortie_id,
+                assignment.trip_index,
+            )
+            for assignment in allocation.assignments
+        ]
+        # Эвристика ставила вылеты в расписание сама, когда собирала, —
+        # расписание повторяет её порядок и получает те же старты. Baseline
+        # расписания не видит: у него первые вылеты всех бортов, потом вторые.
+        sorties, schedule = build_schedule(
+            sorties, vehicles, work_area, scenario, coverage, keep_order=allocator != "baseline"
+        )
+        return coverage, sorties, schedule
+
     primary_sites = {site.id: work_area.site(site.id) for site in scenario.primary_sites()}
     if allocator == "baseline":
         allocation = build_baseline_allocation(
@@ -424,62 +506,54 @@ def run_pipeline(
             oracle.serviceable,
             sortie_cost,
         )
+        coverage, sorties, schedule = realize(allocation)
     else:
-        placer = BookPlacer(
-            ScheduleBook(work_area.zones), probe_sortie, oracle, survey_plan, work_area.crs
-        )
-        allocation = build_greedy_allocation(
-            scenario,
-            work_area.crs,
-            decomposition.cells,
-            instances,
-            primary_sites,
-            oracle.serviceable,
-            sortie_cost,
-            survey_plan,
-            survey_time,
-            placer,
-        )
-        if allocator == "local_search":
-            allocation = improve_allocation(
-                allocation,
+        # Эвристика хаотична: пробуются все стратегии, берётся лучший план по
+        # критерию режима (`GreedyStrategy`).
+        tried: list[tuple[GreedyStrategy, Allocation, CoverageSet, list[Sortie], Schedule]] = []
+        for strategy in STRATEGIES:
+            placer = BookPlacer(
+                ScheduleBook(work_area.zones), probe_sortie, oracle, survey_plan, work_area.crs
+            )
+            candidate = build_greedy_allocation(
                 scenario,
-                instances,
+                work_area.crs,
                 decomposition.cells,
+                instances,
+                primary_sites,
                 oracle.serviceable,
                 sortie_cost,
-                SortieBounds(survey_plan, survey_time, decomposition.cells, primary_sites),
+                survey_plan,
+                survey_time,
                 placer,
+                ends_of,
+                strategy,
             )
-    assembler.allocation = allocation
-    clock.lap("allocate")
-
-    coverage = oracle.coverage_set(allocation)
-    assembler.coverage = coverage
-    clock.lap("coverage")
-
-    by_key = {instance.key: instance for instance in instances}
-    sorties = [
-        make_sortie(
-            by_key[(assignment.vehicle_id, assignment.vehicle_instance)],
-            assignment.cell_ids,
-            assignment.takeoff_site_id,
-            assignment.landing_site_id,
-            assignment.sortie_id,
-            assignment.trip_index,
+            if allocator == "local_search":
+                candidate = improve_allocation(
+                    candidate,
+                    scenario,
+                    instances,
+                    decomposition.cells,
+                    oracle.serviceable,
+                    sortie_cost,
+                    SortieBounds(survey_plan, survey_time, decomposition.cells, primary_sites),
+                    placer,
+                    primary_sites,
+                    ends_of,
+                )
+            tried.append((strategy, candidate, *realize(candidate)))
+        best = min(
+            range(len(tried)),
+            key=lambda index: (_plan_key(scenario, tried[index][1], tried[index][3]), index),
         )
-        for assignment in allocation.assignments
-    ]
-    clock.lap("flight")
-
-    # Эвристика ставила вылеты в расписание сама, когда собирала, — расписание
-    # повторяет её порядок и получает те же старты. Baseline расписания не
-    # видит: у него первые вылеты всех бортов, потом вторые.
-    sorties, schedule = build_schedule(
-        sorties, vehicles, work_area, scenario, coverage, keep_order=allocator != "baseline"
-    )
+        _strategy, allocation, coverage, sorties, schedule = tried[best]
+        if len(tried) > 1:
+            assembler.warnings.append(_strategy_note(scenario, tried, best))
+    assembler.allocation = allocation
+    assembler.coverage = coverage
     schedule.warnings[:0] = level_warnings
-    clock.lap("schedule")
+    clock.lap("allocate")
 
     report = validate_plan(scenario, work_area, decomposition, coverage, sorties, vehicles)
     assembler.warnings.extend(report.warnings)

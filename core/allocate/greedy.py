@@ -8,17 +8,28 @@ Baseline (`baseline.py`) делит подобласти поровну по **�
 
 1. **Площадки.** Борт, приписанный сценарием, стоит на своей. Площадка, у
    которой есть работа, досягаемая только с неё, получает подходящий борт
-   первой. Остальные борта расставляются по одному, начиная с самых
-   «коротких» (коптеры раньше самолётов): туда, где борт снимет больше всего
-   работы, до которой долетает и которую не заберут уже стоящие там борта.
-   Работа площадки — подобласти, для которых она ближайшая.
+   первой. Остальные короткие борта расставляются по одному, начиная с самых
+   «коротких»: туда, где борт снимет больше всего работы, до которой долетает
+   и которую не заберут уже стоящие там борта. Дальнобойные (достают любую
+   подобласть от ближайшей к ней площадки) — пропорционально работе площадок,
+   по методу д'Ондта (долг №60). Работа площадки — подобласти, для которых она
+   ближайшая.
 2. **Очередь.** Следующий вылет получает борт, который освободится раньше
    всех (режим «минимум срока»), либо самый производительный из тех, кто
    ещё укладывается в дедлайн (режим «минимум ресурса»).
-3. **Вылет.** Затравка — самая дальняя подобласть, которую борт снимет за
-   вылет со своей площадки: дальние уходят тем, кто до них долетает, пока
-   ближние остаются для всех. Дальше вылет добирается ближайшими к
-   последней добавленной подобластями, пока помещается в заряд и запас хода.
+3. **Вылет.** Сначала — своя зона: подобласти, для которых площадка борта
+   ближайшая из площадок с бортами той же модели (иначе самолёт с южной
+   площадки летит к подобластям у восточной, а восточные — к южным); в
+   стратегии «секторы бортов» — ещё и свой сектор по азимуту, поровну между
+   бортами модели на площадке (`GreedyStrategy`; конвейер пробует обе
+   стратегии и берёт лучший план). В зоне
+   затравка — самая дальняя подобласть, которую борт снимет за вылет:
+   дальние уходят тем, кто до них долетает, пока ближние остаются для всех.
+   У самого короткого борта флота — наоборот, ближняя (долг №59). Дальше
+   вылет добирается ближайшими к последней добавленной подобластями, пока
+   помещается в заряд и запас хода; добор кончился — подобласти
+   переставляются (`core.allocate.order`, долг №58), и если вылет стал
+   короче, добор продолжается.
 
 4. **Расписание видно сразу** (долг №54). Собранный вылет ставится в книгу
    расписания (`SortiePlacer`) — ту же, что потом строит расписание, — и
@@ -51,6 +62,7 @@ from shapely.geometry import Point
 from core import assumptions
 from core.allocate.baseline import ServiceablePredicate, SortieCost, _unassigned_warnings
 from core.allocate.fleet import FleetInstance, sortie_id
+from core.allocate.order import CellEndsOf, improve_order
 from core.flight.cost import endurance_limit_s
 from core.geo.project import polygon_to_shapely
 from core.schemas import (
@@ -157,14 +169,24 @@ class SortieBounds:
         )
 
     def overhead_s(self, instance: FleetInstance, distance_m: float) -> float:
-        """Взлёт, посадка, набор и снижение до высоты съёмки, подлёт туда-обратно, секунды."""
+        """Взлёт, посадка, набор и снижение до высоты съёмки, подлёт туда-обратно, секунды.
+
+        Самолёт набирает и теряет высоту на ходу (долг №56) — у него набор и
+        снижение не добавляются к подлёту, иначе граница перестала бы быть
+        нижней.
+        """
         params = self._plan.for_vehicle(instance.vehicle.id)
         assert params is not None
+        vertical_s = (
+            0.0
+            if instance.vehicle.is_fixed_wing()
+            else params.altitude_agl_m / assumptions.CLIMB_RATE_MPS
+            + params.altitude_agl_m / assumptions.DESCENT_RATE_MPS
+        )
         return (
             assumptions.TAKEOFF_TIME_S
             + assumptions.LANDING_TIME_S
-            + params.altitude_agl_m / assumptions.CLIMB_RATE_MPS
-            + params.altitude_agl_m / assumptions.DESCENT_RATE_MPS
+            + vertical_s
             + 2.0 * distance_m / params.transit_speed_mps
         )
 
@@ -237,6 +259,25 @@ def _place_boards(
         taken[site] += bounds.rate_m2ps(helper) * horizon_s
         free.remove(helper)
 
+    # Дальнобойные борта (достают любую подобласть от ближайшей к ней
+    # площадки) расставляются пропорционально работе площадок, как места по
+    # методу д'Ондта: площадке достаётся следующий борт, пока её нагрузка на
+    # борт больше, чем у других (долг №60). Иначе все самолёты встают туда, где
+    # больше всего ближней работы, и летают через всю область к чужим
+    # площадкам.
+    rangy = [
+        instance
+        for instance in free
+        if all(
+            bounds.gap_m(nearest[cell.id], cell.id) <= bounds.reach_m(instance)
+            for cell in cells
+            if serviceable(cell.id, instance.vehicle.id)
+        )
+    ]
+    if len(site_ids) < 2:
+        rangy = []
+    free = [instance for instance in free if instance not in rangy]
+
     for instance in free:
         limit_s = endurance_limit_s(instance.vehicle)
         share = bounds.rate_m2ps(instance) * horizon_s
@@ -256,7 +297,51 @@ def _place_boards(
         )
         placed[instance.key] = best
         taken[best] += share
+
+    for instance in rangy:
+        # Короткие борта в нагрузке не учитываются: их доля работы площадки
+        # оценивается по скорости съёмки и сильно завышена — на данных заказчика
+        # коптер тратит на подлёт две трети вылета, и с их «долей» все самолёты
+        # снова вставали на одну площадку.
+        load = _site_load(cells, instance, site_ids, nearest, serviceable, bounds)
+        count = {site: 0 for site in site_ids}
+        for other in instances:
+            if other.vehicle.id == instance.vehicle.id and other.key in placed:
+                count[placed[other.key]] += 1
+        best = max(
+            site_ids,
+            key=lambda site: (load[site] / (count[site] + 1), -site_ids.index(site)),
+        )
+        placed[instance.key] = best
     return placed
+
+
+def _site_load(
+    cells: list[Cell],
+    instance: FleetInstance,
+    site_ids: list[str],
+    nearest: dict[str, str],
+    serviceable: ServiceablePredicate,
+    bounds: SortieBounds,
+) -> dict[str, float]:
+    """Сколько времени борту этой модели нужно на работу каждой площадки, секунды.
+
+    Работа площадки — подобласти, для которых она ближайшая. Время подобласти —
+    галсы, растянутые на подлёт: вылет на расстояние d тратит на съёмку только
+    то, что остаётся от заряда после подлёта туда и обратно, поэтому дальняя
+    работа дороже ближней.
+    """
+    limit_s = endurance_limit_s(instance.vehicle)
+    load = dict.fromkeys(site_ids, 0.0)
+    for cell in cells:
+        if not serviceable(cell.id, instance.vehicle.id):
+            continue
+        site = nearest[cell.id]
+        spare_s = limit_s - bounds.overhead_s(instance, bounds.gap_m(site, cell.id))
+        if spare_s <= 0.0:
+            continue
+        load[site] += bounds.survey_s(instance, cell.id) * limit_s / spare_s
+    return load
 
 
 def _orphan_needs(
@@ -306,6 +391,8 @@ def build_greedy_allocation(
     survey_plan: SurveyPlan,
     survey_time: SurveyTime,
     placer: SortiePlacer | None = None,
+    cell_ends: CellEndsOf | None = None,
+    strategy: GreedyStrategy | None = None,
 ) -> Allocation:
     """Распределить подобласти по вылетам: время делится, а не площадь.
 
@@ -322,6 +409,11 @@ def build_greedy_allocation(
         survey_time: время галсов подобласти бортом, секунды.
         placer: книга расписания. None — задержек расписания эвристика не
             видит: борт взлетает, как только готов.
+        cell_ends: концы змейки подобласти у модели борта — по ним собранный
+            вылет переставляется (`core.allocate.order`). None — порядок облёта
+            остаётся порядком добора.
+        strategy: как делить работу между бортами одной площадки; None —
+            первая из `STRATEGIES`.
 
     Returns:
         Распределение с невзятыми подобластями и причинами. Вылеты — в том
@@ -340,6 +432,9 @@ def build_greedy_allocation(
         for instance in instances
     ]
     weakest = _weakest_reach(cells, boards, sites, serviceable, bounds)
+    shortest_m = min((bounds.reach_m(board.instance) for board in boards), default=0.0)
+    strategy = strategy or STRATEGIES[0]
+    zones = _board_zones(cells, boards, sites, bounds, strategy.sectors)
     minimum_resource = scenario.mode is OptimizationMode.MIN_RESOURCE
     remaining = {cell.id for cell in cells}
     assignments: list[SortieAssignment] = []
@@ -362,7 +457,25 @@ def build_greedy_allocation(
         cap_s = endurance_limit_s(board.instance.vehicle)
         if deadline_s is not None:
             cap_s = min(cap_s, deadline_s - board.free_at_s)
-        build = _SortieBuild(board, by_id, sites, serviceable, cost, bounds, weakest)
+        # Самый короткий борт флота начинает вылет с ближней работы (долг №59):
+        # «самая дальняя посильная» для него — подлёт на весь заряд ради минут
+        # съёмки, а дальнюю работу быстрее снимут те, кто летит дальше.
+        nearest_first = (
+            bounds.reach_m(board.instance) <= shortest_m + assumptions.GEOMETRY_TOLERANCE_M
+        )
+        build = _SortieBuild(
+            board,
+            by_id,
+            sites,
+            serviceable,
+            cost,
+            bounds,
+            weakest,
+            cell_ends,
+            nearest_first,
+            zones.get(board.instance.key),
+            strategy.fill_zone_first,
+        )
         sortie, late = _plan_sortie(
             build, remaining, cap_s, placer, deadline_s, patient=minimum_resource
         )
@@ -462,6 +575,180 @@ class _SortieBuild:
     cost: SortieCost
     bounds: SortieBounds
     weakest: dict[str, float]
+    cell_ends: CellEndsOf | None = None
+    nearest_first: bool = False
+    """Затравка — ближайшая подобласть, а не самая дальняя (самый короткий борт)."""
+    zone: set[str] | None = None
+    """Своя зона борта (`_board_zones`). None — зон нет, своё — всё."""
+    fill_zone_first: bool = False
+    """Добор — сначала из своей зоны (`GreedyStrategy.fill_zone_first`)."""
+
+
+@dataclass(frozen=True)
+class GreedyStrategy:
+    """Как эвристика делит работу между бортами одной модели на одной площадке.
+
+    Эвристика жадная, и её итог хаотичен: на данных заказчика и на демо
+    лучшими оказывались разные способы делить зону площадки (журнал
+    2026-09-28). Конвейер пробует все стратегии `STRATEGIES` и берёт лучший
+    план по критерию режима.
+    """
+
+    name: str
+    """Имя в отчёте."""
+    sectors: bool
+    """Зона площадки делится между её бортами одной модели на секторы по
+    азимуту; иначе у всех бортов площадки одна общая зона."""
+    fill_zone_first: bool
+    """Добор вылета — сначала из своей зоны, потом своя работа (её не снимет
+    никто короче); иначе — наоборот."""
+
+
+#: Стратегии эвристики, которые пробует конвейер, — первая по умолчанию.
+STRATEGIES = (
+    GreedyStrategy("зоны площадок", sectors=False, fill_zone_first=False),
+    GreedyStrategy("секторы бортов", sectors=True, fill_zone_first=True),
+)
+
+
+def _board_zones(
+    cells: list[Cell],
+    boards: list[_Board],
+    sites: dict[str, MetricPoint],
+    bounds: SortieBounds,
+    sectors: bool,
+) -> dict[tuple[str, int], set[str]]:
+    """Зоны бортов: с какой работы каждый борт начинает (долг №60).
+
+    Зона площадки — подобласти, для которых она ближайшая из площадок с
+    бортами этой модели: иначе самолёт с южной площадки летит к подобластям у
+    восточной, а восточные — к южным (`real_msk` до 2026-09-28 — около 120 км²
+    чужой работы). С `sectors` зона площадки ещё и делится между её бортами
+    одной модели на секторы по азимуту от площадки, поровну по времени работы:
+    борта одной площадки начинают не с одной и той же самой дальней подобласти,
+    а каждый со своей стороны; без `sectors` зона у них общая.
+
+    Args:
+        cells: подобласти.
+        boards: борта с площадками.
+        sites: площадки, метры.
+        bounds: нижние границы — по ним время работы подобласти.
+        sectors: делить ли зону площадки между её бортами.
+
+    Returns:
+        Подобласти своей зоны на каждый борт, по ключу (модель, экземпляр).
+    """
+    site_ids = list(sites)
+    zones: dict[tuple[str, int], set[str]] = {}
+    groups: dict[tuple[str, str], list[_Board]] = {}
+    model_sites: dict[str, list[str]] = {}
+    for board in boards:
+        groups.setdefault((board.instance.vehicle.id, board.site_id), []).append(board)
+        listed = model_sites.setdefault(board.instance.vehicle.id, [])
+        if board.site_id not in listed:
+            listed.append(board.site_id)
+    for (model, site_id), members in groups.items():
+        own = [
+            cell
+            for cell in cells
+            if min(
+                model_sites[model],
+                key=lambda site: (bounds.gap_m(site, cell.id), site_ids.index(site)),
+            )
+            == site_id
+        ]
+        parts = (
+            _sectors(own, members[0].instance, sites[site_id], bounds, len(members))
+            if sectors
+            else [list(own)] * len(members)
+        )
+        for board, part in zip(members, parts, strict=True):
+            zones[board.instance.key] = {cell.id for cell in part}
+    return zones
+
+
+def _sectors(
+    cells: list[Cell], instance: FleetInstance, site: MetricPoint, bounds: SortieBounds, count: int
+) -> list[list[Cell]]:
+    """Разрезать подобласти на `count` секторов по азимуту от площадки, поровну по времени.
+
+    Время подобласти — галсы, растянутые на подлёт (как в `_site_load`).
+    Сектора идут по кругу; начало круга — в самом широком просвете между
+    соседними по азимуту подобластями, чтобы не резать скопление пополам.
+    """
+    if count <= 1 or not cells:
+        return [list(cells)] + [[] for _ in range(max(count - 1, 0))]
+    limit_s = endurance_limit_s(instance.vehicle)
+
+    def weight(cell: Cell) -> float:
+        spare_s = limit_s - bounds.overhead_s(instance, _distance(site, cell.centroid))
+        survey_s = bounds.survey_s(instance, cell.id)
+        return survey_s * limit_s / spare_s if spare_s > 0.0 else survey_s
+
+    def angle(cell: Cell) -> float:
+        return math.atan2(cell.centroid.y_m - site.y_m, cell.centroid.x_m - site.x_m)
+
+    ordered = sorted(cells, key=lambda cell: (angle(cell), cell.id))
+    angles = [angle(cell) for cell in ordered]
+    gaps = [
+        (angles[(index + 1) % len(angles)] - angles[index]) % (2.0 * math.pi)
+        for index in range(len(angles))
+    ]
+    start = (max(range(len(gaps)), key=lambda index: (gaps[index], -index)) + 1) % len(ordered)
+    ordered = ordered[start:] + ordered[:start]
+    total = sum(weight(cell) for cell in ordered)
+    parts: list[list[Cell]] = [[] for _ in range(count)]
+    walked = 0.0
+    for cell in ordered:
+        share = weight(cell)
+        index = min(int((walked + share / 2.0) / total * count), count - 1) if total > 0 else 0
+        parts[index].append(cell)
+        walked += share
+    return parts
+
+
+def reorder_sortie(
+    instance: FleetInstance,
+    site: MetricPoint,
+    site_id: str,
+    cell_ids: list[str],
+    duration_s: float,
+    cost: SortieCost,
+    cell_ends: CellEndsOf | None,
+) -> tuple[list[str], float] | None:
+    """Переставить подобласти вылета, если так он короче (`core.allocate.order`).
+
+    Порядок улучшается по прямым между концами змеек, а принимается, только
+    если точная сборка вылета моделью полёта короче хотя бы на
+    `ALLOCATE_SEARCH_TOLERANCE_S`.
+
+    Args:
+        instance: борт.
+        site: площадка взлёта и посадки, метры.
+        site_id: её идентификатор.
+        cell_ids: подобласти по порядку облёта.
+        duration_s: длительность вылета в этом порядке, секунды.
+        cost: точная длительность вылета.
+        cell_ends: концы змейки подобласти у модели борта; None — не переставлять.
+
+    Returns:
+        Новый порядок и длительность, секунды; None — лучше не нашлось.
+    """
+    if cell_ends is None or len(cell_ids) < 2:
+        return None
+    ends = {}
+    for cell_id in cell_ids:
+        item = cell_ends(cell_id, instance.vehicle.id)
+        if item is None:
+            return None
+        ends[cell_id] = item
+    order = improve_order(cell_ids, ends, site, site)
+    if order == cell_ids:
+        return None
+    shorter = cost(instance, site_id, order)
+    if shorter is None or shorter > duration_s - assumptions.ALLOCATE_SEARCH_TOLERANCE_S:
+        return None
+    return order, shorter
 
 
 def _plan_sortie(
@@ -555,10 +842,18 @@ def _build_sortie(
     reach = bounds.reach_m(instance)
     candidates = [cell_id for cell_id in remaining if serviceable(cell_id, instance.vehicle.id)]
     own = {cell_id for cell_id in candidates if weakest[cell_id] >= reach}
+    # Сначала своя зона (сектор зоны своей площадки, `_board_zones`), в ней —
+    # своя работа (её не снимет никто короче), затем чужая. В своей зоне
+    # дальние — раньше (короткие борта — наоборот), в чужой — ближние к своей
+    # площадке: помогать соседу с края его зоны.
+    zone = build.zone
+    mine = set(candidates) if zone is None else {item for item in candidates if item in zone}
+    direction = 1.0 if build.nearest_first else -1.0
     candidates.sort(
         key=lambda cell_id: (
+            cell_id not in mine,
             cell_id not in own,
-            -_distance(site, cells[cell_id].centroid),
+            (direction if cell_id in mine else 1.0) * _distance(site, cells[cell_id].centroid),
             cell_id,
         )
     )
@@ -577,28 +872,50 @@ def _build_sortie(
 
     # Добор: ближайшая к последней добавленной подобласть, которая по нижней
     # границе ещё может влезть. Не влезла по точной сборке — попытка потрачена.
+    # Добор кончился — подобласти переставляются (долг №58); освободилось
+    # время — добор продолжается.
     pool = set(candidates) - set(chosen)
-    failures = 0
-    while failures < assumptions.ALLOCATE_FILL_ATTEMPTS:
-        last = cells[chosen[-1]].centroid
-        fitting = [
-            cell_id
-            for cell_id in pool
-            if duration_s + bounds.survey_s(instance, cell_id) <= limit_s
-        ]
-        if not fitting:
-            break
-        preferred = [item for item in fitting if item in own] or fitting
-        cell_id = min(preferred, key=lambda item: (_distance(last, cells[item].centroid), item))
-        pool.discard(cell_id)
-        extended = cost(instance, board.site_id, [*chosen, cell_id])
-        if extended is None or extended > limit_s:
-            failures += 1
-            continue
-        chosen.append(cell_id)
-        duration_s = extended
+    while True:
         failures = 0
-    return chosen, duration_s
+        while failures < assumptions.ALLOCATE_FILL_ATTEMPTS:
+            last = cells[chosen[-1]].centroid
+            fitting = [
+                cell_id
+                for cell_id in pool
+                if duration_s + bounds.survey_s(instance, cell_id) <= limit_s
+            ]
+            if not fitting:
+                break
+            # Добор не уходит из своей зоны, пока в ней есть что взять: иначе
+            # вылет растекается на зону соседа и ждёт его на разведении.
+            if build.fill_zone_first:
+                preferred = (
+                    [item for item in fitting if item in own and item in mine]
+                    or [item for item in fitting if item in mine]
+                    or [item for item in fitting if item in own]
+                    or fitting
+                )
+            else:
+                preferred = (
+                    [item for item in fitting if item in own and item in mine]
+                    or [item for item in fitting if item in own]
+                    or fitting
+                )
+            cell_id = min(preferred, key=lambda item: (_distance(last, cells[item].centroid), item))
+            pool.discard(cell_id)
+            extended = cost(instance, board.site_id, [*chosen, cell_id])
+            if extended is None or extended > limit_s:
+                failures += 1
+                continue
+            chosen.append(cell_id)
+            duration_s = extended
+            failures = 0
+        reordered = reorder_sortie(
+            instance, site, board.site_id, chosen, duration_s, cost, build.cell_ends
+        )
+        if reordered is None:
+            return chosen, duration_s
+        chosen, duration_s = reordered
 
 
 def _classify_leftovers(
@@ -624,8 +941,11 @@ def _classify_leftovers(
 
 __all__ = [
     "ALGORITHM_NAME",
+    "STRATEGIES",
+    "GreedyStrategy",
     "SortieBounds",
     "SortiePlacer",
     "SurveyTime",
     "build_greedy_allocation",
+    "reorder_sortie",
 ]

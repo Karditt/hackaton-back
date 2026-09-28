@@ -63,4 +63,30 @@ def weighted_value(alpha: float, makespan_s: float, resource: float) -> float:
     return alpha * makespan_s + (1.0 - alpha) * resource
 
 
-__all__ = ["objective_value", "resource_s", "weighted_value"]
+def criterion_key(
+    mode: OptimizationMode,
+    deadline_s: float | None,
+    makespan_s: float,
+    resource: float,
+    complete: bool,
+) -> tuple[bool, bool, float, float]:
+    """Ключ сравнения двух планов по критерию режима: меньше — лучше.
+
+    Сначала полнота (частичных планов нет, инвариант 10), затем — как у
+    локального поиска: «минимум срока» — T, при равенстве R; «минимум ресурса»
+    — дедлайн как ограничение, затем R, при равенстве T.
+
+    Args:
+        mode: режим оптимизации.
+        deadline_s: дедлайн, секунды от начала работ; None — нет.
+        makespan_s: срок T, секунды.
+        resource: ресурс R, секунды.
+        complete: план покрывает всё.
+    """
+    if mode is OptimizationMode.MIN_RESOURCE:
+        late = deadline_s is not None and makespan_s > deadline_s
+        return not complete, late, resource, makespan_s
+    return not complete, False, makespan_s, resource
+
+
+__all__ = ["criterion_key", "objective_value", "resource_s", "weighted_value"]
