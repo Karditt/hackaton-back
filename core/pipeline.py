@@ -67,8 +67,10 @@ from core.transit.routing import make_router
 from core.validate import validate_plan
 
 #: Стадии, работающие на заглушках. Список сокращается по мере закрытия эпиков
-#: и напрямую попадает в `Mission.stub_stages`, KML и GeoJSON.
-STUB_STAGES: tuple[Stage, ...] = (Stage.SCHEDULE,)
+#: и напрямую попадает в `Mission.stub_stages`, KML и GeoJSON. С 2026-09-29
+#: пуст: расписание — задержка на земле с 4D-разведением, которую видит и
+#: распределение (E14); рекомендации невыполнимого плана объявляют себя сами.
+STUB_STAGES: tuple[Stage, ...] = ()
 
 #: Алгоритмы распределения. По умолчанию — конструктивная эвристика с
 #: локальным поиском (E6, шаги 2 и 3); эвристика без поиска и baseline всегда
