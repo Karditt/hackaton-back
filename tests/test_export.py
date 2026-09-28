@@ -91,7 +91,7 @@ def test_geojson_carries_status_and_altitude_reference(run: PlanningRun) -> None
     assert properties["altitude_mode"] == "relativeToGround"
     assert properties["altitude_reference"] == "AGL"
     assert properties["time_reference"] == "utc"
-    assert properties["stub_stages"]
+    assert properties["stub_stages"] == [stage.value for stage in run.mission.stub_stages]
 
 
 def test_feasible_export_has_routes_cells_keypoints_and_schedule(
