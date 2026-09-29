@@ -506,7 +506,8 @@ async def start_planning(
         alpha: вес срока в свёртке для фронта Парето, 0..1. Перекрывает сценарий.
         seed: зерно ГПСЧ. Перекрывает сценарий.
         allocator: алгоритм распределения — `local_search` (по умолчанию для малых областей),
-            `constructive` (по умолчанию для областей от 100 участков) или `baseline` (равные площади, точка сравнения E12).
+            `constructive` (по умолчанию от 100 участков) или `baseline`
+            (равные площади, точка сравнения E12).
 
     Returns:
         Идентификатор фоновой задачи для поллинга.
@@ -662,6 +663,14 @@ def list_jobs() -> dict[str, Any]:
 def get_job(job_id: str) -> dict[str, Any]:
     """Статус задачи. Это и есть точка поллинга."""
     return _job_or_404(job_id).public()
+
+
+@app.post("/jobs/{job_id}/cancel", tags=["расчёт"])
+def cancel_job(job_id: str) -> dict[str, Any]:
+    """Отменить идущий расчёт: процесс останавливается, задача завершается ошибкой."""
+    job = _job_or_404(job_id)
+    jobs.cancel(job_id)
+    return job.public()
 
 
 @app.get("/jobs/{job_id}/result", tags=["расчёт"])

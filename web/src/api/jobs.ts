@@ -38,6 +38,11 @@ export async function getJob(jobId: string): Promise<JobStatus> {
   return request<JobStatus>(`/jobs/${jobId}`);
 }
 
+/** Отменить расчёт: сервер останавливает процесс, задача завершается ошибкой «отменён». */
+export async function cancelJob(jobId: string): Promise<void> {
+  await request<unknown>(`/jobs/${jobId}/cancel`, { method: 'POST' });
+}
+
 /** Все задачи расчёта, новые первыми: и этого запуска сервера, и сохранённые прежде. */
 export async function listJobs(): Promise<JobStatus[]> {
   return (await request<{ jobs: JobStatus[] }>('/jobs')).jobs;

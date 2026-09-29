@@ -17,11 +17,13 @@ import asyncio
 import json
 import logging
 import math
+import multiprocessing
 import shutil
 import threading
 import traceback
 import uuid
 from collections.abc import Callable
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -74,6 +76,8 @@ class Job:
     state: JobState = JobState.PENDING
     progress: float = 0.0
     error: str | None = None
+    cancelled: bool = False
+    executor: Any = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     finished_at: datetime | None = None
     mission_id: str | None = None
@@ -392,6 +396,17 @@ class JobRegistry:
         """Задача по идентификатору."""
         return self._jobs.get(job_id)
 
+    def cancel(self, job_id: str) -> bool:
+        """Остановить расчёт: убить его процесс. False — задачи нет или она уже закончена."""
+        job = self._jobs.get(job_id)
+        if job is None or job.state not in (JobState.PENDING, JobState.RUNNING):
+            return False
+        job.cancelled = True
+        executor = job.executor
+        for process in list(getattr(executor, "_processes", {}).values()):
+            process.kill()
+        return True
+
     def by_mission(self, mission_id: str) -> Job | None:
         """Задача, породившая план."""
         return self._by_mission.get(mission_id)
@@ -451,16 +466,22 @@ class JobRegistry:
         ошибка входа или внутренняя ошибка.
         """
         job.state = JobState.RUNNING
+        # Отдельный процесс: поток остановить нельзя, а процесс — можно (отмена).
+        job.executor = ProcessPoolExecutor(1, mp_context=multiprocessing.get_context("spawn"))
         try:
-            run = await asyncio.to_thread(
-                run_pipeline, scenario, None, mode, alpha, seed, allocator
+            run = await asyncio.get_running_loop().run_in_executor(
+                job.executor, run_pipeline, scenario, None, mode, alpha, seed, allocator
             )
-        except CoreError as error:
-            job.state = JobState.FAILED
-            job.error = str(error)
-        except Exception:  # noqa: BLE001 — иначе задача падает молча
-            job.state = JobState.FAILED
-            job.error = "Внутренняя ошибка расчёта:\n" + traceback.format_exc(limit=5)
+        except Exception as error:  # noqa: BLE001
+            if job.cancelled:
+                job.state = JobState.FAILED
+                job.error = "Расчёт отменён"
+            elif isinstance(error, CoreError):
+                job.state = JobState.FAILED
+                job.error = str(error)
+            else:
+                job.state = JobState.FAILED
+                job.error = "Внутренняя ошибка расчёта:\n" + traceback.format_exc(limit=5)
         else:
             job.run = run
             job.state = JobState.DONE
@@ -470,6 +491,8 @@ class JobRegistry:
             await asyncio.to_thread(self._persist, job)
         finally:
             job.finished_at = job.finished_at or datetime.now(timezone.utc)
+            job.executor.shutdown(wait=False, cancel_futures=True)
+            job.executor = None
 
     def hint(self, hint_id: str) -> HintJob | None:
         """Задача подсказки по идентификатору."""

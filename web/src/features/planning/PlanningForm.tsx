@@ -36,6 +36,7 @@ type Props = {
   /** Почему расчёт выбранного сценария из интерфейса не запускается; null — запускается. */
   planningNote: string | null;
   onSubmit: () => void;
+  onCancel: () => void;
   busy: boolean;
   status: string;
   error: string | null;
@@ -84,6 +85,12 @@ export function PlanningForm(props: Props) {
       >
         {busy ? 'Считаю…' : props.planningNote ? 'Только просмотр' : 'Рассчитать'}
       </button>
+
+      {busy && (
+        <button className={styles.submit} onClick={props.onCancel}>
+          Отменить расчёт
+        </button>
+      )}
 
       <p className={styles.status}>Состояние: {props.status}</p>
       {props.error && <Notice tone="error">{props.error}</Notice>}

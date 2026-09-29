@@ -1,9 +1,10 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import {
   fetchMissionGeoJson,
   getResult,
   saveScenario,
   startPlanning,
+  cancelJob,
   waitForJob,
   type GeoJsonDocument,
   type OptimizationMode,
@@ -100,6 +101,7 @@ export function usePlanning({
   const [error, setError] = useState<string | null>(null);
   const [run, setRun] = useState<PlanningRun | null>(null);
   const [ranSignature, setRanSignature] = useState<string | null>(null);
+  const activeJob = useRef<string | null>(null);
 
   // Подпись выбора: сценарий, режим, все поля панели параметров и ТТХ флота.
   const signature = JSON.stringify([scenarioId, mode, options, vehicles]);
@@ -122,6 +124,7 @@ export function usePlanning({
         setStatus('сохраняю изменённые параметры'),
       );
       const job = await startPlanning(planId, mode);
+      activeJob.current = job.id;
       const finished = await waitForJob(job.id, (tick) =>
         setStatus(tick.state === 'running' ? 'идёт расчёт' : 'расчёт в очереди'),
       );
@@ -142,6 +145,7 @@ export function usePlanning({
       setStatus('ошибка');
       setPhase('error');
     } finally {
+      activeJob.current = null;
       setBusy(false);
     }
   }, [scenarioId, mode, scenario, options, vehicles, vehicleProblems, signature]);
@@ -197,8 +201,13 @@ export function usePlanning({
   const isCurrent = run !== null && ranSignature === signature;
   const stale = run !== null && !isCurrent;
 
+  const cancel = useCallback(async () => {
+    if (activeJob.current) await cancelJob(activeJob.current).catch(() => undefined);
+  }, []);
+
   return {
     start,
+    cancel,
     showJob,
     busy,
     status: stale ? 'параметры изменены — нужен пересчёт' : status,

@@ -213,6 +213,7 @@ export default function App() {
             parkFleet={parkFleet}
             planningNote={planningNote}
             onSubmit={planning.start}
+            onCancel={planning.cancel}
             busy={planning.busy}
             status={planning.status}
             error={loadError ?? catalogError ?? draft.error ?? planning.error}
