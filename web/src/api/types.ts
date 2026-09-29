@@ -7,7 +7,14 @@
  * и которых в контракте нет: сводка сценария, статус задачи, выгрузка GeoJSON.
  */
 
-import type { HintKind, HintReport, ImportReport, LayerStats, PlanWarning } from '../types/schema';
+import type {
+  HintKind,
+  HintReport,
+  ImportReport,
+  LayerStats,
+  OptimizationMode,
+  PlanWarning,
+} from '../types/schema';
 
 export type {
   AltitudeCorridor,
@@ -35,6 +42,7 @@ export type {
   ScheduleEntry,
   Severity,
   Site,
+  Stage,
   SurveyType,
   Vehicle,
   VehicleType,
@@ -116,6 +124,78 @@ export type HintStatus = {
   report: HintReport | null;
   /** Задача расчёта с планом из ответа; null — ответа нет. */
   plan_job_id: string | null;
+};
+
+/** Точка фронта «срок — ресурс» — `api/jobs.py`, `_point_public`. */
+export type ParetoPoint = {
+  /** Что это за план: «минимум срока», «минимум ресурса к сроку 3,20 ч»… */
+  label: string;
+  mode: OptimizationMode;
+  /** Ограничение по сроку, секунды; null — без срока (края фронта). */
+  deadline_s: number | null;
+  feasible: boolean;
+  /** Срок плана, секунды; null — план невыполним. */
+  makespan_s: number | null;
+  /** Ресурс плана — налёт плюс циклы, секунды. */
+  resource_s: number | null;
+  sortie_count: number | null;
+  vehicle_count: number | null;
+  /** Время расчёта точки, секунды. */
+  elapsed_s: number;
+  /** Другая точка не хуже по сроку и ресурсу и лучше хотя бы по одному. */
+  dominated: boolean;
+  /** Задача с планом точки: карта, итог, расписание, выгрузка. */
+  plan_job_id: string | null;
+};
+
+/** Статус задачи фронта — `api/jobs.py`, `ParetoJob.public()`. */
+export type ParetoStatus = {
+  id: string;
+  scenario_id: string;
+  state: JobState;
+  /** Доля готовности 0..1 — по числу готовых точек. */
+  progress: number;
+  /** Сколько планов будет: два края и промежуточные сроки. */
+  expected_points: number;
+  /** Готовые точки; по окончании — по возрастанию срока. */
+  points: ParetoPoint[];
+  error: string | null;
+  created_at: string;
+  finished_at: string | null;
+};
+
+/** Проба подбора площадки — `api/jobs.py`, `_trial_public`. */
+export type SiteTrial = {
+  /** «как есть (…)» или «площадка для дальних 20% площади». */
+  label: string;
+  /** Место новой площадки, WGS84; null — расчёт «как есть». */
+  position: { lon: number; lat: number } | null;
+  /** Доля площади дальней работы, ради которой поставлен кандидат, 0..1. */
+  share: number | null;
+  feasible: boolean;
+  /** Срок плана, секунды; null — план невыполним. */
+  makespan_s: number | null;
+  /** Ресурс плана — налёт плюс циклы, секунды. */
+  resource_s: number | null;
+  /** Время расчёта пробы, секунды. */
+  elapsed_s: number;
+  /** Задача с планом пробы: карта с предложенной площадкой, итог, выгрузка. */
+  plan_job_id: string;
+};
+
+/** Статус подбора площадки — `api/jobs.py`, `SitesJob.public()`. */
+export type SitesStatus = {
+  id: string;
+  scenario_id: string;
+  state: JobState;
+  progress: number;
+  /** Сколько расчётов ожидается: «как есть» и по кандидату на долю площади. */
+  expected_trials: number;
+  /** Готовые пробы: первая — «как есть», дальше кандидаты. */
+  trials: SiteTrial[];
+  error: string | null;
+  created_at: string;
+  finished_at: string | null;
 };
 
 export type GeoJsonFeature = {

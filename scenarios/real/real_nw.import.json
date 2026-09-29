@@ -34,7 +34,7 @@
       "code": "import.zone_window_unknown",
       "severity": "warning",
       "stage": "geo",
-      "message": "Зона UUR344_1: тип «врем_ограничение», но времени действия в файле нет — зона считается действующей всегда. Формат окон — docs/input_formats.md §3.2",
+      "message": "Зона UUR344_1: тип «врем_ограничение», но времени действия в файле нет — зона считается действующей всегда. Окна действия задаются полями active_from и active_to (формат — в документации сервиса)",
       "context": {},
       "geometry": null
     },
@@ -42,7 +42,7 @@
       "code": "import.zone_datum_unverified",
       "severity": "warning",
       "stage": "geo",
-      "message": "Высоты зон заданы над уровнем моря, а рельеф не задан: отметки прочитаны как высоты над поверхностью (ЦМР — E1, P1)",
+      "message": "Высоты зон заданы над уровнем моря, а рельеф не задан: отметки прочитаны как высоты над поверхностью",
       "context": {},
       "geometry": null
     },
@@ -58,7 +58,7 @@
       "code": "import.obstacle_altitude_mode_nonstandard",
       "severity": "warning",
       "stage": "geo",
-      "message": "Значение altitudeMode «relativetoseafloor» не из словаря KML — прочитано как отметка над уровнем моря (docs/input_formats.md §4.2)",
+      "message": "Значение altitudeMode «relativetoseafloor» не из словаря KML — прочитано как отметка над уровнем моря",
       "context": {},
       "geometry": null
     },
@@ -66,7 +66,7 @@
       "code": "import.obstacle_line_buffered",
       "severity": "warning",
       "stage": "geo",
-      "message": "Линейные препятствия развёрнуты в полосу шириной 10 м (допущение команды)",
+      "message": "Линейные препятствия (провода, ЛЭП) развёрнуты в полосу шириной 10 м — ширины в файле нет",
       "context": {},
       "geometry": null
     }

@@ -1,29 +1,45 @@
 {
-  "description": "Из каких файлов собран каждый сценарий: три слоя KML в формате заказчика и параметры задания JSON (docs/input_formats.md). Пути — от этого файла. Совпадение JSON сценария с файлами проверяет `python -m core.cli check-sources` и tests/test_sources.py.",
+  "description": "Из каких файлов собран каждый сценарий: три слоя KML в формате заказчика и параметры задания JSON (docs/input_formats.md). Пути — от этого файла. Совпадение JSON сценария с файлами проверяет `python -m core.cli check-sources` и tests/test_sources.py. `planning.note` — пояснение к сценарию в интерфейсе.",
   "scenarios": {
     "simple": {
       "scenario": "../simple.json",
       "area": "simple/area.kml",
-      "params": "simple/params.json"
+      "params": "simple/params.json",
+      "planning": {
+        "available": true,
+        "note": "Прямоугольник 2 × 1,5 км, два мультиротора. Расчёт — секунды."
+      }
     },
     "medium": {
       "scenario": "../medium.json",
       "area": "medium/area.kml",
       "zones": "medium/zones.kml",
-      "params": "medium/params.json"
+      "params": "medium/params.json",
+      "planning": {
+        "available": true,
+        "note": "Г-образная область с отверстием и запретной зоной; самолёт и три мультиротора на двух площадках. Расчёт — секунды."
+      }
     },
     "nasty": {
       "scenario": "../nasty.json",
       "area": "nasty/area.kml",
       "zones": "nasty/zones.kml",
-      "params": "nasty/params.json"
+      "params": "nasty/params.json",
+      "planning": {
+        "available": true,
+        "note": "Пример отчёта о невыполнимости: бортам не хватает вылетов на сложную область. Сервис называет причину и совет, проверенный пересчётом."
+      }
     },
     "demo_100km2": {
       "scenario": "../demo_100km2.json",
       "area": "demo_100km2/area.kml",
       "zones": "demo_100km2/zones.kml",
       "obstacles": "demo_100km2/obstacles.kml",
-      "params": "demo_100km2/params.json"
+      "params": "demo_100km2/params.json",
+      "planning": {
+        "available": true,
+        "note": "Два участка ~95 км², временная запретная зона, препятствия, 10 бортов на пяти площадках. Расчёт — около минуты."
+      }
     },
     "real_msk": {
       "scenario": "../real/real_msk.json",
@@ -34,7 +50,7 @@
       "report": "../real/real_msk.import.json",
       "planning": {
         "available": true,
-        "note": "Данные заказчика: 549 участков, 547 препятствий. Расчёт идёт около полуминуты."
+        "note": "549 участков съёмки на 245 км², 10 запретных зон, 547 препятствий, пул из 15 бортов. Расчёт — около пяти минут."
       }
     },
     "real_nw": {
@@ -46,7 +62,7 @@
       "report": "../real/real_nw.import.json",
       "planning": {
         "available": true,
-        "note": "Отложенный сценарий: настоящие зоны и препятствия заказчика, его островки в новой раскладке (relayout-area, зерно 1). Расчёт идёт около минуты."
+        "note": "Те же участки в другой раскладке к северо-западу от Москвы: 245 км², 16 запретных зон, 297 препятствий, 12 бортов. Расчёт — несколько минут."
       }
     }
   }

@@ -41,8 +41,11 @@ export type PlanningRun = {
   origin?: PlanOrigin;
 };
 
-/** Готовый план, показанный без расчёта: из подсказки по флоту или из истории. */
-export type PlanOrigin = 'hint' | 'history';
+/**
+ * Готовый план, показанный без расчёта: подсказка по флоту, фронт «срок —
+ * ресурс», подбор площадки, история.
+ */
+export type PlanOrigin = 'hint' | 'pareto' | 'sites' | 'history';
 
 /**
  * Состояние расчёта для показа: не считали, идёт, готов (выполним или нет),
@@ -116,7 +119,7 @@ export function usePlanning({
     setStatus('расчёт поставлен в очередь');
     try {
       const planId = await scenarioToRun(scenarioId, scenario, options, vehicles, () =>
-        setStatus('сохраняю правленые параметры'),
+        setStatus('сохраняю изменённые параметры'),
       );
       const job = await startPlanning(planId, mode);
       const finished = await waitForJob(job.id, (tick) =>

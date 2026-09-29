@@ -101,16 +101,11 @@ def _unpinned(scenario: Scenario) -> Scenario:
     return scenario.model_copy(update={"fleet": fleet})
 
 
-def _trial(
-    scenario: Scenario,
-    catalog: VehicleCatalog | None,
-    label: str,
-    position: GeoPoint | None,
-    share: float | None,
+def _summary(
+    run: PlanningRun, label: str, position: GeoPoint | None, share: float | None, started: float
 ) -> SiteTrial:
-    started = time.perf_counter()
-    mission = run_pipeline(scenario, catalog, verify=False).mission
-    metrics = mission.metrics if mission.is_feasible() else None
+    """Итог расчёта пробы: срок и ресурс плана или невыполнимость."""
+    metrics = run.mission.metrics if run.mission.is_feasible() else None
     return SiteTrial(
         label=label,
         position=position,
@@ -122,11 +117,24 @@ def _trial(
     )
 
 
+def _trial(
+    scenario: Scenario,
+    catalog: VehicleCatalog | None,
+    label: str,
+    position: GeoPoint | None,
+    share: float | None,
+) -> tuple[SiteTrial, PlanningRun]:
+    started = time.perf_counter()
+    run = run_pipeline(scenario, catalog, verify=False)
+    return _summary(run, label, position, share, started), run
+
+
 def suggest_sites(
     scenario: Scenario,
     catalog: VehicleCatalog | None = None,
     shares: tuple[float, ...] = assumptions.SITE_SUGGEST_SHARES,
     on_trial: Callable[[SiteTrial], None] | None = None,
+    on_plan: Callable[[SiteTrial, PlanningRun], None] | None = None,
 ) -> list[SiteTrial]:
     """Предложить место новой площадки и проверить каждое расчётом.
 
@@ -135,6 +143,8 @@ def suggest_sites(
         catalog: каталог техники. None — прочитать `data/vehicles.yaml`.
         shares: доли дальней работы, под которые ставятся кандидаты.
         on_trial: вызывается после каждого расчёта — для прогресса.
+        on_plan: вызывается после каждого расчёта вместе с планом — чтобы его
+            можно было открыть и выгрузить (API заводит его задачей).
 
     Returns:
         Базовый расчёт (без новой площадки, без приписки бортов) и расчёты с
@@ -142,27 +152,17 @@ def suggest_sites(
     """
     free = _unpinned(scenario)
 
-    def done(trial: SiteTrial) -> SiteTrial:
+    def done(planned: tuple[SiteTrial, PlanningRun]) -> SiteTrial:
+        trial, run = planned
         if on_trial is not None:
             on_trial(trial)
+        if on_plan is not None:
+            on_plan(trial, run)
         return trial
 
-    started = time.perf_counter()
-    base_run: PlanningRun = run_pipeline(free, catalog, verify=False)
-    base_metrics = base_run.mission.metrics if base_run.mission.is_feasible() else None
-    trials = [
-        done(
-            SiteTrial(
-                label="как есть (площадки бортам выбирает расчёт)",
-                position=None,
-                share=None,
-                feasible=base_metrics is not None,
-                makespan_s=base_metrics.makespan_s if base_metrics else None,
-                resource_s=base_metrics.resource_s if base_metrics else None,
-                elapsed_s=time.perf_counter() - started,
-            )
-        )
-    ]
+    base = _trial(free, catalog, "как есть (площадки бортам выбирает расчёт)", None, None)
+    base_run = base[1]
+    trials = [done(base)]
     decomposition = base_run.result.decomposition
     if decomposition is None:
         return trials

@@ -1,6 +1,19 @@
-import type { BoardSummary } from '../../api';
+import type { BoardSummary, FlightPhase } from '../../api';
 import { groupsOf, resetPlanLayers, toggleGroup, type MapFilter } from './layers';
+import { PHASE_COLORS } from './missionStyles';
+import { PHASE_LABELS } from './popup';
 import styles from './MapControls.module.css';
+
+/** Фазы в легенде — в порядке полёта; ожидание в воздухе в планах не встречается. */
+const LEGEND_PHASES: FlightPhase[] = [
+  'takeoff',
+  'climb',
+  'transit',
+  'strip',
+  'turn',
+  'descent',
+  'landing',
+];
 
 type Props = {
   filter: MapFilter;
@@ -58,6 +71,19 @@ export function MapControls({ filter, onChange, boards }: Props) {
       >
         показать всё
       </button>
+
+      <ul className={styles.legend} aria-label="Цвета маршрута">
+        {LEGEND_PHASES.map((phase) => (
+          <li key={phase} className={styles.legendItem}>
+            <span
+              className={phase === 'strip' ? styles.swatchWide : styles.swatch}
+              style={{ background: PHASE_COLORS[phase] }}
+              aria-hidden="true"
+            />
+            {PHASE_LABELS[phase]}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

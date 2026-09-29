@@ -162,8 +162,12 @@ def _write_outputs(run: PlanningRun, target: Path, batch: bool, board: str | Non
     projector = run.work_area.projector
     directory_mode = batch or target.suffix == ""
     if directory_mode:
-        return write_mission_files(run.result, run.scenario, projector, target)
-    return [export_mission(run.result, run.scenario, projector, target, format_for(target), board)]
+        return write_mission_files(run.result, run.scenario, projector, target, run.names)
+    return [
+        export_mission(
+            run.result, run.scenario, projector, target, format_for(target), board, run.names
+        )
+    ]
 
 
 def _dump_stages(run: PlanningRun, directory: Path) -> Path:

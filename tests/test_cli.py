@@ -65,7 +65,7 @@ def test_single_board_file(tmp_path: Path) -> None:
     )
     assert code == 0
     text = output.read_text(encoding="utf-8")
-    assert "geoscan-gemini #1" in text and "geoscan-gemini_2" not in text
+    assert "Геоскан Gemini #1" in text and "geoscan-gemini_2" not in text
 
 
 def test_export_schema_produces_valid_json(tmp_path: Path) -> None:

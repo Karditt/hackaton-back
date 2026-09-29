@@ -34,7 +34,7 @@ from typing import Any, Protocol
 
 from shapely.ops import unary_union
 
-from core import assumptions
+from core import assumptions, text
 from core.advise import advice_note, diagnose, verify_recommendations
 from core.allocate.baseline import build_baseline_allocation
 from core.allocate.fleet import FleetInstance, expand_fleet
@@ -117,6 +117,11 @@ class PlanningRun:
     def mission(self) -> Mission:
         """Итог конвейера: план или отчёт о невыполнимости."""
         return self.result.mission
+
+    @property
+    def names(self) -> dict[str, str]:
+        """Название модели по идентификатору — подписи бортов в выгрузке."""
+        return {vehicle.id: vehicle.name for vehicle in self.catalog}
 
 
 class _Clock:
@@ -222,11 +227,11 @@ def _service_note(sorties: list[Sortie], vehicles: dict[str, Vehicle]) -> PlanWa
     if not worst:
         return None
     parts = [
-        f"{vehicles[model].name} — до {share * 100:.1f}% интервала на борт"
+        f"{vehicles[model].name} — до {text.num(share * 100)}% межсервисного интервала на борт"
         for model, share in sorted(worst.items())
     ]
     tail = (
-        f"; у {', '.join(sorted(vehicles[model].name for model in missing))} норматива нет"
+        f"; для {', '.join(sorted(vehicles[model].name for model in missing))} норматив не задан"
         if missing
         else ""
     )
@@ -235,9 +240,8 @@ def _service_note(sorties: list[Sortie], vehicles: dict[str, Vehicle]) -> PlanWa
         severity=Severity.INFO,
         stage=Stage.ALLOCATE,
         message=(
-            "Износ по нормативам ТО (201, 401 — 80 полётов, 801 — 160 ч): "
-            + "; ".join(parts)
-            + tail
+            "Износ по нормативам ТО (Геоскан 201 и 401 — каждые 80 полётов, Геоскан 801 — "
+            "каждые 160 ч): " + "; ".join(parts) + tail
         ),
         context={model: f"{share:.4f}" for model, share in worst.items()},
     )
@@ -363,22 +367,23 @@ def _strategy_note(scenario: Scenario, tried: list[_Tried], best: int) -> PlanWa
     parts = []
     for strategy, allocation, _coverage, sorties, _schedule in tried:
         if allocation.unassigned_cell_ids or not sorties:
-            parts.append(f"«{strategy.name}» — невыполнимо")
+            parts.append(f"«{strategy.name}» — задание не выполняет")
             continue
         makespan_s = max(sortie.end_time_s() for sortie in sorties)
-        flight_h = sum(sortie.duration_s for sortie in sorties) / 3600.0
+        flight_s = sum(sortie.duration_s for sortie in sorties)
         parts.append(
-            f"«{strategy.name}» — срок {makespan_s / 3600.0:.2f} ч, налёт {flight_h:.1f} ч"
+            f"«{strategy.name}» — срок {text.duration_text(makespan_s)}, налёт "
+            f"{text.duration_text(flight_s)}"
         )
     return PlanWarning(
         code="allocate.strategies",
         severity=Severity.INFO,
         stage=Stage.ALLOCATE,
         message=(
-            "Распределение пробовало стратегии: "
+            "Сравнены способы распределения работ: "
             + "; ".join(parts)
-            + f". Взята «{tried[best][0].name}» — лучшая по критерию режима "
-            f"«{scenario.mode.value}»"
+            + f". Выбран «{tried[best][0].name}» — лучший по критерию "
+            f"«{text.MODE_LABELS[scenario.mode]}»"
         ),
         context={"strategy": tried[best][0].name},
     )

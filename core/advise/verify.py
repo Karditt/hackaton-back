@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from core import assumptions
+from core import assumptions, text
 from core.geo.mask import WorkArea
 from core.schemas import (
     FleetUnit,
@@ -111,10 +111,10 @@ def _outcome(what: str, mission: Mission) -> str:
     if mission.is_feasible() and mission.metrics is not None:
         return (
             f"Проверено расчётом: {what} задание выполнимо, срок "
-            f"{mission.metrics.makespan_s / 3600:.2f} ч".replace(".", ",")
+            f"{text.duration_text(mission.metrics.makespan_s)}"
         )
     reason = mission.reasons[0].message if mission.reasons else "причина не названа"
-    return f"Проверено расчётом: {what} задание всё ещё невыполнимо — {reason}"
+    return f"Проверено расчётом: {what} задание всё ещё невыполнимо — {text.lower_first(reason)}"
 
 
 def verify_recommendations(

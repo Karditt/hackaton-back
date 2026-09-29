@@ -31,6 +31,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable
 
+from core import assumptions, text
 from core.allocate.fleet import FleetInstance, sortie_id
 from core.schemas import (
     Allocation,
@@ -46,6 +47,9 @@ from core.schemas import (
 
 #: Имя алгоритма в отчётах и в сравнении с оптимизатором.
 ALGORITHM_NAME = "baseline:uniform_split"
+
+#: Формы слова «подобласть» после числа — в сообщениях о невзятых подобластях.
+_CELLS = ("подобласть", "подобласти", "подобластей")
 
 #: Длительность вылета борта с площадки над набором подобластей, секунды,
 #: либо None, если вылет не укладывается в заряд. Реализацию даёт модель
@@ -272,9 +276,10 @@ def _unassigned_warnings(
                 severity=Severity.ERROR,
                 stage=Stage.ALLOCATE,
                 message=(
-                    f"{len(unserviceable)} подобластей не может снять ни один борт флота: "
-                    "у самолётов зона манёвра задевает запретную зону или препятствие, а "
-                    "мультироторов, которым она не нужна, нет"
+                    "Ни один борт флота не может снять "
+                    f"{text.counted(len(unserviceable), _CELLS)}: у самолётов зона манёвра "
+                    "задевает запретную зону или препятствие, а мультироторов, которым она не "
+                    "нужна, нет"
                 ),
                 context={"cell_ids": ",".join(unserviceable)},
             )
@@ -286,9 +291,10 @@ def _unassigned_warnings(
                 severity=Severity.ERROR,
                 stage=Stage.ALLOCATE,
                 message=(
-                    f"{len(out_of_reach)} подобластей не укладываются ни в один вылет: "
-                    "подлёт, съёмка подобласти и возврат дольше доступных 80% заряда "
-                    "у всех бортов, которые могут её снять"
+                    "Ни в один вылет не укладываются "
+                    f"{text.counted(len(out_of_reach), _CELLS)}: подлёт, съёмка и возврат "
+                    f"дольше доступных {100 - assumptions.BATTERY_RESERVE_FRACTION * 100:.0f}% "
+                    "заряда у всех бортов, которые могут их снять"
                 ),
                 context={"cell_ids": ",".join(out_of_reach)},
             )
@@ -300,8 +306,9 @@ def _unassigned_warnings(
                 severity=Severity.ERROR,
                 stage=Stage.ALLOCATE,
                 message=(
-                    f"{len(no_trips_left)} подобластей не хватило вылетов: у бортов, "
-                    "которые могут их снять, исчерпан заданный предел вылетов"
+                    f"Не хватило вылетов на {text.counted(len(no_trips_left), _CELLS)}: у "
+                    "бортов, которые могут их снять, исчерпан заданный предел вылетов "
+                    "(комплекты АКБ)"
                 ),
                 context={"cell_ids": ",".join(no_trips_left)},
             )

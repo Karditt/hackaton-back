@@ -5,9 +5,10 @@
 
 * борт — физический экземпляр модели из флота: пара (модель, номер экземпляра).
   Его идентификатор `board_id` — `<модель>_<номер с единицы>`, например
-  `geoscan-gemini_3`: так же борт подписан в интерфейсе («geoscan-gemini #3»),
-  и так же называется его файл задания. Определение одно на весь проект —
-  `core.allocate.fleet.board_id`: из него же строится `sortie_id` вылета;
+  `geoscan-gemini_3`: так называется его файл задания. Подпись для человека —
+  название модели и номер: «Геоскан Gemini #3». Определение идентификатора
+  одно на весь проект — `core.allocate.fleet.board_id`: из него же строится
+  `sortie_id` вылета;
 * ключевые точки вылета — границы этапов полёта, которые называл заказчик
   (№30: взлёт, перелёт, площадная съёмка, посадка): взлёт, начало и конец
   съёмки каждой подобласти, посадка. Время точек взлёта и посадки совпадает с
@@ -18,17 +19,28 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
 
+from core import text
 from core.allocate.fleet import board_id
 from core.errors import ExportError
 from core.schemas import FlightPhase, Mission, Sortie
 
 
-def board_label(vehicle_id: str, vehicle_instance: int) -> str:
-    """Подпись борта для человека — как в интерфейсе: `geoscan-gemini #3`."""
-    return f"{vehicle_id} #{vehicle_instance + 1}"
+def board_label(
+    vehicle_id: str, vehicle_instance: int, names: Mapping[str, str] | None = None
+) -> str:
+    """Подпись борта для человека: «Геоскан Gemini #3».
+
+    Args:
+        vehicle_id: модель борта.
+        vehicle_instance: номер экземпляра, с нуля.
+        names: название модели по идентификатору; модели нет в словаре —
+            подпись по идентификатору, `geoscan-gemini #3`.
+    """
+    return text.board_label((names or {}).get(vehicle_id, vehicle_id), vehicle_instance)
 
 
 def sortie_board_id(sortie: Sortie) -> str:
@@ -75,13 +87,14 @@ class Board:
         }
 
 
-def boards_of(mission: Mission) -> list[Board]:
+def boards_of(mission: Mission, names: Mapping[str, str] | None = None) -> list[Board]:
     """Борта, получившие вылеты, по модели и номеру экземпляра.
 
     У невыполнимого плана вылетов нет, и список пуст (инвариант 10).
 
     Args:
         mission: итог конвейера.
+        names: название модели по идентификатору — для подписи борта.
 
     Returns:
         Борта; вылеты каждого — в порядке взлёта.
@@ -92,7 +105,7 @@ def boards_of(mission: Mission) -> list[Board]:
     return [
         Board(
             id=board_id(vehicle_id, instance),
-            label=board_label(vehicle_id, instance),
+            label=board_label(vehicle_id, instance, names),
             vehicle_id=vehicle_id,
             vehicle_instance=instance,
             sorties=tuple(sorted(sorties, key=lambda item: (item.start_time_s, item.trip_index))),
@@ -101,12 +114,15 @@ def boards_of(mission: Mission) -> list[Board]:
     ]
 
 
-def select_boards(mission: Mission, board: str | None) -> list[Board]:
+def select_boards(
+    mission: Mission, board: str | None, names: Mapping[str, str] | None = None
+) -> list[Board]:
     """Борта для выгрузки: все либо один.
 
     Args:
         mission: итог конвейера.
         board: идентификатор борта (`board_id`); None — все борта.
+        names: название модели по идентификатору — для подписи борта.
 
     Returns:
         Выбранные борта.
@@ -114,7 +130,7 @@ def select_boards(mission: Mission, board: str | None) -> list[Board]:
     Raises:
         ExportError: борта с таким идентификатором в плане нет.
     """
-    boards = boards_of(mission)
+    boards = boards_of(mission, names)
     if board is None:
         return boards
     for item in boards:

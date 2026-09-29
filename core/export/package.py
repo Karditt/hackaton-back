@@ -18,6 +18,7 @@ from __future__ import annotations
 import io
 import re
 import zipfile
+from collections.abc import Mapping
 from pathlib import Path
 
 from core.export.boards import boards_of
@@ -51,7 +52,10 @@ def board_file_name(scenario_id: str, board: str) -> str:
 
 
 def mission_files(
-    result: PipelineResult, scenario: Scenario, projector: Projector
+    result: PipelineResult,
+    scenario: Scenario,
+    projector: Projector,
+    names: Mapping[str, str] | None = None,
 ) -> dict[str, bytes]:
     """Все файлы расчёта в памяти: имя → содержимое.
 
@@ -59,27 +63,32 @@ def mission_files(
         result: все стадии прогона.
         scenario: исходный сценарий.
         projector: преобразователь рабочей проекции в WGS84.
+        names: название модели по идентификатору — подписи бортов в файлах.
 
     Returns:
         Обзорные GeoJSON, KML, расписание CSV и KML на каждый борт плана.
     """
     stem = file_stem(scenario.id)
     files = {
-        f"{stem}.geojson": geojson_to_text(mission_to_geojson(result, scenario, projector)).encode(
-            "utf-8"
-        ),
-        f"{stem}.kml": kml_to_bytes(mission_to_kml(result, scenario, projector)),
+        f"{stem}.geojson": geojson_to_text(
+            mission_to_geojson(result, scenario, projector, names=names)
+        ).encode("utf-8"),
+        f"{stem}.kml": kml_to_bytes(mission_to_kml(result, scenario, projector, names=names)),
         f"{stem}.schedule.csv": schedule_to_csv(result.mission, scenario).encode("utf-8"),
     }
     for board in boards_of(result.mission):
         files[board_file_name(scenario.id, board.id)] = kml_to_bytes(
-            mission_to_kml(result, scenario, projector, board.id)
+            mission_to_kml(result, scenario, projector, board.id, names)
         )
     return files
 
 
 def write_mission_files(
-    result: PipelineResult, scenario: Scenario, projector: Projector, directory: Path
+    result: PipelineResult,
+    scenario: Scenario,
+    projector: Projector,
+    directory: Path,
+    names: Mapping[str, str] | None = None,
 ) -> list[Path]:
     """Записать комплект файлов расчёта в каталог.
 
@@ -88,33 +97,40 @@ def write_mission_files(
         scenario: исходный сценарий.
         projector: преобразователь рабочей проекции в WGS84.
         directory: каталог выгрузки.
+        names: название модели по идентификатору — подписи бортов в файлах.
 
     Returns:
         Пути записанных файлов.
     """
     directory.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
-    for name, content in mission_files(result, scenario, projector).items():
+    for name, content in mission_files(result, scenario, projector, names).items():
         path = directory / name
         path.write_bytes(content)
         written.append(path)
     return written
 
 
-def mission_zip(result: PipelineResult, scenario: Scenario, projector: Projector) -> bytes:
+def mission_zip(
+    result: PipelineResult,
+    scenario: Scenario,
+    projector: Projector,
+    names: Mapping[str, str] | None = None,
+) -> bytes:
     """Комплект файлов расчёта одним архивом ZIP.
 
     Args:
         result: все стадии прогона.
         scenario: исходный сценарий.
         projector: преобразователь рабочей проекции в WGS84.
+        names: название модели по идентификатору — подписи бортов в файлах.
 
     Returns:
         Содержимое архива: те же файлы, что пишет CLI в каталог.
     """
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        for name, content in mission_files(result, scenario, projector).items():
+        for name, content in mission_files(result, scenario, projector, names).items():
             info = zipfile.ZipInfo(name, date_time=_ZIP_TIMESTAMP)
             info.compress_type = zipfile.ZIP_DEFLATED
             archive.writestr(info, content)

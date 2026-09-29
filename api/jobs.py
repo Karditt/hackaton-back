@@ -30,8 +30,10 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from core import assumptions
 from core.errors import CoreError
 from core.hints import run_hint
+from core.pareto import ParetoPoint, pareto_front
 from core.pipeline import ALLOCATORS, PlanningRun, restore_run, run_pipeline
 from core.schemas import (
     HintKind,
@@ -41,6 +43,7 @@ from core.schemas import (
     PipelineResult,
     Scenario,
 )
+from core.sites import SiteTrial, suggest_sites
 
 #: Сколько готовых планов хранить на диске: старые удаляются. План на данных
 #: заказчика — десятки мегабайт; тридцати хватает на рабочий день сравнений.
@@ -77,6 +80,9 @@ class Job:
     mission_status: str | None = None
     algorithm: str | None = None
     """Алгоритм распределения плана: `baseline:…` — точка сравнения."""
+    listed: bool = True
+    """Показывать ли в истории расчётов: планы точек фронта Парето — нет, их
+    открывают из самого фронта."""
     loader: Callable[[], PlanningRun] | None = field(default=None, repr=False)
     _run: PlanningRun | None = field(default=None, repr=False)
     # Маршруты API без `async` идут в пуле потоков, и веб просит результат и
@@ -163,6 +169,118 @@ class HintJob:
         }
 
 
+@dataclass
+class ParetoJob:
+    """Задача фронта Парето «срок — ресурс»: несколько планов с краш-тестом (E12, №52).
+
+    Точки появляются по мере расчёта; план каждой заведён задачей расчёта
+    (`plan_job_id`) и открывается как обычный расчёт — без записи в историю.
+    """
+
+    id: str
+    scenario_id: str
+    expected_points: int
+    """Сколько планов ожидается: два края и промежуточные сроки."""
+    state: JobState = JobState.PENDING
+    points: list[dict[str, Any]] = field(default_factory=list)
+    """Готовые точки: в порядке расчёта, а по окончании — по возрастанию срока."""
+    error: str | None = None
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    finished_at: datetime | None = None
+
+    @property
+    def progress(self) -> float:
+        """Доля готовности 0..1."""
+        if self.state is JobState.DONE:
+            return 1.0
+        return min(0.95, len(self.points) / max(1, self.expected_points))
+
+    def public(self) -> dict[str, Any]:
+        """Представление задачи для клиента: состояние и готовые точки."""
+        return {
+            "id": self.id,
+            "scenario_id": self.scenario_id,
+            "state": self.state.value,
+            "progress": self.progress,
+            "expected_points": self.expected_points,
+            "points": list(self.points),
+            "error": self.error,
+            "created_at": self.created_at.isoformat(),
+            "finished_at": self.finished_at.isoformat() if self.finished_at else None,
+        }
+
+
+@dataclass
+class SitesJob:
+    """Задача подбора места новой площадки: базовый расчёт и кандидаты (№28).
+
+    Каждая проба — план с краш-тестом, заведён задачей расчёта `plan_job_id`
+    вне истории: на его карте видна предложенная площадка.
+    """
+
+    id: str
+    scenario_id: str
+    expected_trials: int
+    """Сколько расчётов ожидается: базовый и по кандидату на долю площади."""
+    state: JobState = JobState.PENDING
+    trials: list[dict[str, Any]] = field(default_factory=list)
+    error: str | None = None
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    finished_at: datetime | None = None
+
+    @property
+    def progress(self) -> float:
+        """Доля готовности 0..1; кандидатов может оказаться меньше долей — не больше 0,95."""
+        if self.state is JobState.DONE:
+            return 1.0
+        return min(0.95, len(self.trials) / max(1, self.expected_trials))
+
+    def public(self) -> dict[str, Any]:
+        """Представление задачи для клиента: состояние и готовые пробы."""
+        return {
+            "id": self.id,
+            "scenario_id": self.scenario_id,
+            "state": self.state.value,
+            "progress": self.progress,
+            "expected_trials": self.expected_trials,
+            "trials": list(self.trials),
+            "error": self.error,
+            "created_at": self.created_at.isoformat(),
+            "finished_at": self.finished_at.isoformat() if self.finished_at else None,
+        }
+
+
+def _trial_public(trial: SiteTrial, plan_job_id: str) -> dict[str, Any]:
+    """Проба площадки для клиента: место, итог плана и задача, где он лежит."""
+    return {
+        "label": trial.label,
+        "position": trial.position.model_dump(mode="json") if trial.position else None,
+        "share": trial.share,
+        "feasible": trial.feasible,
+        "makespan_s": trial.makespan_s,
+        "resource_s": trial.resource_s,
+        "elapsed_s": round(trial.elapsed_s, 1),
+        "plan_job_id": plan_job_id,
+    }
+
+
+def _point_public(point: ParetoPoint, plan_job_id: str | None) -> dict[str, Any]:
+    """Точка фронта для клиента: итог плана и задача, где он лежит."""
+    return {
+        "label": point.label,
+        "mode": point.mode.value,
+        "deadline_s": point.deadline_s,
+        "feasible": point.feasible,
+        "makespan_s": point.makespan_s,
+        "resource_s": point.resource_s,
+        "sortie_count": point.sortie_count,
+        "vehicle_count": point.vehicle_count,
+        "elapsed_s": round(point.elapsed_s, 1),
+        "dominated": point.dominated,
+        "plan_job_id": plan_job_id,
+    }
+
+
 def _expected_runs(scenario: Scenario, kind: HintKind) -> int:
     """Оценка числа прогонов вопроса: для полосы прогресса, не для расчёта."""
     size = sum(unit.count for unit in scenario.fleet)
@@ -196,6 +314,8 @@ class JobRegistry:
         self._jobs: dict[str, Job] = {}
         self._by_mission: dict[str, Job] = {}
         self._hints: dict[str, HintJob] = {}
+        self._fronts: dict[str, ParetoJob] = {}
+        self._sites: dict[str, SitesJob] = {}
         # Ссылки на задачи держатся явно: asyncio хранит их только слабо,
         # и без этого сборщик мусора может снять расчёт на середине.
         self._tasks: set[asyncio.Task[None]] = set()
@@ -277,8 +397,9 @@ class JobRegistry:
         return self._by_mission.get(mission_id)
 
     def all(self) -> list[Job]:
-        """Все задачи, новые первыми."""
-        return sorted(self._jobs.values(), key=lambda job: job.created_at, reverse=True)
+        """Все задачи истории, новые первыми; планы точек фронта Парето — нет."""
+        listed = [job for job in self._jobs.values() if job.listed]
+        return sorted(listed, key=lambda job: job.created_at, reverse=True)
 
     def submit(
         self,
@@ -435,5 +556,123 @@ class JobRegistry:
         finally:
             job.finished_at = datetime.now(timezone.utc)
 
+    def front(self, front_id: str) -> ParetoJob | None:
+        """Задача фронта Парето по идентификатору."""
+        return self._fronts.get(front_id)
 
-__all__ = ["HintJob", "Job", "JobRegistry", "JobState"]
+    def submit_pareto(self, scenario: Scenario, steps: int = assumptions.PARETO_STEPS) -> ParetoJob:
+        """Поставить фронт «срок — ресурс» в расчёт — как `submit`, в пул потоков.
+
+        Args:
+            scenario: сценарий; его флот — пул, его срок не учитывается.
+            steps: сколько промежуточных сроков между краями.
+
+        Returns:
+            Созданная задача в состоянии PENDING.
+        """
+        job = ParetoJob(
+            id=f"front-{uuid.uuid4().hex[:8]}",
+            scenario_id=scenario.id,
+            expected_points=steps + 2,
+        )
+        self._fronts[job.id] = job
+        task = asyncio.create_task(self._execute_pareto(job, scenario, steps))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return job
+
+    async def _execute_pareto(self, job: ParetoJob, scenario: Scenario, steps: int) -> None:
+        """Построить фронт; план каждой точки — задача расчёта вне истории.
+
+        Точки идут в `job.points` по мере расчёта (из потока расчёта — список
+        только пополняется), а в конце заменяются итоговыми: по возрастанию
+        срока и с пометкой доминируемых.
+        """
+        plan_jobs: dict[tuple[str, float | None], str] = {}
+
+        def on_plan(point: ParetoPoint, run: PlanningRun) -> None:
+            plan_job_id = self._plan_job(run)
+            plan_jobs[(point.mode.value, point.deadline_s)] = plan_job_id
+            job.points.append(_point_public(point, plan_job_id))
+
+        job.state = JobState.RUNNING
+        try:
+            points = await asyncio.to_thread(pareto_front, scenario, None, steps, None, on_plan)
+        except CoreError as error:
+            job.state = JobState.FAILED
+            job.error = str(error)
+        except Exception:  # noqa: BLE001 — иначе задача падает молча
+            job.state = JobState.FAILED
+            job.error = "Внутренняя ошибка расчёта фронта:\n" + traceback.format_exc(limit=5)
+        else:
+            job.points = [
+                _point_public(point, plan_jobs.get((point.mode.value, point.deadline_s)))
+                for point in points
+            ]
+            job.state = JobState.DONE
+        finally:
+            job.finished_at = datetime.now(timezone.utc)
+
+    def site_search(self, search_id: str) -> SitesJob | None:
+        """Задача подбора площадки по идентификатору."""
+        return self._sites.get(search_id)
+
+    def submit_sites(self, scenario: Scenario) -> SitesJob:
+        """Поставить подбор места новой площадки в расчёт — как `submit`, в пул потоков.
+
+        Args:
+            scenario: сценарий; его пул и площадки.
+
+        Returns:
+            Созданная задача в состоянии PENDING.
+        """
+        job = SitesJob(
+            id=f"sites-{uuid.uuid4().hex[:8]}",
+            scenario_id=scenario.id,
+            expected_trials=1 + len(assumptions.SITE_SUGGEST_SHARES),
+        )
+        self._sites[job.id] = job
+        task = asyncio.create_task(self._execute_sites(job, scenario))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return job
+
+    def _plan_job(self, run: PlanningRun) -> str:
+        """Завести готовый план задачей расчёта вне истории; вернуть её идентификатор."""
+        plan_job = Job(
+            id=f"job-{uuid.uuid4().hex[:8]}",
+            scenario_id=run.scenario.id,
+            state=JobState.DONE,
+            progress=1.0,
+            finished_at=datetime.now(timezone.utc),
+            listed=False,
+        )
+        plan_job.run = run
+        self._jobs[plan_job.id] = plan_job
+        self._by_mission[run.mission.id] = plan_job
+        return plan_job.id
+
+    async def _execute_sites(self, job: SitesJob, scenario: Scenario) -> None:
+        """Подобрать площадку; план каждой пробы — задача расчёта вне истории."""
+
+        def on_plan(trial: SiteTrial, run: PlanningRun) -> None:
+            job.trials.append(_trial_public(trial, self._plan_job(run)))
+
+        job.state = JobState.RUNNING
+        try:
+            await asyncio.to_thread(
+                suggest_sites, scenario, None, assumptions.SITE_SUGGEST_SHARES, None, on_plan
+            )
+        except CoreError as error:
+            job.state = JobState.FAILED
+            job.error = str(error)
+        except Exception:  # noqa: BLE001 — иначе задача падает молча
+            job.state = JobState.FAILED
+            job.error = "Внутренняя ошибка подбора площадки:\n" + traceback.format_exc(limit=5)
+        else:
+            job.state = JobState.DONE
+        finally:
+            job.finished_at = datetime.now(timezone.utc)
+
+
+__all__ = ["HintJob", "Job", "JobRegistry", "JobState", "ParetoJob", "SitesJob"]

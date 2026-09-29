@@ -17,16 +17,36 @@ type Props = {
   onOpenSchedule: () => void;
 };
 
-/** Предупреждения всех стадий конвейера в порядке их выполнения. */
-function collectWarnings(result: PipelineResult): PlanWarning[] {
-  return [
+/** Порядок показа: сначала то, что требует внимания, справки — в конце. */
+const SEVERITY_ORDER = { error: 0, warning: 1, info: 2 } as const;
+
+/**
+ * Предупреждения всех стадий конвейера: важные сверху, внутри уровня — в
+ * порядке стадий.
+ *
+ * У выполнимого плана ошибок нет по определению: ошибка стадии (например,
+ * борт без подходящей камеры исключён из пула) план не сломала, и
+ * показывается она как «Внимание», а не как ошибка плана.
+ */
+function collectWarnings(result: PipelineResult, feasible: boolean): PlanWarning[] {
+  const all = [
     ...(result.survey_plan.warnings ?? []),
     ...(result.decomposition?.warnings ?? []),
     ...(result.allocation?.warnings ?? []).filter((item) => item.severity !== 'error'),
     ...(result.coverage?.warnings ?? []),
     ...(result.mission.schedule?.warnings ?? []),
     ...(result.mission.warnings ?? []),
-  ];
+  ].map((item) =>
+    feasible && item.severity === 'error' ? { ...item, severity: 'warning' as const } : item,
+  );
+  return all
+    .map((item, index) => ({ item, index }))
+    .sort(
+      (a, b) =>
+        SEVERITY_ORDER[a.item.severity ?? 'warning'] -
+          SEVERITY_ORDER[b.item.severity ?? 'warning'] || a.index - b.index,
+    )
+    .map(({ item }) => item);
 }
 
 /**
@@ -37,7 +57,7 @@ export function ResultPanel({ run, vehicles, onOpenSchedule }: Props) {
   const { result } = run;
   const mission = result.mission;
   const feasible = mission.status === 'feasible';
-  const warnings = collectWarnings(result);
+  const warnings = collectWarnings(result, feasible);
   const stubStages = mission.stub_stages ?? [];
   const boards = run.document.properties?.boards ?? [];
 
@@ -49,28 +69,43 @@ export function ResultPanel({ run, vehicles, onOpenSchedule }: Props) {
           текущим — «Рассчитать».
         </Notice>
       )}
-      {run.label && run.origin !== 'history' && (
+      {run.label && run.origin === 'hint' && (
         <Notice tone="caution">
-          {run.label} — не расчёт флота сценария: борта подобраны подсказкой, режим «минимум срока».
-          Чтобы вернуться к флоту сценария — «Рассчитать».
+          {run.label}: борта подобраны подсказкой по флоту, критерий — минимум срока. Чтобы
+          посчитать весь пул сценария — «Рассчитать».
+        </Notice>
+      )}
+      {run.label && run.origin === 'sites' && (
+        <Notice tone="caution">
+          {run.label} — пробный план подбора площадки: новая площадка на карте подписана
+          «Предложенная площадка», площадки бортам выбирал расчёт. Чтобы посчитать по параметрам
+          задания — «Рассчитать».
+        </Notice>
+      )}
+      {run.label && run.origin === 'pareto' && (
+        <Notice tone="caution">
+          {run.label} — точка фронта «срок — ресурс», срок задания не учитывался. Чтобы посчитать по
+          параметрам задания — «Рассчитать».
         </Notice>
       )}
       {feasible ? (
-        <Notice tone="success">План выполним: область покрыта целиком, краш-тест пройден.</Notice>
+        <Notice tone="success">
+          План выполним: область покрыта целиком, проверка безопасности пройдена.
+        </Notice>
       ) : (
         <Notice tone="error">
-          Задание невыполнимо. Частичный план не выдаётся — ниже причины и что добавить.
+          Задание невыполнимо. Частичный план не выдаётся — ниже причины и что изменить.
         </Notice>
       )}
 
       {feasible && mission.metrics && (
-        <Section title="Метрики">
+        <Section title="Итог">
           <MetricsList result={result} vehicles={vehicles} />
         </Section>
       )}
 
       {feasible && mission.metrics && !mission.algorithm.startsWith('baseline') && (
-        <Section title="Сравнение с baseline">
+        <Section title="Сравнение с равномерным делением">
           {/* Новый план — новое сравнение: прежнее относилось к другому расчёту. */}
           <BaselineCompare key={run.jobId} run={run} />
         </Section>
@@ -81,7 +116,7 @@ export function ResultPanel({ run, vehicles, onOpenSchedule }: Props) {
           <Section title={`Причины (${mission.reasons?.length ?? 0})`}>
             <WarningsList warnings={mission.reasons ?? []} />
           </Section>
-          <Section title="Что добавить">
+          <Section title="Что изменить">
             <RecommendationsList items={mission.recommendations ?? []} />
           </Section>
         </>
@@ -100,11 +135,11 @@ export function ResultPanel({ run, vehicles, onOpenSchedule }: Props) {
 
       {stubStages.length > 0 && (
         <Notice tone="caution">
-          Стадии на заглушках: {stubStages.join(', ')}. Это не окончательный расчёт.
+          Часть расчёта выполнена упрощённо ({stubStages.join(', ')}) — это предварительный план.
         </Notice>
       )}
 
-      <Section title={`Предупреждения (${warnings.length})`}>
+      <Section title={`Замечания и справки (${warnings.length})`}>
         <WarningsList warnings={warnings} />
       </Section>
 

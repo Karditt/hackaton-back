@@ -9,10 +9,21 @@ type Props = {
   vehicles: Vehicle[];
 };
 
-const MODE_LABEL: Record<string, string> = {
+export const MODE_LABEL: Record<string, string> = {
   min_makespan: 'минимум срока',
   min_resource: 'минимум ресурса',
 };
+
+/**
+ * Алгоритм распределения словами. Значение приходит строкой вида
+ * `constructive:earliest_free+local_search`; неизвестное показывается как есть.
+ */
+export function algorithmLabel(algorithm: string): string {
+  if (algorithm.startsWith('baseline')) return 'равномерное деление (для сравнения)';
+  if (algorithm.includes('local_search')) return 'эвристика с локальным поиском';
+  if (algorithm.startsWith('constructive')) return 'конструктивная эвристика';
+  return algorithm;
+}
 
 /** Метрики выполнимого плана (PROJECT_BRIEF.md §4.3). */
 export function MetricsList({ result, vehicles }: Props) {
@@ -26,10 +37,8 @@ export function MetricsList({ result, vehicles }: Props) {
   const idle = mission.fleet_idle ?? [];
 
   const rows: [label: string, value: string][] = [
-    ['Режим', MODE_LABEL[metrics.mode] ?? metrics.mode],
-    ['Алгоритм', mission.algorithm],
-    ['Срок (makespan)', hours(metrics.makespan_s)],
-    ['Ресурс: налёт + циклы', hours(metrics.resource_s)],
+    ['Срок выполнения работ', hours(metrics.makespan_s)],
+    ['Ресурс техники: налёт + циклы', hours(metrics.resource_s)],
     ['Суммарный налёт', hours(metrics.total_flight_time_s)],
     ['Циклов взлёт-посадка', String(metrics.cycle_count)],
     ['Вылетов / бортов', `${metrics.sortie_count} / ${metrics.vehicle_count}`],
@@ -45,8 +54,7 @@ export function MetricsList({ result, vehicles }: Props) {
   }
   rows.push(
     ['Подобластей снято', `${metrics.cells_covered} из ${metrics.cells_planned}`],
-    ['Дистанция', kilometres(metrics.total_distance_m)],
-    ['Проекция', `EPSG:${crs.epsg}`],
+    ['Протяжённость маршрутов', kilometres(metrics.total_distance_m)],
   );
   if (metrics.deadline_s != null) {
     rows.push([
@@ -54,6 +62,11 @@ export function MetricsList({ result, vehicles }: Props) {
       `${minutes(metrics.deadline_s)} — ${metrics.deadline_met ? 'укладываемся' : 'не укладываемся'}`,
     ]);
   }
+  rows.push(
+    ['Критерий', MODE_LABEL[metrics.mode] ?? metrics.mode],
+    ['Алгоритм', algorithmLabel(mission.algorithm)],
+    ['Система координат расчёта', `${crs.name || 'UTM'} (EPSG:${crs.epsg})`],
+  );
 
   return (
     <dl className={styles.metrics}>

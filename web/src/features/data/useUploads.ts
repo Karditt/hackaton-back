@@ -119,7 +119,7 @@ export function useUploads({ scenarioId, scenario, sourceId, onCreated }: Option
       }
       const base = baseId(scenarioId || String(params.id ?? 'scenario'));
       params.id = `${base}${UPLOAD_SUFFIX}`;
-      params.name = `${String(params.name || base)} (загруженные файлы)`;
+      params.name = `${String(params.name || base)} (свои файлы)`;
     }
     return JSON.stringify(params);
   }, [files, scenario, scenarioId, sourceId]);

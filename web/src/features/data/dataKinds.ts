@@ -104,7 +104,7 @@ export const DATA_KINDS: DataKind[] = [
   {
     id: 'scenario',
     label: 'Сценарий целиком',
-    hint: 'собран из файлов выше, по контракту',
+    hint: 'все данные задания одним файлом JSON',
     layerGroup: null,
     countKey: null,
     countForms: ['', '', ''],

@@ -14,8 +14,7 @@ type Props = {
   vehicles: Vehicle[];
   catalogError: string | null;
   park: ParkState;
-  /** Выбранный на вкладке «План» сценарий и его флот — чтобы перенести флот в парк. */
-  scenarioId: string;
+  /** Флот выбранного на вкладке «План» сценария — чтобы перенести его в парк. */
   scenarioFleet: FleetUnit[] | null;
 };
 
@@ -28,7 +27,7 @@ type View = 'boards' | 'models' | 'payloads';
  * борта, которые в строю. ТТХ моделей каталога только показываются —
  * с пометкой, что из документа, что выведено, где пробел (инвариант 6).
  */
-export function FleetPage({ vehicles, catalogError, park, scenarioId, scenarioFleet }: Props) {
+export function FleetPage({ vehicles, catalogError, park, scenarioFleet }: Props) {
   const [view, setView] = useState<View>('boards');
   const [modelId, setModelId] = useState('');
 
@@ -41,7 +40,7 @@ export function FleetPage({ vehicles, catalogError, park, scenarioId, scenarioFl
   const edited = Object.keys(park.park.edits).length;
   const hidden = park.park.hidden.length;
   const catalogNote = [
-    edited > 0 ? `правлено моделей: ${edited}` : '',
+    edited > 0 ? `изменено моделей: ${edited}` : '',
     hidden > 0 ? `скрыто: ${hidden}` : '',
   ]
     .filter(Boolean)
@@ -68,15 +67,12 @@ export function FleetPage({ vehicles, catalogError, park, scenarioId, scenarioFl
             {active}, в расчёт уйдут {toCalculation}
             {skipped.length > 0 &&
               ` (ещё ${skipped.length} — скрытых моделей или с ошибками в ТТХ)`}
-            . Флот расчёта набирается на вкладке «План»: «Параметры сценария» → «Взять борта в строю
-            из парка».
+            . Пул расчёта набирается на вкладке «План и карта»: «Параметры задания» → «Взять борта в
+            строю из парка».
           </p>
           <p className={styles.subtitle}>
-            Каталог моделей — data/vehicles.yaml
-            {catalogNote
-              ? `; ${catalogNote} — вернуть можно в разделе «Модели и ТТХ»`
-              : ', без правок'}
-            .
+            Модели Геоскан с характеристиками из документации производителя
+            {catalogNote ? `; ${catalogNote} — вернуть можно в разделе «Модели и ТТХ»` : ''}.
           </p>
         </div>
         <nav className={styles.segmented} aria-label="Разделы техники">
@@ -97,8 +93,7 @@ export function FleetPage({ vehicles, catalogError, park, scenarioId, scenarioFl
       {catalogError && <Notice tone="error">{catalogError}</Notice>}
       {!park.persisted && (
         <Notice tone="caution">
-          Парк не сохранён ни на сервере, ни в браузере — он проживёт только до перезагрузки
-          страницы.
+          Парк не удалось сохранить — изменения проживут только до перезагрузки страницы.
         </Notice>
       )}
 
@@ -106,7 +101,6 @@ export function FleetPage({ vehicles, catalogError, park, scenarioId, scenarioFl
         <BoardsView
           vehicles={vehicles}
           park={park}
-          scenarioId={scenarioId}
           scenarioFleet={scenarioFleet}
           onOpenModel={openModel}
         />

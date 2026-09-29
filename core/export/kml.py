@@ -36,14 +36,18 @@
 from __future__ import annotations
 
 import html
+from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
+from core import text
 from core.export.boards import (
     Board,
     KeyPoint,
     KeyPointKind,
+    boards_of,
     select_boards,
     sortie_board_id,
     sortie_keypoints,
@@ -118,6 +122,33 @@ _AREA_STYLES: dict[str, tuple[str, int, int, int]] = {
     "airspace": ("#7c3aed", 0xFF, 0x00, 2),
     "obstacle": ("#7f1d1d", 0xFF, 0x99, 2),
 }
+
+
+#: Советы невыполнимому плану — имена меток в папке «Рекомендации».
+_ADVICE_TITLES: dict[str, str] = {
+    "add_site": "Площадка",
+    "add_vehicle": "Борт",
+    "add_batteries": "Вылеты",
+    "other_model": "Другая модель",
+    "wait": "Подождать",
+    "relax_requirement": "Требование",
+}
+
+
+@dataclass(frozen=True)
+class _Labels:
+    """Подписи для человека: борта и площадки по идентификаторам."""
+
+    boards: Mapping[str, str]
+    sites: Mapping[str, str]
+
+    def board(self, board_id: str) -> str:
+        """«Геоскан Gemini #3»; незнакомый борт — идентификатор."""
+        return self.boards.get(board_id, board_id)
+
+    def site(self, site_id: str) -> str:
+        """Площадка после слова «площадка»: «Юг» из «Площадка «Юг»» (`text.site_label`)."""
+        return text.site_label(site_id, self.sites)
 
 
 def _kml_color(rgb: str, alpha: int = 0xFF) -> str:
@@ -323,19 +354,19 @@ def _styles(document: ET.Element) -> None:
     _sub(line, "width", "6")
 
 
-def _schedule_table(rows: list[ScheduleRow], start_time: datetime | None) -> str:
+def _schedule_table(rows: list[ScheduleRow], start_time: datetime | None, labels: _Labels) -> str:
     """Расписание HTML-таблицей — для описания папки в Google Earth."""
-    header = ("Борт", "Вылет", "Взлёт", "Посадка", "Площадки", "Сдвиг, с", "Эшелон, м")
+    header = ("Борт", "Вылет", "Взлёт", "Посадка", "Площадки", "Ожидание", "Эшелон, м")
     lines = ["<table border='1' cellpadding='2' cellspacing='0'>"]
     lines.append("<tr>" + "".join(f"<th>{item}</th>" for item in header) + "</tr>")
     for row in rows:
         cells = (
-            row.board_id,
+            labels.board(row.board_id),
             str(row.trip_index + 1),
             time_label(start_time, row.start_s),
             time_label(start_time, row.end_s),
-            f"{row.takeoff_site_id} → {row.landing_site_id}",
-            str(row.delay_s),
+            f"{labels.site(row.takeoff_site_id)} → {labels.site(row.landing_site_id)}",
+            text.duration_text(row.delay_s) if row.delay_s > 0 else "—",
             str(row.transit_altitude_m),
         )
         lines.append("<tr>" + "".join(f"<td>{html.escape(item)}</td>" for item in cells) + "</tr>")
@@ -344,7 +375,7 @@ def _schedule_table(rows: list[ScheduleRow], start_time: datetime | None) -> str
 
 
 def _schedule_folder(
-    parent: ET.Element, rows: list[ScheduleRow], start_time: datetime | None
+    parent: ET.Element, rows: list[ScheduleRow], start_time: datetime | None, labels: _Labels
 ) -> None:
     """Папка «Расписание»: таблица в описании и строка на вылет.
 
@@ -362,18 +393,24 @@ def _schedule_folder(
         "Расписание",
         open_=False,
         snippet=f"Вылетов {len(rows)} · {span_label(start_time, first, last)}",
-        description=_schedule_table(rows, start_time),
+        description=_schedule_table(rows, start_time, labels),
     )
     for row in rows:
+        wait = (
+            f", старт отложен на {text.duration_text(row.delay_s)} ради разведения бортов"
+            if row.delay_s > 0
+            else ""
+        )
         _feature(
             folder,
             "Placemark",
-            f"{span_label(start_time, row.start_s, row.end_s)} · {row.board_id} · "
+            f"{span_label(start_time, row.start_s, row.end_s)} · {labels.board(row.board_id)} · "
             f"вылет {row.trip_index + 1}",
             description=(
-                f"Взлёт — площадка {row.takeoff_site_id}, посадка — {row.landing_site_id}. "
-                f"Полётное время {row.duration_min} мин, эшелон перелёта "
-                f"{row.transit_altitude_m} м AGL, старт сдвинут на {row.delay_s} с."
+                f"Взлёт — площадка {labels.site(row.takeoff_site_id)}, посадка — "
+                f"{labels.site(row.landing_site_id)}. Полётное время "
+                f"{text.num(row.duration_min)} мин, эшелон перелёта "
+                f"{row.transit_altitude_m} м над землёй{wait}."
             ),
             span=(row.start_time_utc, row.end_time_utc),
             data={"kind": "schedule_entry", **row.as_dict()},
@@ -387,16 +424,21 @@ def _keypoint_placemark(
     lon: float,
     lat: float,
     start_time: datetime | None,
+    labels: _Labels,
 ) -> None:
     """Ключевая точка вылета: точка с высотой и моментом."""
-    where = f"площадка {point.site_id}" if point.site_id else f"подобласть {point.cell_id}"
+    where = (
+        f"площадка {labels.site(point.site_id)}" if point.site_id else f"подобласть {point.cell_id}"
+    )
     utc = utc_time(start_time, point.time_s)
     moment = f"{utc} ({relative_time(point.time_s)})" if utc else relative_time(point.time_s)
     placemark = _feature(
         parent,
         "Placemark",
         f"{point.title} · {time_label(start_time, point.time_s)}",
-        description=f"{point.title}: {where}, высота {point.alt_m:.0f} м AGL, время {moment}.",
+        description=(
+            f"{point.title}: {where}, высота {point.alt_m:.0f} м над землёй, время {moment}."
+        ),
         when=utc,
         style=f"kp-{point.kind.value}",
         data={
@@ -465,6 +507,7 @@ def _sortie_folder(
     result: PipelineResult,
     scenario: Scenario,
     projector: Projector,
+    labels: _Labels,
 ) -> None:
     """Папка одного вылета: ключевые точки, трек, маршрут по фазам, подобласти."""
     start_time = scenario.start_time
@@ -478,11 +521,12 @@ def _sortie_folder(
         f"{span_label(start_time, sortie.start_time_s, sortie.end_time_s())}",
         open_=False,
         description=(
-            f"Взлёт — площадка {sortie.takeoff_site_id}, посадка — {sortie.landing_site_id}. "
-            f"Длительность {sortie.duration_s / 60:.1f} мин, дистанция "
-            f"{sortie.distance_m / 1000:.1f} км, съёмка на {sortie.survey_altitude_m:.0f} м AGL, "
-            f"перелёт на {sortie.transit_altitude_m:.0f} м AGL. "
-            f"Подобласти: {', '.join(sortie.cell_ids)}."
+            f"Взлёт — площадка {labels.site(sortie.takeoff_site_id)}, посадка — "
+            f"{labels.site(sortie.landing_site_id)}. Длительность "
+            f"{text.num(sortie.duration_s / 60)} мин, протяжённость "
+            f"{text.num(sortie.distance_m / 1000)} км, съёмка на "
+            f"{sortie.survey_altitude_m:.0f} м над землёй, перелёт на "
+            f"{sortie.transit_altitude_m:.0f} м. Подобласти: {', '.join(sortie.cell_ids)}."
         ),
         data={
             **schedule,
@@ -500,7 +544,7 @@ def _sortie_folder(
 
     for point in sortie_keypoints(sortie):
         lon, lat = projector.coords_to_geo([(point.x_m, point.y_m)])[0]
-        _keypoint_placemark(folder, sortie, point, lon, lat, start_time)
+        _keypoint_placemark(folder, sortie, point, lon, lat, start_time, labels)
 
     if start_time is not None:
         _track_placemark(folder, sortie, geo, start_time)
@@ -523,8 +567,8 @@ def _sortie_folder(
             continue
         start_s, end_s = leg.waypoints[0].time_s, leg.waypoints[-1].time_s
         name = f"{index + 1:02d} · {_PHASE_TITLES[leg.phase]}"
-        if leg.strip_id:
-            name += f" {leg.strip_id}"
+        if leg.cell_id and leg.phase is FlightPhase.STRIP:
+            name += f", подобласть {leg.cell_id}"
         placemark = _feature(
             legs_folder,
             "Placemark",
@@ -560,7 +604,9 @@ def _sortie_folder(
                 cells_folder,
                 "Placemark",
                 f"Подобласть {cell_id}",
-                description=f"Снять целиком на высоте {sortie.survey_altitude_m:.0f} м AGL.",
+                description=(
+                    f"Снять целиком на высоте {sortie.survey_altitude_m:.0f} м над землёй."
+                ),
                 style="cell",
                 data={
                     "kind": "survey_cell",
@@ -593,6 +639,7 @@ def _board_folder(
     scenario: Scenario,
     projector: Projector,
     open_: bool,
+    labels: _Labels,
 ) -> None:
     """Папка борта: его вылеты в порядке взлёта."""
     start_time = scenario.start_time
@@ -603,13 +650,13 @@ def _board_folder(
         open_=open_,
         description=(
             f"Вылетов {len(board.sorties)}, полётное время "
-            f"{board.flight_time_s / 60:.1f} мин; "
+            f"{text.duration_text(board.flight_time_s)}; "
             f"{span_label(start_time, board.first_takeoff_s, board.last_landing_s)}."
         ),
         data={"kind": "board", **board.summary()},
     )
     for sortie in board.sorties:
-        _sortie_folder(folder, sortie, rows.get(sortie.id), result, scenario, projector)
+        _sortie_folder(folder, sortie, rows.get(sortie.id), result, scenario, projector, labels)
 
 
 def _context_folder(document: ET.Element, scenario: Scenario) -> None:
@@ -625,8 +672,8 @@ def _context_folder(document: ET.Element, scenario: Scenario) -> None:
         _polygon(placemark, _geo_rings(polygon))
 
     for zone in scenario.no_fly_zones:
-        low = f"от {zone.min_alt_m:.0f}" if zone.min_alt_m is not None else "от земли"
-        high = f"до {zone.max_alt_m:.0f} м AGL" if zone.max_alt_m is not None else "без потолка"
+        low = f"от {zone.min_alt_m:.0f} м" if zone.min_alt_m is not None else "от земли"
+        high = f"до {zone.max_alt_m:.0f} м" if zone.max_alt_m is not None else "без потолка"
         active_from = utc_time(zone.active_from, 0.0)
         active_to = utc_time(zone.active_to, 0.0)
         window = (
@@ -688,7 +735,7 @@ def _context_folder(document: ET.Element, scenario: Scenario) -> None:
             folder,
             "Placemark",
             site.name or site.id,
-            description=f"Площадка {site.id}, тип {site.kind.value}.",
+            description=f"Площадка взлёта и посадки, {text.SITE_KIND_LABELS[site.kind]}.",
             style="site",
             data={"kind": "site", "site_id": site.id, "site_kind": site.kind.value},
         )
@@ -698,11 +745,11 @@ def _context_folder(document: ET.Element, scenario: Scenario) -> None:
 def _report_folders(document: ET.Element, mission: Mission, projector: Projector) -> None:
     """Отчёт о невыполнимости: причины с местами нарушений и рекомендации."""
     reasons = _feature(document, "Folder", "Причины невыполнимости", open_=True)
-    for reason in mission.reasons:
+    for index, reason in enumerate(mission.reasons):
         placemark = _feature(
             reasons,
             "Placemark",
-            reason.code,
+            f"Причина {index + 1}",
             description=reason.message,
             style="violation" if reason.geometry is not None else None,
             data={"kind": "violation", "code": reason.code, "stage": reason.stage.value},
@@ -718,7 +765,7 @@ def _report_folders(document: ET.Element, mission: Mission, projector: Projector
         placemark = _feature(
             advice,
             "Placemark",
-            item.kind.value,
+            _ADVICE_TITLES.get(item.kind.value, item.kind.value),
             description=item.message,
             style="recommended" if item.position is not None else None,
             data={"kind": "recommended_site", "recommendation": item.kind.value},
@@ -740,51 +787,54 @@ def _document_description(
             span = span_label(scenario.start_time, item.first_takeoff_s, item.last_landing_s)
             lines.append(
                 f"<b>Полётное задание борта {html.escape(item.label)}.</b> "
-                f"Вылетов {len(item.sorties)}, полётное время {item.flight_time_s / 60:.1f} мин, "
-                f"{html.escape(span)}."
+                f"Вылетов {len(item.sorties)}, полётное время "
+                f"{text.duration_text(item.flight_time_s)}, {html.escape(span)}."
             )
             lines.append(
                 f"Часть плана «{html.escape(scenario.name or scenario.id)}»: всего вылетов "
                 f"{metrics.sortie_count}, бортов {metrics.vehicle_count}, срок "
-                f"{metrics.makespan_s / 60:.1f} мин."
+                f"{text.duration_text(metrics.makespan_s)}."
             )
         else:
             lines.append(
-                f"<b>План выполним.</b> Режим {mission.mode.value}, алгоритм "
-                f"{html.escape(mission.algorithm)}. Срок {metrics.makespan_s / 60:.1f} мин, "
-                f"налёт {metrics.total_flight_time_s / 60:.1f} мин, вылетов "
+                f"<b>План выполним.</b> Критерий — {text.MODE_LABELS[mission.mode]}. Срок "
+                f"{text.duration_text(metrics.makespan_s)}, налёт "
+                f"{text.duration_text(metrics.total_flight_time_s)}, вылетов "
                 f"{metrics.sortie_count}, бортов {metrics.vehicle_count}."
             )
     else:
-        lines.append("<b>ПЛАН НЕВЫПОЛНИМ.</b> Маршрутов нет — частичных планов не бывает.")
+        lines.append("<b>ЗАДАНИЕ НЕВЫПОЛНИМО.</b> Маршрутов нет — частичный план не выдаётся.")
         lines.extend(html.escape(reason.message) for reason in mission.reasons[:5])
 
     if scenario.start_time is not None:
         lines.append(
             f"Время — UTC, начало работ {utc_time(scenario.start_time, 0.0)}. Полёт проигрывается "
-            "на шкале времени: у участков TimeSpan, у ключевых точек TimeStamp, у вылета — трек "
-            "gx:Track."
+            "на шкале времени: у участков маршрута — интервал, у ключевых точек — момент, у "
+            "вылета — трек 4D."
         )
     else:
         lines.append(
-            "<b>Время относительное:</b> начало работ в сценарии не задано (start_time), поэтому "
-            "меток времени и треков нет. Моменты подписаны «T+чч:мм:сс» от начала работ."
+            "<b>Время относительное:</b> начало работ не задано, поэтому меток времени и треков "
+            "нет. Моменты подписаны «T+чч:мм:сс» от начала работ."
         )
-    lines.append("Высоты — метры над поверхностью (AGL), altitudeMode = relativeToGround.")
+    lines.append("Высоты — метры над поверхностью земли (altitudeMode = relativeToGround).")
     if mission.is_feasible():
         lines.append(
             "Папки: «Расписание» — вылеты по времени; «Полётные задания» — борт → вылет → "
             "ключевые точки, трек, маршрут по фазам, подобласти; «Сценарий» — исходные слои."
         )
     if mission.stub_stages:
-        stages = ", ".join(stage.value for stage in mission.stub_stages)
-        lines.append(f"ВНИМАНИЕ: заглушки на стадиях {stages} — план не окончательный.")
-    lines.append(f"Формат {FORMAT_VERSION}, описание — docs/export_format.md.")
+        lines.append("Часть расчёта выполнена упрощённо — это предварительный план.")
+    lines.append(f"Формат файла — {FORMAT_VERSION}.")
     return "<br>".join(lines)
 
 
 def mission_to_kml(
-    result: PipelineResult, scenario: Scenario, projector: Projector, board: str | None = None
+    result: PipelineResult,
+    scenario: Scenario,
+    projector: Projector,
+    board: str | None = None,
+    names: Mapping[str, str] | None = None,
 ) -> ET.ElementTree:
     """Собрать KML: полётное задание или отчёт о невыполнимости.
 
@@ -794,6 +844,8 @@ def mission_to_kml(
         projector: преобразователь рабочей проекции в WGS84.
         board: идентификатор борта (`board_id`) — индивидуальное задание
             одного борта; None — весь план.
+        names: название модели по идентификатору — подписи бортов
+            «Геоскан Gemini #3»; None — подпись по идентификатору модели.
 
     Returns:
         Дерево XML, готовое к записи.
@@ -802,8 +854,12 @@ def mission_to_kml(
         ExportError: борта с таким идентификатором в плане нет.
     """
     mission = result.mission
-    boards = select_boards(mission, board)
+    boards = select_boards(mission, board, names)
     rows = schedule_rows(mission, scenario, board)
+    labels = _Labels(
+        boards={item.id: item.label for item in boards_of(mission, names)},
+        sites={site.id: site.name or site.id for site in scenario.sites},
+    )
 
     # Пространства имён — обычными атрибутами: дерево в памяти и записанный
     # файл совпадают по именам элементов, а префикс `gx:` пишется как есть.
@@ -837,12 +893,19 @@ def mission_to_kml(
     )
 
     if mission.is_feasible():
-        _schedule_folder(document, rows, scenario.start_time)
+        _schedule_folder(document, rows, scenario.start_time, labels)
         routes = _feature(document, "Folder", "Полётные задания", open_=True)
         by_sortie = {row.sortie_id: row for row in rows}
         for item in boards:
             _board_folder(
-                routes, item, by_sortie, result, scenario, projector, open_=board is not None
+                routes,
+                item,
+                by_sortie,
+                result,
+                scenario,
+                projector,
+                open_=board is not None,
+                labels=labels,
             )
     else:
         _report_folders(document, mission, projector)
@@ -863,6 +926,7 @@ def write_kml(
     projector: Projector,
     path: Path,
     board: str | None = None,
+    names: Mapping[str, str] | None = None,
 ) -> Path:
     """Записать KML на диск.
 
@@ -872,12 +936,13 @@ def write_kml(
         projector: преобразователь рабочей проекции в WGS84.
         path: путь файла.
         board: идентификатор борта; None — весь план.
+        names: название модели по идентификатору — подписи бортов.
 
     Returns:
         Путь записанного файла.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(kml_to_bytes(mission_to_kml(result, scenario, projector, board)))
+    path.write_bytes(kml_to_bytes(mission_to_kml(result, scenario, projector, board, names)))
     return path
 
 

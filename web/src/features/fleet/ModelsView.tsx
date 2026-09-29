@@ -3,6 +3,7 @@ import type { Vehicle } from '../../api';
 import { plural } from '../../shared/format';
 import { Notice } from '../../shared/ui/Notice';
 import { Toggle } from '../../shared/ui/Toggle';
+import { gapText } from './gaps';
 import { ModelSpecs } from './ModelSpecs';
 import {
   PAYLOAD_KINDS,
@@ -79,7 +80,7 @@ export function ModelsView({ vehicles, park, selectedId, onSelect }: Props) {
               >
                 <span className={styles.boardLabel}>
                   {model.name}
-                  {isEdited(model) && <span className={styles.userBadge}>правлена</span>}
+                  {isEdited(model) && <span className={styles.userBadge}>изменена</span>}
                   {model.hidden && <span className={styles.hiddenBadge}>скрыта</span>}
                 </span>
                 <span className={styles.boardMeta}>
@@ -189,8 +190,9 @@ function ModelDetails({ model, payloads, park, reserve, onCopy, onRemoved }: Det
 
       {base && !isEdited(model) && !model.hidden && (
         <p className={styles.hint}>
-          Данные каталога: официальные документы производителя (data/vehicles.yaml). Любое число
-          можно поправить — правка хранится отдельно, и к данным каталога всегда можно вернуться.
+          Характеристики — из документации производителя; у каждого числа указано, откуда оно. Любое
+          число можно поправить: правка хранится отдельно, и к данным каталога всегда можно
+          вернуться.
         </p>
       )}
       {base && isEdited(model) && (
@@ -199,7 +201,7 @@ function ModelDetails({ model, payloads, park, reserve, onCopy, onRemoved }: Det
             ? `ТТХ изменены: ${model.edited.length} ${plural(model.edited.length, ['поле', 'поля', 'полей'])}`
             : 'Изменён состав нагрузок'}
           {model.edited.length > 0 && model.payloadsEdited ? ' и состав нагрузок' : ''}. В расчёт
-          уходят ваши числа, план помечает модель как посчитанную по данным пользователя.{' '}
+          уходят ваши числа, план помечает модель как посчитанную по вашим данным.{' '}
           <button
             type="button"
             className={styles.inlineLink}
@@ -218,7 +220,7 @@ function ModelDetails({ model, payloads, park, reserve, onCopy, onRemoved }: Det
       {custom && (
         <>
           <Notice tone="caution">
-            ТТХ своей модели — ввод пользователя, а не документ производителя. В расчёт они уходят
+            ТТХ своей модели — ваши значения, а не документ производителя. В расчёт они уходят
             вместе со сценарием, план помечает такие борта.
           </Notice>
           <div className={styles.pair}>
@@ -309,10 +311,10 @@ function ModelDetails({ model, payloads, park, reserve, onCopy, onRemoved }: Det
 
       {base && (base.gaps ?? []).length > 0 && (
         <details className={styles.gaps}>
-          <summary>Пробелы и выведенные значения каталога ({base.gaps?.length})</summary>
+          <summary>Чего нет в документах производителя ({base.gaps?.length})</summary>
           <ul>
             {base.gaps?.map((gap) => (
-              <li key={gap}>{gap}</li>
+              <li key={gap}>{gapText(gap)}</li>
             ))}
           </ul>
         </details>

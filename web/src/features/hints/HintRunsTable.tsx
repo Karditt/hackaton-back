@@ -47,7 +47,7 @@ export function HintRunsTable({ report, modelName }: Props) {
             <tbody
               key={run.boards}
               className={run.boards === report.answer_boards ? styles.answerRow : undefined}
-              title={`Прогон конвейера — ${Math.round(run.elapsed_s)} с`}
+              title={`Расчёт шёл ${Math.round(run.elapsed_s)} с`}
             >
               <tr>
                 <td>
@@ -63,7 +63,7 @@ export function HintRunsTable({ report, modelName }: Props) {
                 <td colSpan={4}>
                   <span className={styles.fleet}>{composition(run.fleet, modelName)}</span>
                   {reason && <span className={styles.reason}>{reason}</span>}
-                  {run.note && <span>Состав: {run.note}</span>}
+                  {run.note && <span>Подбор состава: {run.note}</span>}
                 </td>
               </tr>
             </tbody>

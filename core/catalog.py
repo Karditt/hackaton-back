@@ -25,13 +25,14 @@ from __future__ import annotations
 
 import math
 import os
-from collections.abc import Iterable, Sequence
+import re
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from core import assumptions
+from core import assumptions, text
 from core.errors import CatalogError
 from core.schemas import Payload, PayloadKind, PlanWarning, Severity, Stage, Vehicle, VehicleType
 
@@ -42,6 +43,54 @@ DEFAULT_CATALOG_PATH = Path(__file__).resolve().parents[1] / "data" / "vehicles.
 CATALOG_ENV_VAR = "GEOSCAN_VEHICLES"
 
 _MM_PER_UM = 1.0e-3
+
+#: Ссылка на источник в тексте каталога: «[201]», «[сайт-401] стр. 3».
+_REFERENCE = re.compile(r"\[([^\[\]]+)\](\s+стр\.)?")
+
+
+def _readable(value: str, references: Mapping[str, str]) -> str:
+    """Текст каталога с раскрытыми ссылками, с заглавной буквы.
+
+    Каталог ссылается на источник коротко — «[201] стр. 115»; пользователю
+    показывается «Руководство Геоскан 201, стр. 115». Незнакомая ссылка
+    (или квадратные скобки не про источник) остаётся как есть.
+
+    Args:
+        value: текст источника или пробела.
+        references: название источника по его короткому имени (`references:`
+            в каталоге).
+    """
+
+    def expand(match: re.Match[str]) -> str:
+        title = references.get(match.group(1))
+        if title is None:
+            return match.group(0)
+        before = match.string[: match.start()].rstrip()
+        if not before or before.endswith((".", "!", "?")):
+            title = title[:1].upper() + title[1:]
+        return f"{title},{match.group(2)}" if match.group(2) else title
+
+    result = _REFERENCE.sub(expand, value.strip())
+    return result[:1].upper() + result[1:]
+
+
+#: Пробел с именем поля впереди: «focal_length_mm: …».
+_KEYED_GAP = re.compile(r"^([a-z_]+):\s*(.*)$", re.DOTALL)
+
+
+def _readable_gaps(gaps: list[str], references: Mapping[str, str]) -> list[str]:
+    """Пробелы с раскрытыми ссылками; имя поля впереди сохраняется как есть.
+
+    По имени поля интерфейс понимает, к какому числу ТТХ относится пробел.
+    """
+    result = []
+    for gap in gaps:
+        match = _KEYED_GAP.match(gap)
+        if match:
+            result.append(f"{match.group(1)}: {_readable(match.group(2), references)}")
+        else:
+            result.append(_readable(gap, references))
+    return result
 
 
 def _node(raw: Any) -> tuple[Any, str | None]:
@@ -122,7 +171,7 @@ def _aspect_ratio(
     return None
 
 
-def _payload(raw: dict[str, Any]) -> Payload:
+def _payload(raw: dict[str, Any], references: Mapping[str, str] | None = None) -> Payload:
     """Собрать модель нагрузки из записи каталога.
 
     Размер матрицы восстанавливается из размера пикселя и разрешения, если
@@ -140,6 +189,8 @@ def _payload(raw: dict[str, Any]) -> Payload:
 
     Args:
         raw: словарь одной записи `payloads:`.
+        references: названия источников — раскрыть ссылки в источнике и
+            пробелах (`_readable`).
 
     Returns:
         Модель нагрузки. Неизвестные оптические параметры остаются None и
@@ -182,8 +233,11 @@ def _payload(raw: dict[str, Any]) -> Payload:
         # Зум-объектив: фиксированного фокусного нет. Для фотограмметрии это
         # пробел, а не параметр — см. payload_note у Геоскан 801.
         focal_length_mm = None
+        low, high = (
+            text.num(value, 2).rstrip("0").rstrip(",") for value in (min(focal), max(focal))
+        )
         focal_gap = (
-            f"объектив с переменным фокусным расстоянием {focal} мм, "
+            f"объектив с переменным фокусным расстоянием {low}–{high} мм, "
             "съёмочный масштаб не фиксирован"
         )
     else:
@@ -204,11 +258,12 @@ def _payload(raw: dict[str, Any]) -> Payload:
     except (KeyError, ValueError) as exc:
         raise CatalogError(f"Неизвестный класс нагрузки в каталоге: {raw.get('kind')!r}") from exc
 
+    references = references or {}
     return Payload(
         id=raw["id"],
         name=raw.get("name", raw["id"]),
         kind=kind,
-        source=raw.get("source", "источник не указан"),
+        source=_readable(raw.get("source", "источник не указан"), references),
         sensor_width_mm=sensor_width_mm,
         sensor_height_mm=sensor_height_mm,
         image_width_px=int(width_px) if width_px else None,
@@ -217,7 +272,7 @@ def _payload(raw: dict[str, Any]) -> Payload:
         fov_horizontal_deg=fov_h,
         fov_vertical_deg=fov_v,
         mass_kg=_value(raw.get("mass_kg")),
-        gaps=gaps,
+        gaps=_readable_gaps(gaps, references),
         derived_fields=derived,
     )
 
@@ -289,8 +344,14 @@ def _turn_radius(
     return assumptions.fixed_wing_turn_radius_m(cruise_mps)
 
 
-def _vehicle(raw: dict[str, Any]) -> Vehicle:
-    """Собрать модель борта из записи каталога."""
+def _vehicle(raw: dict[str, Any], references: Mapping[str, str] | None = None) -> Vehicle:
+    """Собрать модель борта из записи каталога.
+
+    Args:
+        raw: запись борта в каталоге.
+        references: названия источников — раскрыть ссылки в пробелах.
+    """
+    references = references or {}
     try:
         kind = VehicleType(raw["type"])
     except (KeyError, ValueError) as exc:
@@ -328,7 +389,7 @@ def _vehicle(raw: dict[str, Any]) -> Vehicle:
         if gap:
             gaps.append(f"{key}: {gap.strip()}")
 
-    payloads = [_payload(item) for item in raw.get("payloads", [])]
+    payloads = [_payload(item, references) for item in raw.get("payloads", [])]
 
     # Отсечка заряда — значение заказчика (№34), а не ТТХ производителя.
     derived.append("battery_reserve_fraction")
@@ -352,7 +413,7 @@ def _vehicle(raw: dict[str, Any]) -> Vehicle:
         takeoff_mode=_value(raw.get("takeoff_mode")),
         landing_mode=_value(raw.get("landing_mode")),
         payloads=payloads,
-        gaps=gaps,
+        gaps=_readable_gaps(gaps, references),
         derived_fields=derived,
     )
 
@@ -477,7 +538,7 @@ class VehicleCatalog:
         except KeyError as exc:
             known = ", ".join(sorted(self._by_id))
             raise CatalogError(
-                f"Борт {vehicle_id!r} отсутствует в каталоге {self.path.name}. Известны: {known}"
+                f"Модели «{vehicle_id}» нет в каталоге техники. Есть модели: {known}"
             ) from exc
 
 
@@ -543,7 +604,8 @@ def load_catalog(path: str | os.PathLike[str] | None = None) -> VehicleCatalog:
     if not isinstance(raw, dict) or "vehicles" not in raw:
         raise CatalogError(f"В каталоге {resolved} нет корневого ключа 'vehicles'")
 
-    return VehicleCatalog([_vehicle(item) for item in raw["vehicles"]], resolved)
+    references = {str(key): str(value) for key, value in (raw.get("references") or {}).items()}
+    return VehicleCatalog([_vehicle(item, references) for item in raw["vehicles"]], resolved)
 
 
 __all__ = [

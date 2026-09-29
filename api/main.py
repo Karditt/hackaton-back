@@ -232,12 +232,19 @@ def list_scenarios() -> dict[str, Any]:
     интерфейса не запускается; причина — в `planning_note`.
     """
     items = []
-    for scenario_id in store.list_ids():
+    ids = store.list_ids()
+    for scenario_id in ids:
         origin = _sources_for(scenario_id)
+        name = store.get(scenario_id).name
+        # Копия с правками называется по исходному сценарию: имя исходного
+        # могло смениться после того, как копия сохранена.
+        base_id = scenario_id.removesuffix(CUSTOM_SUFFIX)
+        if base_id != scenario_id and base_id in ids:
+            name = f"{store.get(base_id).name or base_id} (изменённые параметры)"
         items.append(
             {
                 "id": scenario_id,
-                "name": store.get(scenario_id).name,
+                "name": name,
                 "planning_available": origin.planning_available if origin else True,
                 "planning_note": origin.planning_note if origin else None,
             }
@@ -551,6 +558,77 @@ def get_hint(hint_id: str) -> dict[str, Any]:
     return job.public()
 
 
+@app.post("/scenarios/{scenario_id}/pareto", tags=["расчёт"], status_code=202)
+async def start_pareto(
+    scenario_id: str,
+    steps: int = Query(
+        default=assumptions.PARETO_STEPS,
+        ge=1,
+        le=8,
+        description="Сколько промежуточных сроков между «минимум срока» и «минимум ресурса»",
+    ),
+) -> dict[str, Any]:
+    """Построить фронт «срок — ресурс»: что стоит закончить к каждому сроку (№52).
+
+    Края — планы «минимум срока» и «минимум ресурса», между ними — «минимум
+    ресурса» к промежуточным срокам. Каждая точка — настоящий план с
+    краш-тестом; его стадии и выгрузка — по `plan_job_id` через `/jobs/{id}/…`.
+    Срок сценария не учитывается.
+
+    Returns:
+        Задача фронта для поллинга `GET /pareto/{id}`.
+    """
+    try:
+        scenario = store.get(scenario_id)
+    except ScenarioError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return jobs.submit_pareto(scenario, steps).public()
+
+
+@app.get("/pareto/{front_id}", tags=["расчёт"])
+def get_pareto(front_id: str) -> dict[str, Any]:
+    """Состояние фронта и готовые точки: срок, ресурс, доминируется ли, план точки.
+
+    Точка поллинга: точки появляются по мере расчёта, по окончании — по
+    возрастанию срока и с пометкой доминируемых.
+    """
+    job = jobs.front(front_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Фронт {front_id!r} не найден")
+    return job.public()
+
+
+@app.post("/scenarios/{scenario_id}/sites", tags=["расчёт"], status_code=202)
+async def start_sites(scenario_id: str) -> dict[str, Any]:
+    """Подобрать место ещё одной площадки и проверить его расчётом (№28).
+
+    Кандидаты — у компактных скоплений самой дальней от площадок работы (10, 20
+    и 30% площади), место — центр наименьшего круга вокруг скопления вне
+    запретного. Каждый кандидат и базовый расчёт «как есть» — полный план с
+    краш-тестом без приписки бортов к площадкам; план — по `plan_job_id`.
+
+    Returns:
+        Задача подбора для поллинга `GET /sites/{id}`.
+    """
+    try:
+        scenario = store.get(scenario_id)
+    except ScenarioError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return jobs.submit_sites(scenario).public()
+
+
+@app.get("/sites/{search_id}", tags=["расчёт"])
+def get_sites(search_id: str) -> dict[str, Any]:
+    """Состояние подбора и готовые пробы: место, срок, ресурс, план пробы.
+
+    Точка поллинга: первая проба — базовый расчёт «как есть», дальше кандидаты.
+    """
+    job = jobs.site_search(search_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Подбор площадки {search_id!r} не найден")
+    return job.public()
+
+
 @app.get("/jobs", tags=["расчёт"])
 def list_jobs() -> dict[str, Any]:
     """Все задачи расчёта, новые первыми."""
@@ -629,7 +707,9 @@ def export_job(
     try:
         if export_format is ExportFormat.KML:
             return Response(
-                content=kml_to_bytes(mission_to_kml(run.result, run.scenario, projector, board)),
+                content=kml_to_bytes(
+                    mission_to_kml(run.result, run.scenario, projector, board, run.names)
+                ),
                 media_type="application/vnd.google-earth.kml+xml",
                 headers=_attachment(f"{stem}.kml"),
             )
@@ -639,7 +719,7 @@ def export_job(
                 media_type="text/csv; charset=utf-8",
                 headers=_attachment(f"{stem}.schedule.csv"),
             )
-        document = mission_to_geojson(run.result, run.scenario, projector, board)
+        document = mission_to_geojson(run.result, run.scenario, projector, board, run.names)
     except ExportError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     return Response(
@@ -660,7 +740,7 @@ def export_package(job_id: str) -> Response:
     run = _finished_job(_job_or_404(job_id)).run
     assert run is not None
     return Response(
-        content=mission_zip(run.result, run.scenario, run.work_area.projector),
+        content=mission_zip(run.result, run.scenario, run.work_area.projector, run.names),
         media_type="application/zip",
         headers=_attachment(f"{file_stem(run.scenario.id)}.zip"),
     )

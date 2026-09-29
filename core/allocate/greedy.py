@@ -59,7 +59,7 @@ from typing import Protocol
 
 from shapely.geometry import Point
 
-from core import assumptions
+from core import assumptions, text
 from core.allocate.baseline import ServiceablePredicate, SortieCost, _unassigned_warnings
 from core.allocate.fleet import FleetInstance, sortie_id
 from core.allocate.order import CellEndsOf, improve_order
@@ -585,8 +585,9 @@ def build_greedy_allocation(
                 severity=Severity.ERROR,
                 stage=Stage.ALLOCATE,
                 message=(
-                    f"{len(late)} подобластей не успеть снять к сроку: у бортов, которые могут "
-                    "их снять, до дедлайна не остаётся времени на вылет"
+                    "К сроку не успеть снять "
+                    f"{text.counted(len(late), ('подобласть', 'подобласти', 'подобластей'))}: "
+                    "у бортов, которые могут их снять, до дедлайна не остаётся времени на вылет"
                 ),
                 context={"cell_ids": ",".join(late)},
             )

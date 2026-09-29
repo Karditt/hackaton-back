@@ -1,5 +1,6 @@
 import type { Vehicle } from '../../api';
 import { decimal, hours } from '../../shared/format';
+import { gapBody } from './gaps';
 import {
   VEHICLE_TYPES,
   catalogSpecs,
@@ -26,18 +27,18 @@ type Origin = { tone: 'document' | 'derived' | 'gap' | 'none'; note: string };
 
 const ORIGIN_LABELS: Record<Origin['tone'], string> = {
   document: 'документ',
-  derived: 'выведено',
-  gap: 'пробел',
-  none: 'нет данных',
+  derived: 'расчётное',
+  gap: 'нет в документах',
+  none: 'не задано',
 };
 
 /**
  * Происхождение числа каталога: пробел — если его нет и каталог объясняет
- * почему; выведено — если поле в `derived_fields`; иначе — из документа.
+ * почему; расчётное — если поле в `derived_fields`; иначе — из документа.
  */
 function originOf(vehicle: Vehicle, key: SpecKey): Origin {
   const gap = (vehicle.gaps ?? []).find((text) => text.startsWith(`${key}:`));
-  const note = gap ? gap.slice(key.length + 1).trim() : '';
+  const note = gap ? gapBody(gap) : '';
   const value = vehicle[key];
   if (value === null || value === undefined) {
     return gap
@@ -45,9 +46,12 @@ function originOf(vehicle: Vehicle, key: SpecKey): Origin {
       : { tone: 'none', note: 'Производитель не публикует — модель этим не ограничивается' };
   }
   if ((vehicle.derived_fields ?? []).includes(key)) {
-    return { tone: 'derived', note: note || 'Выведено правилом ядра из других чисел' };
+    return {
+      tone: 'derived',
+      note: note || 'В документах производителя нет — рассчитано из других характеристик',
+    };
   }
-  return { tone: 'document', note: 'Из официального документа производителя' };
+  return { tone: 'document', note: 'Из документации производителя' };
 }
 
 /** Число ТТХ в единицах показа: скорость — ещё и в км/ч, время — ещё и в часах. */
@@ -85,7 +89,7 @@ type Props = {
   onChange: (key: SpecKey, value: string) => void;
   /** Вернуть поле модели каталога к числу каталога. */
   onReset?: (key: SpecKey) => void;
-  /** Отсечка заряда, доля 0..1 — значение заказчика, одно на все борта. */
+  /** Отсечка заряда, доля 0..1 — общая норма, одна на все борта. */
   reserveFraction?: number;
 };
 
@@ -113,7 +117,7 @@ export function ModelSpecs({ model, onChange, onReset, reserveFraction }: Props)
           if (error) {
             status = <span className={styles.error}>{error}</span>;
           } else if (model.base === null) {
-            status = <span className={styles.origin_user}>ввод пользователя</span>;
+            status = <span className={styles.origin_user}>ваше значение</span>;
           } else if (edited) {
             const before = model.base[field.key];
             status = (
@@ -175,9 +179,9 @@ export function ModelSpecs({ model, onChange, onReset, reserveFraction }: Props)
             <td>
               <span
                 className={styles.origin_customer}
-                title="Значение заказчика: одно на все борта, у модели не правится"
+                title="Посадка с остатком заряда не меньше этой доли — одна норма на все борта, у модели не правится"
               >
-                заказчик
+                норма
               </span>
             </td>
           </tr>

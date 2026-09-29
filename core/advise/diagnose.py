@@ -22,7 +22,7 @@ from shapely.geometry import Point
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 
-from core import assumptions
+from core import assumptions, text
 from core.flight.cost import endurance_limit_s
 from core.geo.mask import WorkArea
 from core.geo.project import polygon_to_shapely
@@ -108,7 +108,7 @@ def _out_of_reach(
         for params in survey_plan.per_vehicle
     }
     reach_text = ", ".join(
-        f"{vehicles[vehicle_id].name} — около {reach:.1f} км"
+        f"{vehicles[vehicle_id].name} — около {text.num(reach)} км"
         for vehicle_id, reach in sorted(reaches.items())
     )
 
@@ -118,7 +118,7 @@ def _out_of_reach(
         Recommendation(
             kind=RecommendationKind.ADD_SITE,
             message=(
-                f"Самая удалённая из таких подобластей — в {distance_km:.1f} км от ближайшей "
+                f"Самая удалённая из таких подобластей — в {text.num(distance_km)} км от ближайшей "
                 f"площадки. Радиус действия с отсечкой "
                 f"{assumptions.BATTERY_RESERVE_FRACTION * 100:.0f}% без учёта съёмки: "
                 f"{reach_text}; на съёмку остаётся тем меньше, чем дальше подобласть и "
@@ -164,8 +164,8 @@ def diagnose(
                 Recommendation(
                     kind=RecommendationKind.WAIT,
                     message=(
-                        f"Ветер {scenario.wind.speed_mps:.1f} м/с не позволяет снимать ни одному "
-                        "борту флота — перенесите работы на день со слабым ветром"
+                        f"Ветер {text.num(scenario.wind.speed_mps)} м/с не позволяет снимать ни "
+                        "одному борту флота — перенесите работы на день со слабым ветром"
                     ),
                 )
             )
@@ -173,8 +173,9 @@ def diagnose(
             Recommendation(
                 kind=RecommendationKind.OTHER_MODEL,
                 message=(
-                    f"Нужен борт с камерой для съёмки типа {scenario.survey_type.value}, "
-                    "оптика которой известна (угол поля зрения или фокусное и матрица)"
+                    "Нужен борт с камерой для "
+                    f"{text.SURVEY_TYPE_LABELS[scenario.survey_type]}, у которой известна "
+                    "оптика (угол поля зрения или фокусное расстояние и размер матрицы)"
                 ),
             )
         )
@@ -269,19 +270,18 @@ def advice_note(checked: bool) -> PlanWarning:
         checked: проверялись ли советы расчётом (`verify_recommendations`).
     """
     how = (
-        "советы «площадка», «борт», «комплекты АКБ» проверены расчётом сценария с этой "
-        "правкой — итог дописан к совету"
+        "Советы «площадка», «борт» и «комплекты АКБ» проверены пересчётом задания с этой "
+        "правкой — итог указан в конце совета."
         if checked
-        else "расчётом не проверялись"
+        else "Советы составлены по причинам невыполнимости, пересчётом не проверялись."
     )
     return PlanWarning(
         code="advise.rules",
         severity=Severity.INFO,
         stage=Stage.ADVISE,
         message=(
-            f"Рекомендации выведены правилами по причинам невыполнимости; {how}. Место "
-            "площадки — центр наименьшего круга вокруг недоступных подобластей; подбор "
-            "площадок для всей области не делается"
+            f"{how} Место новой площадки — центр наименьшего круга, охватывающего "
+            "недоступные подобласти"
         ),
     )
 

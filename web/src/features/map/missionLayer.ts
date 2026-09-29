@@ -11,6 +11,9 @@ import { describeFeature } from './popup';
 
 const FIT_PADDING: L.PointTuple = [24, 24];
 
+/** Идентификатор площадки, предложенной подбором места, — `core.sites.SUGGESTED_SITE_ID`. */
+const SUGGESTED_SITE_ID = 'suggested-site';
+
 /**
  * Порядок отрисовки по полю `kind`: меньше — ниже. Leaflet рисует объекты в
  * порядке добавления, и верхний перехватывает щелчок. В файле слои сценария
@@ -51,6 +54,7 @@ export function drawMission(map: L.Map, document: GeoJsonDocument, fit = true): 
   // Сортировка устойчива: внутри одного слоя порядок файла сохраняется.
   const features = [...document.features].sort((a, b) => drawRank(a) - drawRank(b));
   const ordered: GeoJsonDocument = { ...document, features };
+  const context = { boards: document.properties?.boards ?? [] };
   const layer = L.geoJSON(ordered as never, {
     style: (feature) => {
       const properties = (feature?.properties ?? {}) as Record<string, string | undefined>;
@@ -59,13 +63,18 @@ export function drawMission(map: L.Map, document: GeoJsonDocument, fit = true): 
     },
     pointToLayer: (feature, latlng) => {
       const properties = (feature.properties ?? {}) as Record<string, string | undefined>;
-      const kind = properties.kind ?? '';
+      // Площадка, которую предложил подбор (`core/sites.py`), — стилем
+      // предлагаемой: иначе на плане пробы её не отличить от своих.
+      const kind =
+        properties.kind === 'site' && properties.site_id === SUGGESTED_SITE_ID
+          ? 'recommended_site'
+          : (properties.kind ?? '');
       const marker = POINT_MARKERS[kind] ?? DEFAULT_MARKER;
       const fill = kind === 'keypoint' ? KEYPOINT_FILL[properties.keypoint ?? ''] : undefined;
       return L.circleMarker(latlng, fill ? { ...marker, fillColor: fill } : marker);
     },
     onEachFeature: (feature, featureLayer) => {
-      featureLayer.bindPopup(describeFeature(feature.properties ?? {}));
+      featureLayer.bindPopup(describeFeature(feature.properties ?? {}, context));
     },
   }).addTo(map);
 

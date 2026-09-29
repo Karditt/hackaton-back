@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import timedelta
 
@@ -24,7 +25,7 @@ import numpy as np
 from shapely.geometry import LineString, Point
 from shapely.geometry.base import BaseGeometry
 
-from core import assumptions
+from core import assumptions, text
 from core.flight.cost import exceeds_range, sortie_is_feasible
 from core.flight.maneuver import ManeuverWindow, maneuver_overlap, maneuver_windows
 from core.flight.track import build_track, first_conflict
@@ -91,16 +92,27 @@ def _airborne_legs(sortie: Sortie) -> list[Leg]:
     return [leg for leg in sortie.legs if leg.phase not in _GROUND]
 
 
+def _names(vehicles: dict[str, Vehicle]) -> dict[str, str]:
+    """Название модели по идентификатору — для подписи вылета в сообщении."""
+    return {vehicle_id: vehicle.name for vehicle_id, vehicle in vehicles.items()}
+
+
+def _named(name: str, fallback: str) -> str:
+    """Объект сценария в сообщении: название в кавычках, без названия — идентификатор."""
+    return f"«{name or fallback}»"
+
+
 def _check_energy(sorties: list[Sortie], vehicles: dict[str, Vehicle]) -> list[PlanWarning]:
     """Заряд: линейная модель, отсечка 20% (№34, №35)."""
     items = []
+    names = _names(vehicles)
     for sortie in sorties:
         feasible, reason = sortie_is_feasible(sortie, vehicles[sortie.vehicle_id])
         if not feasible:
             items.append(
                 _violation(
                     "validate.energy",
-                    f"Вылет {sortie.id}: {reason}",
+                    f"{text.sortie_label(sortie, names)}: {reason}",
                     sortie_id=sortie.id,
                     vehicle_id=sortie.vehicle_id,
                 )
@@ -125,9 +137,9 @@ def _check_range(sorties: list[Sortie], vehicles: dict[str, Vehicle]) -> list[Pl
         items.append(
             _violation(
                 "validate.range",
-                f"Вылет {sortie.id}: маршрут {sortie.distance_m / 1000:.1f} км длиннее "
-                f"паспортной протяжённости {vehicle.max_range_m / 1000:.0f} км "
-                f"для {vehicle.name}",
+                f"{text.sortie_label(sortie, _names(vehicles))}: маршрут "
+                f"{text.num(sortie.distance_m / 1000)} км длиннее паспортной протяжённости "
+                f"{vehicle.max_range_m / 1000:.0f} км",
                 sortie_id=sortie.id,
                 vehicle_id=sortie.vehicle_id,
             )
@@ -148,8 +160,8 @@ def _check_wind(
             violations.append(
                 _violation(
                     "validate.wind_limit",
-                    f"{vehicle.name}: ветер {wind.speed_mps:.1f} м/с выше паспортного предела "
-                    f"{vehicle.max_wind_mps:.1f} м/с",
+                    f"{vehicle.name}: ветер {text.num(wind.speed_mps)} м/с выше паспортного "
+                    f"предела {text.num(vehicle.max_wind_mps)} м/с",
                     vehicle_id=vehicle_id,
                 )
             )
@@ -160,9 +172,9 @@ def _check_wind(
                     severity=Severity.WARNING,
                     stage=Stage.VALIDATE,
                     message=(
-                        f"{vehicle.name}: ветер {wind.speed_mps:.1f} м/с выше "
-                        f"{assumptions.WIND_SAFETY_FRACTION * 100:.0f}% паспортного предела — "
-                        "запаса на порывы почти нет"
+                        f"{vehicle.name}: ветер {text.num(wind.speed_mps)} м/с — больше "
+                        f"{assumptions.WIND_SAFETY_FRACTION * 100:.0f}% паспортного предела "
+                        f"{text.num(vehicle.max_wind_mps)} м/с, запаса на порывы почти нет"
                     ),
                     context={"vehicle_id": vehicle_id},
                 )
@@ -182,8 +194,9 @@ def _check_wind(
                 violations.append(
                     _violation(
                         "validate.airspeed",
-                        f"Вылет {sortie.id}: на галсе курсом {course:.0f}° нужна воздушная "
-                        f"скорость {needed:.1f} м/с — вне диапазона борта",
+                        f"{text.sortie_label(sortie, _names(vehicles))}: на галсе курсом "
+                        f"{course:.0f}° нужна воздушная скорость {text.num(needed)} м/с — вне "
+                        "диапазона борта",
                         _leg_line(leg),
                         sortie_id=sortie.id,
                         strip_id=leg.strip_id or "",
@@ -208,11 +221,15 @@ def _maneuver_footprints(sortie: Sortie, coverage: CoverageSet) -> list[Maneuver
 
 
 def _check_zones(
-    work_area: WorkArea, sorties: list[Sortie], coverage: CoverageSet | None
+    work_area: WorkArea,
+    sorties: list[Sortie],
+    coverage: CoverageSet | None,
+    names: Mapping[str, str],
 ) -> list[PlanWarning]:
     """Запретные зоны в плане, по высоте и во времени (№40), с буфером."""
     items: list[PlanWarning] = []
     for sortie in sorties:
+        label = text.sortie_label(sortie, names)
         reported: set[str] = set()
         for leg in _airborne_legs(sortie):
             shape = _leg_shape(leg)
@@ -237,8 +254,8 @@ def _check_zones(
                     items.append(
                         _violation(
                             "validate.no_fly_zone",
-                            f"Вылет {sortie.id}: участок «{leg.phase.value}» входит в "
-                            f"запретную зону {zone.id!r} (с буфером "
+                            f"{label}: участок «{text.PHASE_LABELS[leg.phase]}» входит в "
+                            f"запретную зону {_named(zone.name, zone.id)} (с буфером "
                             f"{assumptions.NFZ_BUFFER_M:.0f} м) на высоте {low:.0f}–{high:.0f} м."
                             f"{limitation}",
                             _leg_line(leg),
@@ -262,8 +279,9 @@ def _check_zones(
                     items.append(
                         _violation(
                             "validate.maneuver_zone",
-                            f"Вылет {sortie.id}: зона манёвра самолёта в подобласти "
-                            f"{window.cell_id} задевает запретную зону {zone.id!r}",
+                            f"{label}: зона манёвра самолёта в подобласти "
+                            f"{window.cell_id} задевает запретную зону "
+                            f"{_named(zone.name, zone.id)}",
                             sortie_id=sortie.id,
                             zone_id=zone.id,
                             cell_id=window.cell_id,
@@ -273,13 +291,17 @@ def _check_zones(
 
 
 def _check_obstacles(
-    work_area: WorkArea, sorties: list[Sortie], coverage: CoverageSet | None
+    work_area: WorkArea,
+    sorties: list[Sortie],
+    coverage: CoverageSet | None,
+    names: Mapping[str, str],
 ) -> list[PlanWarning]:
     """Высотные препятствия: не ближе буфера в плане, если высота ниже безопасной (№4)."""
     items: list[PlanWarning] = []
     if not work_area.obstacles:
         return items
     for sortie in sorties:
+        label = text.sortie_label(sortie, names)
         reported: set[str] = set()
         for leg in _airborne_legs(sortie):
             shape = _leg_shape(leg)
@@ -292,10 +314,11 @@ def _check_obstacles(
                     items.append(
                         _violation(
                             "validate.obstacle",
-                            f"Вылет {sortie.id}: участок «{leg.phase.value}» на высоте "
+                            f"{label}: участок «{text.PHASE_LABELS[leg.phase]}» на высоте "
                             f"{low:.0f} м проходит ближе {assumptions.OBSTACLE_BUFFER_M:.0f} м "
-                            f"от препятствия {obstacle.id!r} высотой {obstacle.height_m:.0f} м "
-                            f"(безопасно выше {obstacle.safe_altitude_m:.0f} м)",
+                            f"от препятствия {_named(obstacle.name, obstacle.id)} высотой "
+                            f"{obstacle.height_m:.0f} м (безопасно выше "
+                            f"{obstacle.safe_altitude_m:.0f} м)",
                             _leg_line(leg),
                             sortie_id=sortie.id,
                             obstacle_id=obstacle.id,
@@ -314,8 +337,9 @@ def _check_obstacles(
                     items.append(
                         _violation(
                             "validate.maneuver_zone",
-                            f"Вылет {sortie.id}: зона манёвра самолёта в подобласти "
-                            f"{window.cell_id} задевает препятствие {obstacle.id!r}",
+                            f"{label}: зона манёвра самолёта в подобласти "
+                            f"{window.cell_id} задевает препятствие "
+                            f"{_named(obstacle.name, obstacle.id)}",
                             sortie_id=sortie.id,
                             obstacle_id=obstacle.id,
                             cell_id=window.cell_id,
@@ -325,7 +349,10 @@ def _check_obstacles(
 
 
 def _check_airspace(
-    work_area: WorkArea, sorties: list[Sortie], coverage: CoverageSet | None
+    work_area: WorkArea,
+    sorties: list[Sortie],
+    coverage: CoverageSet | None,
+    names: Mapping[str, str],
 ) -> list[PlanWarning]:
     """Граница разрешённого воздушного пространства."""
     if work_area.airspace is None:
@@ -333,13 +360,14 @@ def _check_airspace(
     allowed = work_area.airspace.buffer(assumptions.BOUNDARY_TOLERANCE_M)
     items: list[PlanWarning] = []
     for sortie in sorties:
+        label = text.sortie_label(sortie, names)
         for leg in _airborne_legs(sortie):
             if not _leg_shape(leg).within(allowed):
                 items.append(
                     _violation(
                         "validate.airspace",
-                        f"Вылет {sortie.id}: участок «{leg.phase.value}» выходит за границу "
-                        "разрешённого воздушного пространства",
+                        f"{label}: участок «{text.PHASE_LABELS[leg.phase]}» выходит за "
+                        "границу разрешённого воздушного пространства",
                         _leg_line(leg),
                         sortie_id=sortie.id,
                     )
@@ -352,7 +380,7 @@ def _check_airspace(
                 items.append(
                     _violation(
                         "validate.maneuver_zone",
-                        f"Вылет {sortie.id}: зона манёвра в подобласти {window.cell_id} выходит "
+                        f"{label}: зона манёвра в подобласти {window.cell_id} выходит "
                         "за границу разрешённого воздушного пространства",
                         sortie_id=sortie.id,
                         cell_id=window.cell_id,
@@ -362,17 +390,19 @@ def _check_airspace(
     return items
 
 
-def _check_altitudes(work_area: WorkArea, sorties: list[Sortie]) -> list[PlanWarning]:
+def _check_altitudes(
+    work_area: WorkArea, sorties: list[Sortie], names: Mapping[str, str]
+) -> list[PlanWarning]:
     """Коридор высот и одна высота съёмки на вылет (№10)."""
     items: list[PlanWarning] = []
     for sortie in sorties:
+        label = text.sortie_label(sortie, names)
         top = max(waypoint.alt_m for leg in sortie.legs for waypoint in leg.waypoints)
         if top > work_area.corridor_max_m + assumptions.BOUNDARY_TOLERANCE_M:
             items.append(
                 _violation(
                     "validate.corridor",
-                    f"Вылет {sortie.id}: высота {top:.0f} м выше коридора "
-                    f"{work_area.corridor_max_m:.0f} м",
+                    f"{label}: высота {top:.0f} м выше коридора {work_area.corridor_max_m:.0f} м",
                     sortie_id=sortie.id,
                 )
             )
@@ -386,8 +416,9 @@ def _check_altitudes(work_area: WorkArea, sorties: list[Sortie]) -> list[PlanWar
             items.append(
                 _violation(
                     "validate.survey_altitude",
-                    f"Вылет {sortie.id}: съёмка ведётся на разных высотах "
-                    f"{sorted(survey)} — полезная работа должна идти на одной",
+                    f"{label}: съёмка ведётся на разных высотах "
+                    f"({', '.join(f'{value:.0f} м' for value in sorted(survey))}) — полезная "
+                    "работа должна идти на одной",
                     sortie_id=sortie.id,
                 )
             )
@@ -400,6 +431,7 @@ def _check_separation(sorties: list[Sortie], vehicles: dict[str, Vehicle]) -> li
         build_track(sortie, vehicles[sortie.vehicle_id].is_fixed_wing()) for sortie in sorties
     ]
     tracks.sort(key=lambda track: track.airborne_from_s)
+    labels = {sortie.id: text.sortie_label(sortie, _names(vehicles)) for sortie in sorties}
     items: list[PlanWarning] = []
     for i, first in enumerate(tracks):
         for second in tracks[i + 1 :]:
@@ -411,8 +443,9 @@ def _check_separation(sorties: list[Sortie], vehicles: dict[str, Vehicle]) -> li
             items.append(
                 _violation(
                     "validate.separation",
-                    f"Сближение: {first.sortie_id} и {second.sortie_id} на "
-                    f"{conflict.time_s / 60:.1f} мин от начала работ — "
+                    f"Сближение: {labels.get(first.sortie_id, first.sortie_id)} и "
+                    f"{labels.get(second.sortie_id, second.sortie_id)} на "
+                    f"{text.num(conflict.time_s / 60)} мин от начала работ — "
                     f"{conflict.horizontal_m:.0f} м по горизонтали при минимуме "
                     f"{conflict.required_m:.0f} м и {conflict.vertical_m:.0f} м по вертикали "
                     f"при интервале {assumptions.VERTICAL_SEPARATION_M:.0f} м",
@@ -444,6 +477,7 @@ def _check_maneuver_separation(
         vehicle = vehicles[sortie.vehicle_id]
         windows.extend(maneuver_windows(sortie, coverage, vehicle.is_fixed_wing()))
     windows.sort(key=lambda item: item.from_s)
+    labels = {sortie.id: text.sortie_label(sortie, _names(vehicles)) for sortie in sorties}
 
     items: list[PlanWarning] = []
     reported: set[tuple[str, str]] = set()
@@ -463,9 +497,11 @@ def _check_maneuver_separation(
             items.append(
                 _violation(
                     "validate.maneuver_separation",
-                    f"Зоны манёвра сходятся: {first.sortie_id} (подобласть {first.cell_id}) и "
-                    f"{second.sortie_id} (подобласть {second.cell_id}) заняты вместе с "
-                    f"{overlap.from_s / 60:.1f} по {overlap.to_s / 60:.1f} мин от начала работ "
+                    f"Зоны манёвра сходятся: {labels.get(first.sortie_id, first.sortie_id)} "
+                    f"(подобласть {first.cell_id}) и "
+                    f"{labels.get(second.sortie_id, second.sortie_id)} (подобласть "
+                    f"{second.cell_id}) заняты вместе с {text.num(overlap.from_s / 60)} по "
+                    f"{text.num(overlap.to_s / 60)} мин от начала работ "
                     f"на {overlap.distance_m:.0f} м друг от друга при минимуме "
                     f"{overlap.required_m:.0f} м и разнице высот {overlap.vertical_m:.0f} м",
                     MetricLineString(
@@ -488,17 +524,20 @@ def _check_coverage(decomposition: Decomposition, sorties: list[Sortie]) -> list
     missing = [cell.id for cell in decomposition.cells if cell.id not in flown]
     if not missing:
         return []
+    verb = "не снята" if text.plural(len(missing), ("1", "2", "5")) == "1" else "не сняты"
     return [
         _violation(
             "validate.coverage_incomplete",
-            f"{len(missing)} из {len(decomposition.cells)} подобластей не сняты ни одним "
+            f"{len(missing)} из {len(decomposition.cells)} подобластей {verb} ни одним "
             "вылетом — задание не выполнено целиком",
             cell_ids=",".join(missing),
         )
     ]
 
 
-def _check_continuity(sorties: list[Sortie]) -> list[PlanWarning]:
+def _check_continuity(
+    sorties: list[Sortie], names: Mapping[str, str], sites: Mapping[str, str]
+) -> list[PlanWarning]:
     """Борт взлетает там, где сел, и не раньше, чем сел.
 
     Площадки взлёта и посадки одного вылета могут различаться (№29), но
@@ -512,12 +551,14 @@ def _check_continuity(sorties: list[Sortie]) -> list[PlanWarning]:
     for trips in by_vehicle.values():
         trips.sort(key=lambda sortie: sortie.start_time_s)
         for previous, current in zip(trips, trips[1:], strict=False):
+            label = text.sortie_label(current, names)
             if current.takeoff_site_id != previous.landing_site_id:
                 items.append(
                     _violation(
                         "validate.site_continuity",
-                        f"Вылет {current.id} начинается с площадки {current.takeoff_site_id!r}, "
-                        f"а предыдущий вылет борта закончился на {previous.landing_site_id!r}",
+                        f"{label} начинается с площадки "
+                        f"{text.site_label(current.takeoff_site_id, sites)}, а предыдущий вылет "
+                        f"борта закончился на {text.site_label(previous.landing_site_id, sites)}",
                         sortie_id=current.id,
                     )
                 )
@@ -525,7 +566,8 @@ def _check_continuity(sorties: list[Sortie]) -> list[PlanWarning]:
                 items.append(
                     _violation(
                         "validate.vehicle_overlap",
-                        f"Вылет {current.id} начинается раньше, чем борт сел после {previous.id}",
+                        f"{label} начинается раньше, чем борт сел после вылета "
+                        f"{previous.trip_index + 1}",
                         sortie_id=current.id,
                     )
                 )
@@ -542,14 +584,14 @@ def _check_deadline(scenario: Scenario, sorties: list[Sortie]) -> list[PlanWarni
     return [
         _violation(
             "validate.deadline",
-            f"Работы занимают {makespan / 3600:.2f} ч при ограничении "
-            f"{scenario.deadline_s / 3600:.2f} ч",
+            f"Работы занимают {text.num(makespan / 3600, 2)} ч при ограничении "
+            f"{text.num(scenario.deadline_s / 3600, 2)} ч",
         )
     ]
 
 
 def _check_daylight(
-    scenario: Scenario, work_area: WorkArea, sorties: list[Sortie]
+    scenario: Scenario, work_area: WorkArea, sorties: list[Sortie], names: Mapping[str, str]
 ) -> list[PlanWarning]:
     """Галсы — при Солнце не ниже порога сценария (долг №55).
 
@@ -576,8 +618,8 @@ def _check_daylight(
                 items.append(
                     _violation(
                         "validate.daylight",
-                        f"Вылет {sortie.id}: галс снимается при Солнце {low:.1f}° — ниже "
-                        f"заданных {threshold:.0f}°",
+                        f"{text.sortie_label(sortie, names)}: галс снимается при Солнце "
+                        f"{text.num(low)}° — ниже заданных {threshold:.0f}°",
                         _leg_line(leg),
                         sortie_id=sortie.id,
                         strip_id=leg.strip_id or "",
@@ -592,6 +634,7 @@ class _AlternateGap:
     """Худшая точка маршрута, откуда запасная площадка недосягаема."""
 
     sortie_id: str
+    sortie_label: str
     point: MetricPoint
     site: MetricPoint
     site_id: str
@@ -681,6 +724,7 @@ def _check_alternate_reach(
             site_id = site_ids[int(nearest[index])]
             worst[vehicle.id] = _AlternateGap(
                 sortie_id=sortie.id,
+                sortie_label=text.sortie_label(sortie, _names(vehicles)),
                 point=MetricPoint(x_m=float(points[index, 0]), y_m=float(points[index, 1])),
                 site=alternates[site_id],
                 site_id=site_id,
@@ -688,6 +732,7 @@ def _check_alternate_reach(
                 reach_m=float(reach_m[index]),
             )
 
+    site_names = {site.id: site.name for site in scenario.sites if site.name}
     items: list[PlanWarning] = []
     for vehicle_id, gap in sorted(worst.items()):
         vehicle = vehicles[vehicle_id]
@@ -699,10 +744,10 @@ def _check_alternate_reach(
                 message=(
                     f"{vehicle.name}: в {len(affected[vehicle_id])} из {flown[vehicle_id]} "
                     "вылетов есть точки, откуда запасная площадка недосягаема. Худшая — "
-                    f"вылет {gap.sortie_id}: до площадки {gap.site_id!r} по прямой "
-                    f"{gap.distance_m / 1000:.2f} км, остатка заряда хватит на "
-                    f"{gap.reach_m / 1000:.2f} км. При недоступной площадке посадки борту "
-                    "там садиться некуда"
+                    f"{gap.sortie_label}: до площадки {text.site_label(gap.site_id, site_names)} "
+                    f"по прямой {text.num(gap.distance_m / 1000, 2)} км, остатка заряда хватит "
+                    f"на {text.num(gap.reach_m / 1000, 2)} км. Если площадка посадки станет "
+                    "недоступна, из этих точек борту садиться некуда"
                 ),
                 context={
                     "vehicle_id": vehicle_id,
@@ -720,29 +765,47 @@ def _check_alternate_reach(
                 severity=Severity.INFO,
                 stage=Stage.VALIDATE,
                 message=(
-                    "Запасной площадки нет: в сценарии одна площадка — при недоступной "
-                    "площадке посадки борту садиться некуда"
+                    "Запасной площадки нет: в сценарии одна площадка — если она станет "
+                    "недоступна, борту садиться некуда"
                 ),
             )
         )
     return items
 
 
+def _derived_value(vehicle: Vehicle, key: str) -> str | None:
+    """Выведенное число модели словами; отсечка заряда — общая норма, не ТТХ модели."""
+    if key == "battery_reserve_fraction":
+        return None
+    if key == "cruise_speed_mps":
+        return f"крейсерская скорость {text.num(vehicle.cruise_speed_mps)} м/с"
+    if key == "turn_radius_m":
+        return f"радиус разворота {vehicle.turn_radius_m:.0f} м"
+    return text.field_label(key)
+
+
 def _derived_specs(vehicles: dict[str, Vehicle], sorties: list[Sortie]) -> list[PlanWarning]:
-    """Какие числа плана выведены допущением, а не взяты из ТТХ (инвариант 6)."""
+    """Какие числа плана выведены правилом, а не взяты из ТТХ (инвариант 6)."""
     items = []
     for vehicle_id in sorted({sortie.vehicle_id for sortie in sorties}):
         vehicle = vehicles[vehicle_id]
-        if not vehicle.derived_fields:
+        values = [
+            value
+            for value in (_derived_value(vehicle, key) for key in vehicle.derived_fields)
+            if value is not None
+        ]
+        if not values:
             continue
+        listing = values[0] if len(values) == 1 else f"{', '.join(values[:-1])} и {values[-1]}"
+        computed = "значение рассчитано" if len(values) == 1 else "значения рассчитаны"
         items.append(
             PlanWarning(
                 code="validate.derived_specs",
                 severity=Severity.INFO,
                 stage=Stage.VALIDATE,
                 message=(
-                    f"{vehicle.name}: поля {', '.join(vehicle.derived_fields)} выведены "
-                    "допущениями (core/assumptions.py), в официальном документе их нет"
+                    f"{vehicle.name}: {listing} — в документации производителя этого нет, "
+                    f"{computed} из паспортных характеристик модели"
                 ),
                 context={"vehicle_id": vehicle_id},
             )
@@ -771,6 +834,8 @@ def validate_plan(
     Returns:
         Нарушения и предупреждения. Пустой список нарушений — план выполним.
     """
+    names = _names(vehicles)
+    sites = {site.id: site.name for site in scenario.sites if site.name}
     report = ValidationReport()
     report.violations.extend(_check_coverage(decomposition, sorties))
     report.violations.extend(_check_energy(sorties, vehicles))
@@ -778,15 +843,15 @@ def validate_plan(
     wind_violations, wind_warnings = _check_wind(scenario, sorties, vehicles)
     report.violations.extend(wind_violations)
     report.warnings.extend(wind_warnings)
-    report.violations.extend(_check_zones(work_area, sorties, coverage))
-    report.violations.extend(_check_obstacles(work_area, sorties, coverage))
-    report.violations.extend(_check_airspace(work_area, sorties, coverage))
-    report.violations.extend(_check_altitudes(work_area, sorties))
+    report.violations.extend(_check_zones(work_area, sorties, coverage, names))
+    report.violations.extend(_check_obstacles(work_area, sorties, coverage, names))
+    report.violations.extend(_check_airspace(work_area, sorties, coverage, names))
+    report.violations.extend(_check_altitudes(work_area, sorties, names))
     report.violations.extend(_check_separation(sorties, vehicles))
     report.violations.extend(_check_maneuver_separation(sorties, coverage, vehicles))
-    report.violations.extend(_check_continuity(sorties))
+    report.violations.extend(_check_continuity(sorties, names, sites))
     report.violations.extend(_check_deadline(scenario, sorties))
-    report.violations.extend(_check_daylight(scenario, work_area, sorties))
+    report.violations.extend(_check_daylight(scenario, work_area, sorties, names))
     report.warnings.extend(_check_alternate_reach(scenario, work_area, sorties, vehicles))
     report.warnings.extend(_derived_specs(vehicles, sorties))
     report.warnings.append(
@@ -795,8 +860,9 @@ def validate_plan(
             severity=Severity.INFO,
             stage=Stage.VALIDATE,
             message=(
-                "Не проверяются: траектория петли разворота (проверена защитная зона "
-                "манёвра), рельеф между препятствиями — ЦМР не подключена"
+                "Не проверяются: форма петли разворота — вместо неё проверяется вся защитная "
+                "зона манёвра; рельеф — высоты отсчитываются от земли без цифровой модели "
+                "рельефа"
             ),
         )
     )

@@ -20,7 +20,7 @@ from shapely.geometry import MultiPolygon, Point, Polygon
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 
-from core import assumptions
+from core import assumptions, text
 from core.errors import GeometryError, ScenarioError
 from core.geo.crs import pick_working_crs
 from core.geo.project import Projector, polygons_of
@@ -198,8 +198,9 @@ def _zone_window_s(
                 severity=Severity.WARNING,
                 stage=Stage.GEO,
                 message=(
-                    f"Зона {zone.id!r} временная, но время начала работ не задано — "
-                    "зона считается действующей всегда. Укажите start_time сценария"
+                    f"Зона «{zone.name or zone.id}» временная, но начало работ не задано — "
+                    "зона считается действующей всегда. Задайте начало работ, чтобы учесть "
+                    "её окно действия"
                 ),
                 context={"zone_id": zone.id},
             )
@@ -248,7 +249,9 @@ def build_work_area(scenario: Scenario) -> WorkArea:
 
     zones: list[ZoneArea] = []
     for zone in scenario.no_fly_zones:
-        footprint = projector.polygon_to_metric(zone.polygon, f"Запретная зона {zone.id!r}")
+        footprint = projector.polygon_to_metric(
+            zone.polygon, f"Запретная зона «{zone.name or zone.id}»"
+        )
         active_from_s, active_to_s = _zone_window_s(zone, scenario.start_time, warnings)
         buffered = footprint.buffer(assumptions.NFZ_BUFFER_M)
         zones.append(
@@ -269,7 +272,7 @@ def build_work_area(scenario: Scenario) -> WorkArea:
     for obstacle in scenario.obstacles:
         if obstacle.polygon is not None:
             footprint: BaseGeometry = projector.polygon_to_metric(
-                obstacle.polygon, f"Препятствие {obstacle.id!r}"
+                obstacle.polygon, f"Препятствие «{obstacle.name or obstacle.id}»"
             )
         else:
             assert obstacle.position is not None
@@ -297,7 +300,7 @@ def build_work_area(scenario: Scenario) -> WorkArea:
     for site in scenario.sites:
         point = projector.to_metric(site.position)
         sites[site.id] = point
-        warnings.extend(_check_site(site.id, point, zones, airspace))
+        warnings.extend(_check_site(site.id, site.name, point, zones, airspace))
 
     daylight: list[tuple[float, float]] | None = None
     if scenario.min_sun_elevation_deg is not None and scenario.start_time is not None:
@@ -325,9 +328,10 @@ def build_work_area(scenario: Scenario) -> WorkArea:
 
 def _daylight_note(threshold_deg: float, windows: list[tuple[float, float]]) -> PlanWarning:
     """Предупреждение с окнами съёмки по Солнцу: первые сутки и сколько их всего."""
-    hours = sum(end - start for start, end in windows) / 3600.0
+    total_s = sum(end - start for start, end in windows)
     first = (
-        f"первое — {windows[0][0] / 3600.0:.1f}–{windows[0][1] / 3600.0:.1f} ч от начала работ"
+        f"первое — {text.num(windows[0][0] / 3600.0)}–{text.num(windows[0][1] / 3600.0)} ч "
+        "от начала работ"
         if windows
         else "окон нет"
     )
@@ -337,8 +341,9 @@ def _daylight_note(threshold_deg: float, windows: list[tuple[float, float]]) -> 
         stage=Stage.GEO,
         message=(
             f"Съёмка — только при Солнце не ниже {threshold_deg:.0f}°: "
-            f"{len(windows)} окон за {assumptions.DAYLIGHT_HORIZON_DAYS} суток, "
-            f"всего {hours:.1f} ч; {first}. Галсы — внутри окон, перелёты — в любое время"
+            f"{text.counted(len(windows), ('окно', 'окна', 'окон'))} за "
+            f"{assumptions.DAYLIGHT_HORIZON_DAYS} суток, всего {text.duration_text(total_s)}; "
+            f"{first}. Галсы — внутри окон, перелёты — в любое время"
         ),
         context={"windows": str(len(windows))},
     )
@@ -394,8 +399,8 @@ def build_survey_mask(
                 stage=Stage.GEO,
                 message=(
                     f"Запретные зоны, препятствия и граница воздушного пространства "
-                    f"исключили из съёмки {lost_fraction * 100:.1f}% области (буфер вокруг "
-                    f"зон {assumptions.NFZ_BUFFER_M:.0f} м, вокруг препятствий "
+                    f"исключили из съёмки {text.num(lost_fraction * 100)}% области (буфер "
+                    f"вокруг зон {assumptions.NFZ_BUFFER_M:.0f} м, вокруг препятствий "
                     f"{assumptions.OBSTACLE_BUFFER_M:.0f} м)"
                 ),
             )
@@ -404,10 +409,15 @@ def build_survey_mask(
 
 
 def _check_site(
-    site_id: str, point: MetricPoint, zones: list[ZoneArea], airspace: BaseGeometry | None
+    site_id: str,
+    site_name: str,
+    point: MetricPoint,
+    zones: list[ZoneArea],
+    airspace: BaseGeometry | None,
 ) -> list[PlanWarning]:
     """Предупредить, если площадка внутри запретной зоны или вне пространства."""
     here = Point(point.x_m, point.y_m)
+    title = f"«{site_name or site_id}»"
     warnings: list[PlanWarning] = []
     for zone in zones:
         if zone.min_alt_m <= 0.0 and zone.buffered.contains(here):
@@ -417,8 +427,8 @@ def _check_site(
                     severity=Severity.ERROR,
                     stage=Stage.GEO,
                     message=(
-                        f"Площадка {site_id!r} внутри запретной зоны {zone.id!r} (с учётом "
-                        "буфера) — взлёт и посадка с неё нарушат зону"
+                        f"Площадка {title} внутри запретной зоны «{zone.name or zone.id}» (с "
+                        "учётом буфера) — взлёт и посадка с неё нарушат зону"
                     ),
                     context={"site_id": site_id, "zone_id": zone.id},
                 )
@@ -429,7 +439,7 @@ def _check_site(
                 code="geo.site_outside_airspace",
                 severity=Severity.ERROR,
                 stage=Stage.GEO,
-                message=f"Площадка {site_id!r} вне разрешённого воздушного пространства",
+                message=f"Площадка {title} вне разрешённого воздушного пространства",
                 context={"site_id": site_id},
             )
         )

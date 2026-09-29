@@ -222,7 +222,7 @@ export function applyOptions(
   return {
     ...scenario,
     id: customScenarioId(scenario.id ?? 'scenario'),
-    name: `${scenario.name || scenario.id || 'Сценарий'} (правка параметров)`,
+    name: `${(scenario.name || scenario.id || 'Сценарий').replace(/ \(изменённые параметры\)$/, '')} (изменённые параметры)`,
     survey_type: options.survey_type,
     quality: { ...scenario.quality, gsd_m: parseRequired(options.gsd_m, 'GSD') },
     wind: {

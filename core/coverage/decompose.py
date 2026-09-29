@@ -30,7 +30,7 @@ from shapely.geometry import Polygon
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 
-from core import assumptions
+from core import assumptions, text
 from core.coverage.oracle import fit_strips, maneuver_hazard, strip_interlace
 from core.coverage.strips import candidate_azimuths, cover_cell, dominant_azimuth_deg
 from core.flight.cost import endurance_limit_s, strip_heading, turn_length_m
@@ -207,20 +207,33 @@ def decompose(
             )
         )
 
+    islands_text = text.counted(
+        len(islands), ("сплошной участок", "сплошных участка", "сплошных участков")
+    )
+    cells_text = text.counted(len(cells), ("подобласть", "подобласти", "подобластей"))
+    message = f"Область съёмки ({islands_text}) разбита на {cells_text}."
+    if split:
+        message += (
+            f" Участки крупнее {size_m:.0f} × {size_m:.0f} м нарезаны на равные части по своим "
+            f"осям, обрезки меньше {assumptions.CELL_MERGE_FRACTION:.0%} части слиты с соседними."
+        )
+    if carved:
+        message += (
+            f" У {text.counted(carved, ('подобласти', 'подобластей', 'подобластей'))} у "
+            "запретных зон, где самолёту не развернуться, полоса вдоль зоны выделена отдельно "
+            "для мультиротора — остальное доступно самолёту."
+        )
+    if halved:
+        message += (
+            " Дальние подобласти, которые ни один борт не снимет за вылет, поделены пополам "
+            f"(+{halved})."
+        )
     warnings = [
         PlanWarning(
             code="decompose.islands",
             severity=Severity.INFO,
             stage=Stage.DECOMPOSE,
-            message=(
-                f"Подобласти — островки маски: {len(islands)} островков, из них {split} "
-                f"крупнее ячейки {size_m:.0f} × {size_m:.0f} м нарезаны на равные части в "
-                f"своих осях, обрезки меньше {assumptions.CELL_MERGE_FRACTION:.0%} ячейки "
-                f"слиты с соседями. У {carved} подобластей, которые не снял бы ни один "
-                "самолёт, полоса у запретного отрезана отдельно — остальное самолёту "
-                f"доступно. Дальние подобласти, непосильные ни одному борту за вылет, "
-                f"поделены пополам (+{halved}). Всего подобластей: {len(cells)}"
-            ),
+            message=message,
         )
     ]
     return Decomposition(
