@@ -6,7 +6,9 @@
 объясняет, почему задание невыполнимо и что добавить.
 
 Руководство — для того, кто готовит задание и забирает результат. Как устроен
-расчёт — [`architecture.md`](architecture.md), что решение упрощает —
+расчёт — [`architecture.md`](architecture.md) и
+[`explanatory_note.md`](explanatory_note.md), программный интерфейс —
+[`api.md`](api.md), что решение упрощает —
 [`known_limitations.md`](known_limitations.md), форматы файлов —
 [`input_formats.md`](input_formats.md) и [`export_format.md`](export_format.md).
 
@@ -270,7 +272,7 @@ python -m core.cli scenarios/demo_100km2.json -o out/ --mode min_resource  # р�
 python -m core.cli --batch scenarios/ -o out/                              # все сценарии каталога
 python -m core.cli hints scenarios/demo_100km2.json --deadline-h 6         # сколько бортов к сроку
 python -m core.cli import-layers --area area.kml --zones zones.kml \
-    --obstacles obstacles.kml --params params.json -o scenario.json        # сценарий из слоёв
+    --obstacles obstacles.kml --sites sites.kml --params params.json -o scenario.json  # сценарий из слоёв
 python -m core.cli compare scenarios/ -o out/compare.md                    # оптимизатор против равного деления
 python -m core.cli pareto scenarios/demo_100km2.json -o out/pareto.md      # что стоит каждый срок
 python -m core.cli sites scenarios/demo_100km2.json -o out/sites.md        # где поставить ещё площадку
@@ -279,12 +281,14 @@ python -m core.cli assumptions                                             # р�
 
 ## 8. API
 
-Основные маршруты (полное описание — <http://localhost:8000/docs>):
+Основные маршруты. Подробно, с примером от файлов до заданий бортов и кодами
+ошибок, — [`api.md`](api.md); интерактивный справочник со схемами —
+<http://localhost:8000/docs> запущенного API.
 
 | Маршрут | Что делает |
 |---|---|
 | `GET /scenarios`, `POST /scenarios` | Список сценариев; сохранить сценарий JSON (с проверкой) |
-| `POST /scenarios/import` | Собрать сценарий из слоёв KML и параметров; ответ — с отчётом импорта |
+| `POST /scenarios/import` | Собрать сценарий из слоёв KML (область, зоны, препятствия, площадки) и параметров; ответ — с отчётом импорта |
 | `GET /scenarios/{id}/layers` | Слои сценария GeoJSON — до расчёта |
 | `POST /scenarios/{id}/plan` | Запустить расчёт; ответ — задача |
 | `GET /jobs/{id}` | Состояние задачи (поллинг) |

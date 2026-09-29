@@ -25,7 +25,7 @@ export function algorithmLabel(algorithm: string): string {
   return algorithm;
 }
 
-/** Метрики выполнимого плана (PROJECT_BRIEF.md §4.3). */
+/** Метрики выполнимого плана (docs/dev/PROJECT_BRIEF.md §4.3). */
 export function MetricsList({ result, vehicles }: Props) {
   const { mission, crs } = result;
   const metrics = mission.metrics;

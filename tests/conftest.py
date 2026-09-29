@@ -15,7 +15,7 @@ from core.schemas import Scenario
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCENARIOS_DIR = REPO_ROOT / "scenarios"
 
-#: Все тестовые сценарии. AGENT.md §6: прогон обязателен на ВСЕХ, включая «злой».
+#: Все тестовые сценарии. docs/dev/AGENT.md §6: прогон обязателен на ВСЕХ, включая «злой».
 SCENARIO_PATHS = sorted(SCENARIOS_DIR.glob("*.json"))
 SCENARIO_NAMES = [path.stem for path in SCENARIO_PATHS]
 

@@ -1,6 +1,6 @@
 # Перекрытия по типам съёмки.
 #
-# Отдельный конфиг — прямое требование заказчика (docs/customer_qa.md, №25):
+# Отдельный конфиг — прямое требование заказчика (docs/dev/customer_qa.md, №25):
 # «Пусть в решении это будет отдельный конфиг, в котором настраивается
 # перекрытие между галсами для каждого вида съёмки».
 #
@@ -19,14 +19,14 @@ presets:
       value: 0.70
       source: >-
         Значение по умолчанию GeoScan Planner 2.5 (модель FlightTaskSet,
-        defaultForwardOverlap = 0.7) — docs/planner_reference.md §3. Решение
+        defaultForwardOverlap = 0.7) — docs/dev/planner_reference.md §3. Решение
         владельца 2026-09-24: берём значения производителя. Прежнее допущение
         команды 0,80 отменено
     side_overlap:
       value: 0.50
       source: >-
         Значение по умолчанию GeoScan Planner 2.5 (defaultLateralOverlap = 0.5)
-        — docs/planner_reference.md §3, совпадает с минимумом заказчика (№25).
+        — docs/dev/planner_reference.md §3, совпадает с минимумом заказчика (№25).
         Решение владельца 2026-09-24. Прежнее допущение команды 0,60 отменено
     min_side_overlap:
       value: 0.50

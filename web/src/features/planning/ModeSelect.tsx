@@ -12,7 +12,7 @@ type Props = {
   disabled: boolean;
 };
 
-/** Выбор режима оптимизации (заказчик, №23; PROJECT_BRIEF.md §4.3). */
+/** Выбор режима оптимизации (заказчик, №23; docs/dev/PROJECT_BRIEF.md §4.3). */
 export function ModeSelect({ value, onChange, disabled }: Props) {
   return (
     <fieldset className={styles.field}>

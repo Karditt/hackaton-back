@@ -4,31 +4,31 @@
 
 ## Правило сессии
 
-**Начинать с чтения [`docs/current_state.md`](docs/current_state.md), заканчивать его обновлением.**
+**Начинать с чтения [`docs/dev/current_state.md`](../docs/dev/current_state.md), заканчивать его обновлением.**
 
-Полные правила разработки — в [`AGENT.md`](AGENT.md). Прочитать перед первой правкой кода.
+Полные правила разработки — в [`docs/dev/AGENT.md`](../docs/dev/AGENT.md). Прочитать перед первой правкой кода.
 
-**Требования заказчика** — [`docs/customer_qa.md`](docs/customer_qa.md) (получены 2026-09-18, дополнены 2026-09-24). Документы и каркас кода приведены к ним; что ещё расходится — `docs/current_state.md` §6. При расхождении правы документы.
+**Требования заказчика** — [`docs/dev/customer_qa.md`](../docs/dev/customer_qa.md) (получены 2026-09-18, дополнены 2026-09-24). Документы и каркас кода приведены к ним; что ещё расходится — `docs/dev/current_state.md` §6. При расхождении правы документы.
 
-**Образцы входных данных заказчика** — [`data/samples/`](data/samples/README.md), правила их чтения — [`docs/input_formats.md`](docs/input_formats.md).
+**Образцы входных данных заказчика** — [`data/samples/`](../data/samples/README.md), правила их чтения — [`docs/input_formats.md`](../docs/input_formats.md).
 
 ## Документы
 
 | Файл | Что внутри |
 |---|---|
-| [`AGENT.md`](AGENT.md) | Правила разработки, карта репозитория, чек-лист инвариантов, формат отчёта |
-| [`PROJECT_BRIEF.md`](PROJECT_BRIEF.md) | Источник истины по архитектуре, стек, доменная модель, правила предметной области, критерии оптимизации |
-| [`docs/customer_qa.md`](docs/customer_qa.md) | Ответы заказчика по вопросам, значения от заказчика, открытые вопросы. Ссылка «№N» ведёт сюда |
-| [`docs/architecture.md`](docs/architecture.md) | Обоснование решений, черновик алгоритма, порядок разработки, риски |
-| [`docs/epics.md`](docs/epics.md) | Состав работ E0–E15, граф зависимостей, критерии готовности |
-| [`docs/current_state.md`](docs/current_state.md) | **Живой** статус: что работает, что заглушка, журнал изменений |
-| [`docs/input_formats.md`](docs/input_formats.md) | Чтение входных слоёв KML: область, зоны, препятствия. **Предложенный формат высот и времени зон** — требование заказчика (№53) |
-| [`docs/export_format.md`](docs/export_format.md) | Формат выгрузки GeoJSON, KML, расписания CSV — требование заказчика (№21) |
-| [`docs/planner_reference.md`](docs/planner_reference.md) | Что взято из ПО заказчика GeoScan Planner: термины, значения по умолчанию, проверки |
-| [`docs/explanatory_note.md`](docs/explanatory_note.md) | Пояснительная записка для жюри: задача, решение, алгоритм, результаты против baseline |
-| [`docs/user_guide.md`](docs/user_guide.md) | Руководство пользователя: вход, интерфейс, итог, выгрузка, подсказки, история, CLI и API |
-| [`docs/known_limitations.md`](docs/known_limitations.md) | Известные ограничения; раздел реестра собирается `assumptions --update`, тест следит за свежестью |
-| [`docs/external_sources.md`](docs/external_sources.md) | ТТХ БВС, подложка, рельеф, препятствия, спецификации форматов |
+| [`docs/dev/AGENT.md`](../docs/dev/AGENT.md) | Правила разработки, карта репозитория, чек-лист инвариантов, формат отчёта |
+| [`docs/dev/PROJECT_BRIEF.md`](../docs/dev/PROJECT_BRIEF.md) | Источник истины по архитектуре, стек, доменная модель, правила предметной области, критерии оптимизации |
+| [`docs/dev/customer_qa.md`](../docs/dev/customer_qa.md) | Ответы заказчика по вопросам, значения от заказчика, открытые вопросы. Ссылка «№N» ведёт сюда |
+| [`docs/dev/architecture.md`](../docs/dev/architecture.md) | Обоснование решений, черновик алгоритма, порядок разработки, риски |
+| [`docs/dev/epics.md`](../docs/dev/epics.md) | Состав работ E0–E15, граф зависимостей, критерии готовности |
+| [`docs/dev/current_state.md`](../docs/dev/current_state.md) | **Живой** статус: что работает, что заглушка, журнал изменений |
+| [`docs/input_formats.md`](../docs/input_formats.md) | Чтение входных слоёв KML: область, зоны, препятствия. **Предложенный формат высот и времени зон** — требование заказчика (№53) |
+| [`docs/export_format.md`](../docs/export_format.md) | Формат выгрузки GeoJSON, KML, расписания CSV — требование заказчика (№21) |
+| [`docs/dev/planner_reference.md`](../docs/dev/planner_reference.md) | Что взято из ПО заказчика GeoScan Planner: термины, значения по умолчанию, проверки |
+| [`docs/explanatory_note.md`](../docs/explanatory_note.md) | Пояснительная записка для жюри: задача, решение, алгоритм, результаты против baseline |
+| [`docs/user_guide.md`](../docs/user_guide.md) | Руководство пользователя: вход, интерфейс, итог, выгрузка, подсказки, история, CLI и API |
+| [`docs/known_limitations.md`](../docs/known_limitations.md) | Известные ограничения; раздел реестра собирается `assumptions --update`, тест следит за свежестью |
+| [`docs/external_sources.md`](../docs/external_sources.md) | ТТХ БВС, подложка, рельеф, препятствия, спецификации форматов |
 
 ## Команды
 
@@ -92,4 +92,4 @@ cd web && npm run gen:types   # закреплённая версия генер
 7. **Ни один выданный план не нарушает жёстких правил:** запретные зоны, препятствия, коридор высот, разведение бортов. Нарушение — невыполнимость, а не предупреждение. Это главное, что проверяет заказчик.
 8. **Частичных планов нет:** область покрыта целиком или результат объявлен невыполнимым с причиной и рекомендацией.
 
-Полный чек-лист из 10 пунктов — [`AGENT.md`](AGENT.md) §3.
+Полный чек-лист из 10 пунктов — [`docs/dev/AGENT.md`](../docs/dev/AGENT.md) §3.

@@ -24,7 +24,7 @@ def _feasible(run: PlanningRun) -> bool:
 
 
 def test_every_scenario_ends_as_intended(run: PlanningRun, scenario_name: str) -> None:
-    """AGENT.md §6: конвейер отрабатывает на всех сценариях и даёт задуманный итог."""
+    """docs/dev/AGENT.md §6: конвейер отрабатывает на всех сценариях и даёт задуманный итог."""
     if scenario_name in FEASIBLE:
         assert _feasible(run), [reason.message for reason in run.mission.reasons]
     if scenario_name in INFEASIBLE:
@@ -47,7 +47,7 @@ def test_no_partial_plans(run: PlanningRun) -> None:
 
 
 def test_pipeline_is_deterministic(scenario: Scenario, catalog: VehicleCatalog) -> None:
-    """AGENT.md §8: один сценарий и один seed дают побитово один план."""
+    """docs/dev/AGENT.md §8: один сценарий и один seed дают побитово один план."""
     first = run_pipeline(scenario, catalog=catalog).mission
     second = run_pipeline(scenario, catalog=catalog).mission
     assert first.metrics == second.metrics
@@ -132,7 +132,7 @@ def test_one_survey_altitude_and_transit_inside_corridor(
 
 
 def test_metrics_follow_the_criteria(run: PlanningRun) -> None:
-    """PROJECT_BRIEF.md §4.3: срок, ресурс с циклами, критерий режима, свёртка."""
+    """docs/dev/PROJECT_BRIEF.md §4.3: срок, ресурс с циклами, критерий режима, свёртка."""
     metrics = run.mission.metrics
     if metrics is None:
         return

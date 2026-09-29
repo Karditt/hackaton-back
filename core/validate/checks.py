@@ -125,7 +125,7 @@ def _check_range(sorties: list[Sortie], vehicles: dict[str, Vehicle]) -> list[Pl
 
     Первая проверка, которую делает над полётным заданием сам GeoScan Planner
     заказчика: «Общая длина маршрута превышает допустимую для данной модели
-    БЛА» (docs/planner_reference.md §6). Запас хода — не то же самое, что
+    БЛА» (docs/dev/planner_reference.md §6). Запас хода — не то же самое, что
     автономность: у самолёта он может кончиться раньше времени полёта.
     """
     items = []

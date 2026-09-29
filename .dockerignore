@@ -13,8 +13,8 @@ web/dist/
 
 out/
 storage/
-docs/*.pdf
-*.pdf
+**/*.pdf
+.claude/
 
 .idea/
 .vscode/
