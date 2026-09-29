@@ -495,7 +495,7 @@ async def start_planning(
     mode: OptimizationMode | None = Query(default=None),
     alpha: float | None = Query(default=None, ge=0.0, le=1.0),
     seed: int | None = Query(default=None),
-    allocator: str = Query(default=ALLOCATORS[0]),
+    allocator: str | None = Query(default=None),
 ) -> dict[str, Any]:
     """Поставить сценарий в расчёт.
 
@@ -505,13 +505,13 @@ async def start_planning(
             Перекрывает сценарий.
         alpha: вес срока в свёртке для фронта Парето, 0..1. Перекрывает сценарий.
         seed: зерно ГПСЧ. Перекрывает сценарий.
-        allocator: алгоритм распределения — `local_search` (по умолчанию),
-            `constructive` или `baseline` (равные площади, точка сравнения E12).
+        allocator: алгоритм распределения — `local_search` (по умолчанию для малых областей),
+            `constructive` (по умолчанию для областей от 100 участков) или `baseline` (равные площади, точка сравнения E12).
 
     Returns:
         Идентификатор фоновой задачи для поллинга.
     """
-    if allocator not in ALLOCATORS:
+    if allocator is not None and allocator not in ALLOCATORS:
         raise HTTPException(
             status_code=422,
             detail=f"Алгоритм распределения {allocator!r} неизвестен: {', '.join(ALLOCATORS)}",
@@ -520,6 +520,10 @@ async def start_planning(
         scenario = store.get(scenario_id)
     except ScenarioError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+    if allocator is None:
+        # Локальный поиск на больших областях считается десятки минут.
+        big = len(scenario.area.polygons) >= 100
+        allocator = "constructive" if big else ALLOCATORS[0]
     return jobs.submit(scenario, mode=mode, alpha=alpha, seed=seed, allocator=allocator).public()
 
 
