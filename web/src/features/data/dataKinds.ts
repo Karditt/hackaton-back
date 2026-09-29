@@ -87,8 +87,8 @@ export const DATA_KINDS: DataKind[] = [
     countKey: 'site',
     countForms: ['площадка', 'площадки', 'площадок'],
     source: 'params',
-    accept: '.json',
-    formats: 'JSON параметров',
+    accept: '.kml,.json',
+    formats: 'KML с точками или JSON параметров',
   },
   {
     id: 'params',

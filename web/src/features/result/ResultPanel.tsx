@@ -15,6 +15,9 @@ type Props = {
   vehicles: Vehicle[];
   /** Открыть вкладку «Расписание» — диаграмма и таблица живут там во всю ширину. */
   onOpenSchedule: () => void;
+  /** Принять проверенный совет «площадка»: копия сценария с ней. */
+  onAddSite?: (lon: number, lat: number) => void;
+  busy?: boolean;
 };
 
 /** Порядок показа: сначала то, что требует внимания, справки — в конце. */
@@ -53,7 +56,7 @@ function collectWarnings(result: PipelineResult, feasible: boolean): PlanWarning
  * Итог расчёта. Выполнимый план — метрики и расписание; невыполнимый — причины
  * и что добавить (заказчик, №33, №42). Частичных планов нет.
  */
-export function ResultPanel({ run, vehicles, onOpenSchedule }: Props) {
+export function ResultPanel({ run, vehicles, onOpenSchedule, onAddSite, busy }: Props) {
   const { result } = run;
   const mission = result.mission;
   const feasible = mission.status === 'feasible';
@@ -117,7 +120,12 @@ export function ResultPanel({ run, vehicles, onOpenSchedule }: Props) {
             <WarningsList warnings={mission.reasons ?? []} />
           </Section>
           <Section title="Что изменить">
-            <RecommendationsList items={mission.recommendations ?? []} />
+            <RecommendationsList
+              items={mission.recommendations ?? []}
+              document={run.document}
+              onAddSite={onAddSite}
+              busy={busy}
+            />
           </Section>
         </>
       )}

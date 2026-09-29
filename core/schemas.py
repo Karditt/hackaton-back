@@ -755,6 +755,10 @@ class ImportReport(Model):
     area: LayerStats = Field(default_factory=LayerStats)
     zones: LayerStats = Field(default_factory=LayerStats)
     obstacles: LayerStats = Field(default_factory=LayerStats)
+    sites: LayerStats = Field(
+        default_factory=LayerStats,
+        description="Слой площадок взлёта-посадки (точки KML); пусто — площадки из параметров",
+    )
     area_km2: float = Field(default=0.0, ge=0.0, description="Площадь принятой области, км²")
     warnings: list[PlanWarning] = Field(default_factory=list)
 

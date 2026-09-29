@@ -15,7 +15,13 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { OptimizationMode } from '../api';
-import { useScenarioFiles, useScenarioLayers, useUploads } from '../features/data';
+import {
+  NewScenarioForm,
+  useNewScenario,
+  useScenarioFiles,
+  useScenarioLayers,
+  useUploads,
+} from '../features/data';
 import { FleetPage, fleetCatalog, parkToFleetRows, usePark, userVehicles } from '../features/fleet';
 import { HintPanel, useHint } from '../features/hints';
 import { HistoryPanel } from '../features/history';
@@ -24,6 +30,7 @@ import { allLayers, resetPlanLayers, type MapFilter } from '../features/map/laye
 import { ParetoPanel, usePareto } from '../features/pareto';
 import { SitesPanel, useSiteSearch } from '../features/sites';
 import {
+  addAdvisedSite,
   fleetSize,
   PlanningForm,
   usePlanning,
@@ -34,6 +41,7 @@ import {
 } from '../features/planning';
 import { ResultPanel } from '../features/result';
 import { SchedulePage } from '../features/schedule/SchedulePage';
+import { Notice } from '../shared/ui/Notice';
 import { AppHeader } from './AppHeader';
 import { MapOverlay } from './MapOverlay';
 import { useResizablePanel } from './useResizablePanel';
@@ -53,6 +61,8 @@ export default function App() {
   const [revision, setRevision] = useState(0);
   const [mode, setMode] = useState<OptimizationMode>(DEFAULT_MODE);
   const [filter, setFilter] = useState<MapFilter>(allLayers);
+  // Совет «площадка» не принят: сервер отверг копию сценария.
+  const [siteError, setSiteError] = useState<string | null>(null);
   const planPage = useRef<HTMLDivElement | null>(null);
   const splitter = useResizablePanel(planPage);
 
@@ -61,16 +71,18 @@ export default function App() {
   const draft = useScenarioOptions(scenarioId, revision);
   const { layers, error: layersError } = useScenarioLayers(scenarioId, revision);
   const { files, error: filesError } = useScenarioFiles(scenarioId, revision);
+  const selectCreated = (createdId: string) => {
+    reload();
+    setChosenScenarioId(createdId);
+    setRevision((current) => current + 1);
+  };
   const uploads = useUploads({
     scenarioId,
     scenario: draft.scenario,
     sourceId: files?.source_id ?? null,
-    onCreated: (createdId) => {
-      reload();
-      setChosenScenarioId(createdId);
-      setRevision((current) => current + 1);
-    },
+    onCreated: selectCreated,
   });
+  const newScenario = useNewScenario({ template: draft.scenario, onCreated: selectCreated });
   const summary = scenarios.find((item) => item.id === scenarioId);
   const planningNote =
     summary?.planning_available === false
@@ -183,6 +195,13 @@ export default function App() {
             rejected={rejected}
             scenarioId={scenarioId}
             onScenarioChange={setChosenScenarioId}
+            newScenario={
+              <NewScenarioForm
+                form={newScenario}
+                templateName={summary?.name || scenarioId}
+                disabled={planning.busy}
+              />
+            }
             mode={mode}
             onModeChange={setMode}
             scenario={draft.scenario}
@@ -232,8 +251,20 @@ export default function App() {
             onShow={(jobId, label) => void planning.showJob(jobId, label, 'history')}
             busy={planning.busy}
           />
+          {siteError && <Notice tone="error">{siteError}</Notice>}
           {run && (
-            <ResultPanel run={run} vehicles={catalog} onOpenSchedule={() => open('schedule')} />
+            <ResultPanel
+              run={run}
+              vehicles={catalog}
+              onOpenSchedule={() => open('schedule')}
+              onAddSite={(lon, lat) => {
+                setSiteError(null);
+                addAdvisedSite(run.scenarioId, lon, lat)
+                  .then(selectCreated)
+                  .catch((cause: Error) => setSiteError(cause.message));
+              }}
+              busy={planning.busy}
+            />
           )}
         </aside>
 

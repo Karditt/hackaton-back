@@ -11,6 +11,8 @@
   `active_windows`) и человеческий текст в `description`.
 - **Препятствия** — «3d примитив» заказчика: точка или контур с высотой `Z`
   над землёй, `relativeToGround` и `extrude`.
+- **Площадки** — точки с полями `site_id`, `site_kind`; те же площадки лежат
+  и в параметрах, слой — для ГИС и как образец формата.
 - **Параметры задания** — всё, кроме трёх слоёв: флот, площадки, граница
   пространства, коридор, GSD, ветер, сроки, ТТХ пользователя.
 
@@ -39,6 +41,7 @@ LAYER_FILES = {
     "area": "area.kml",
     "zones": "zones.kml",
     "obstacles": "obstacles.kml",
+    "sites": "sites.kml",
     "params": "params.json",
 }
 
@@ -209,6 +212,23 @@ def obstacles_kml(scenario: Scenario) -> bytes | None:
     return _to_bytes(root)
 
 
+def sites_kml(scenario: Scenario) -> bytes:
+    """Площадки взлёта-посадки точками (docs/input_formats.md §5).
+
+    Имя — `<name>`, идентификатор и назначение — поля `site_id` и `site_kind`:
+    импорт (`read_sites`) читает их обратно в те же площадки.
+    """
+    root, document = _document(f"Площадки взлёта и посадки — {scenario.name or scenario.id}")
+    for site in scenario.sites:
+        placemark = _element(document, "Placemark")
+        if site.name:
+            _element(placemark, "name", site.name)
+        _data(placemark, {"site_id": site.id, "site_kind": site.kind.value})
+        point = _element(placemark, "Point")
+        _element(point, "coordinates", f"{site.position.lon!r},{site.position.lat!r}")
+    return _to_bytes(root)
+
+
 def scenario_params(scenario: Scenario) -> dict[str, Any]:
     """Параметры задания: всё, кроме трёх слоёв KML, в форме JSON контракта."""
     return scenario.model_dump(mode="json", exclude=_LAYER_FIELDS, exclude_none=True)
@@ -222,14 +242,16 @@ def export_input_layers(scenario: Scenario, directory: Path) -> dict[str, Path]:
         directory: каталог комплекта; создаётся при необходимости.
 
     Returns:
-        Записанные файлы по виду слоя: `area`, `zones`, `obstacles`, `params`.
-        Слоя без объектов нет и в комплекте.
+        Записанные файлы по виду слоя: `area`, `zones`, `obstacles`, `sites`,
+        `params`. Слоя без объектов нет и в комплекте. Площадки лежат и в
+        параметрах: слой площадок — то же самое для ГИС.
     """
     directory.mkdir(parents=True, exist_ok=True)
     contents: dict[str, bytes | None] = {
         "area": area_kml(scenario),
         "zones": zones_kml(scenario),
         "obstacles": obstacles_kml(scenario),
+        "sites": sites_kml(scenario),
         "params": (
             json.dumps(scenario_params(scenario), ensure_ascii=False, indent=2) + "\n"
         ).encode("utf-8"),
@@ -251,5 +273,6 @@ __all__ = [
     "multipolygon_kml",
     "obstacles_kml",
     "scenario_params",
+    "sites_kml",
     "zones_kml",
 ]

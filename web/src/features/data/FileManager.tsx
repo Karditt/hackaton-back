@@ -30,11 +30,16 @@ type Props = {
 function borrowedNote(uploads: Uploads): string | null {
   const kinds = new Set(uploads.files.map((file) => file.kind));
   if (kinds.has('scenario')) return null;
+  const json = uploads.files.some(
+    (file) =>
+      ['params', 'site', 'airspace'].includes(file.kind) &&
+      file.name.toLowerCase().endsWith('.json'),
+  );
   const missing = [
     !kinds.has('area') && 'область',
     !kinds.has('no_fly_zone') && 'зоны',
     !kinds.has('obstacle') && 'препятствия',
-    !(kinds.has('params') || kinds.has('site') || kinds.has('airspace')) && 'параметры задания',
+    !json && 'параметры задания',
   ].filter(Boolean);
   if (missing.length === 0) return null;
   return `Из выбранного сценария возьмутся: ${missing.join(', ')}.`;
@@ -154,8 +159,10 @@ export function FileManager(props: Props) {
           const own = uploads.files.filter((file) => file.kind === kind.id);
           const count =
             kind.countKey && layers ? (layers.properties.counts[kind.countKey] ?? 0) : 0;
-          const source = byKind.get(kind.source);
-          const shared = kind.source === 'params' && kind.id !== 'params';
+          // Площадки, загруженные слоем KML, лежат в своём файле, а не в параметрах.
+          const ownLayer = kind.id === 'site' && byKind.has('sites');
+          const source = byKind.get(ownLayer ? 'sites' : kind.source);
+          const shared = kind.source === 'params' && kind.id !== 'params' && !ownLayer;
           return (
             <li key={kind.id} className={styles.kind}>
               <div className={styles.head}>
@@ -246,7 +253,11 @@ export function FileManager(props: Props) {
             onClick={() => void uploads.assemble()}
             disabled={uploads.busy}
           >
-            {uploads.busy ? 'Сборка…' : 'Собрать сценарий'}
+            {uploads.busy
+              ? 'Сборка…'
+              : uploads.files.some((file) => file.kind === 'scenario')
+                ? 'Загрузить сценарий'
+                : 'Собрать копию с заменой'}
           </button>
           <p className={styles.help}>
             Выбрано файлов: {pending}.{' '}
@@ -257,9 +268,9 @@ export function FileManager(props: Props) {
         </div>
       ) : (
         <p className={styles.help}>
-          Свои данные — кнопками «Загрузить»: слои KML (область, зоны, препятствия), параметры
-          задания или сценарий целиком (JSON). Недостающие виды возьмутся из выбранного сценария —
-          так можно заменить один слой.
+          Кнопки «Загрузить» заменяют слой выбранного сценария — например, только препятствия:
+          остальное возьмётся из него, сохранится копия. Сценарий целиком (JSON) загружается как
+          есть. Новый сценарий с нуля — «Новый сценарий из своих файлов» в панели слева.
         </p>
       )}
     </div>

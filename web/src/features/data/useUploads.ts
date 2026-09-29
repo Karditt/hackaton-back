@@ -48,13 +48,23 @@ function baseId(scenarioId: string): string {
   );
 }
 
-/** Последний загруженный файл вида. */
-function latest(files: UploadedFile[], kinds: DataKindId[]): UploadedFile | undefined {
-  return [...files].reverse().find((file) => kinds.includes(file.kind));
+/** Последний загруженный файл вида; `extension` — только файлы с таким расширением. */
+function latest(
+  files: UploadedFile[],
+  kinds: DataKindId[],
+  extension?: string,
+): UploadedFile | undefined {
+  return [...files]
+    .reverse()
+    .find(
+      (file) =>
+        kinds.includes(file.kind) &&
+        (extension === undefined || file.name.toLowerCase().endsWith(extension)),
+    );
 }
 
 /** Разобрать JSON-файл в объект; ошибка называет файл. */
-async function readObject(file: File): Promise<Record<string, unknown>> {
+export async function readObject(file: File): Promise<Record<string, unknown>> {
   let value: unknown;
   try {
     value = JSON.parse(await file.text());
@@ -68,15 +78,16 @@ async function readObject(file: File): Promise<Record<string, unknown>> {
 }
 
 /**
- * Загрузка исходных данных файлами (E10, долг №49).
+ * Замена слоёв выбранного сценария файлами (E10, долг №49).
  *
- * Файлы копятся по видам, затем «Собрать сценарий» отправляет их серверу:
+ * Файлы копятся по видам, затем «Собрать копию» отправляет их серверу:
  * сценарий целиком — в `POST /scenarios`, слои KML с параметрами задания — в
  * `POST /scenarios/import`, где их читает ядро и отвечает отчётом импорта.
  * Вид, файла которого не загрузили, берётся у выбранного сценария: его
  * исходный файл с сервера, а параметры — из самого сценария без геометрии.
- * Так можно заменить один слой — например, только препятствия. Разбора
- * геометрии здесь нет: KML уходит на сервер как есть.
+ * Так можно заменить один слой — например, только препятствия. Сценарий с
+ * нуля, без слоёв выбранного, — `useNewScenario`. Разбора геометрии здесь
+ * нет: KML уходит на сервер как есть.
  */
 export function useUploads({ scenarioId, scenario, sourceId, onCreated }: Options) {
   const [files, setFiles] = useState<UploadedFile[]>([]);
@@ -103,7 +114,7 @@ export function useUploads({ scenarioId, scenario, sourceId, onCreated }: Option
 
   /** Параметры задания JSON-текстом и идентификатор нового сценария. */
   const paramsText = useCallback(async (): Promise<string> => {
-    const own = latest(files, PARAMS_KINDS);
+    const own = latest(files, PARAMS_KINDS, '.json');
     let params: Record<string, unknown>;
     if (own) {
       params = await readObject(own.file);
@@ -152,11 +163,14 @@ export function useUploads({ scenarioId, scenario, sourceId, onCreated }: Option
       if (!area) {
         throw new Error('Нужна область съёмки: загрузите KML области');
       }
+      // Площадки точками KML заменяют площадки параметров; нет — остаются те.
+      const sites = latest(files, ['site'], '.kml');
       const result = await importScenario({
         area: area.file,
         areaName: area.name,
         zones: await layer('zones', 'no_fly_zone'),
         obstacles: await layer('obstacles', 'obstacle'),
+        sites: sites ? { file: sites.file, name: sites.name } : null,
         params: await paramsText(),
       });
       setImported(result);

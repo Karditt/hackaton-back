@@ -24,7 +24,7 @@ from fastapi.responses import FileResponse
 from pydantic import ValidationError
 
 from api.jobs import Job, JobRegistry, JobState
-from api.storage import ScenarioStore
+from api.storage import ScenarioStore, check_scenario_id
 from core import __version__, assumptions
 from core.catalog import load_catalog
 from core.errors import CoreError, ExportError, ScenarioError
@@ -42,13 +42,17 @@ from core.schemas import (
     PipelineResult,
     Scenario,
 )
-from core.sources import ScenarioSources, import_report, load_sources
+from core.sources import ScenarioSources, assemble_scenario, import_report, load_sources
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 #: Суффикс копии сценария с правками параметров (веб, `scenarioOptions.ts`).
 #: Геометрия у копии та же, поэтому и исходные файлы — те же, что у исходного.
 CUSTOM_SUFFIX = "--custom"
+
+#: Суффикс копии с площадкой, добавленной по совету (веб, `advisedSite.ts`):
+#: слои те же, площадок больше.
+SITE_SUFFIX = "--site"
 
 #: Тип содержимого исходного файла по расширению.
 _MEDIA_TYPES = {".kml": "application/vnd.google-earth.kml+xml", ".json": "application/json"}
@@ -81,8 +85,11 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 def _sources_for(scenario_id: str) -> ScenarioSources | None:
-    """Исходные файлы сценария или его копии с правками параметров."""
-    return sources.get(scenario_id) or sources.get(scenario_id.removesuffix(CUSTOM_SUFFIX))
+    """Исходные файлы сценария или его копии с правками параметров и площадками по совету."""
+    base = scenario_id.removesuffix(CUSTOM_SUFFIX)
+    return (
+        sources.get(scenario_id) or sources.get(base) or sources.get(base.removesuffix(SITE_SUFFIX))
+    )
 
 
 app = FastAPI(
@@ -263,10 +270,11 @@ def create_scenario(scenario: Scenario) -> dict[str, Any]:
     борт — тоже 422, а не сбой расчёта потом (заказчик, №19).
     """
     try:
+        check_scenario_id(scenario.id)
         check_scenario(scenario)
+        saved = store.save(scenario)
     except CoreError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
-    saved = store.save(scenario)
     return {"id": saved.id, "name": saved.name}
 
 
@@ -276,6 +284,10 @@ async def import_scenario(
     area: UploadFile = File(description="KML области съёмки"),
     zones: UploadFile | None = File(default=None, description="KML зон ограничений"),
     obstacles: UploadFile | None = File(default=None, description="KML высотных препятствий"),
+    sites: UploadFile | None = File(
+        default=None,
+        description="KML площадок взлёта-посадки (точки); заменяет площадки параметров",
+    ),
     terrain_min_m: float = Form(default=0.0, description="Минимальная отметка рельефа, м"),
     terrain_max_m: float = Form(default=0.0, description="Максимальная отметка рельефа, м"),
 ) -> dict[str, Any]:
@@ -284,6 +296,9 @@ async def import_scenario(
     Геометрия приходит файлами, подготовленными в ГИС: рисовать и править её у
     нас заказчик не просил и просил не делать (№8, №12). Правила чтения —
     `docs/input_formats.md`.
+
+    Площадки — слоем KML, в параметрах или никак: тогда места подбирает ядро
+    (`core.sources.assemble_scenario`, №28) и говорит об этом в отчёте.
 
     Ответ несёт отчёт импорта: что прочитано, что починено, что выброшено и что
     отброшено отбором по области. Молчать об этом нельзя — план начинается с
@@ -302,12 +317,14 @@ async def import_scenario(
         "area": await area.read(),
         "zones": await zones.read() if zones is not None else None,
         "obstacles": await obstacles.read() if obstacles is not None else None,
+        "sites": await sites.read() if sites is not None else None,
     }
 
     def _text(content: bytes | None) -> str | None:
         return None if content is None else content.decode("utf-8-sig", errors="replace")
 
     try:
+        check_scenario_id(str(payload.get("id", "scenario")))
         layers = import_layers(
             area_source=_text(raw["area"]) or "",
             zones_source=_text(raw["zones"]),
@@ -315,14 +332,7 @@ async def import_scenario(
             terrain_min_m=terrain_min_m,
             terrain_max_m=terrain_max_m,
         )
-    except CoreError as error:
-        raise HTTPException(status_code=422, detail=str(error)) from error
-
-    payload["area"] = layers.area.model_dump(mode="json")
-    payload["no_fly_zones"] = [zone.model_dump(mode="json") for zone in layers.zones]
-    payload["obstacles"] = [obstacle.model_dump(mode="json") for obstacle in layers.obstacles]
-    try:
-        scenario = Scenario.model_validate(payload)
+        scenario, report = assemble_scenario(payload, layers, _text(raw["sites"]))
         check_scenario(scenario)
     except ValidationError as error:
         raise HTTPException(status_code=422, detail=error.errors()) from error
@@ -330,8 +340,8 @@ async def import_scenario(
         raise HTTPException(status_code=422, detail=str(error)) from error
 
     saved = store.save(scenario)
-    _keep_uploads(saved.id, {**raw, "params": params.encode("utf-8")}, layers.report)
-    return {"id": saved.id, "name": saved.name, "report": layers.report.model_dump(mode="json")}
+    _keep_uploads(saved.id, {**raw, "params": params.encode("utf-8")}, report)
+    return {"id": saved.id, "name": saved.name, "report": report.model_dump(mode="json")}
 
 
 #: Имена загруженных исходных файлов в каталоге сценария хранилища.
@@ -339,6 +349,7 @@ _UPLOAD_NAMES = {
     "area": "area.kml",
     "zones": "zones.kml",
     "obstacles": "obstacles.kml",
+    "sites": "sites.kml",
     "params": "params.json",
 }
 _UPLOAD_REPORT = "import_report.json"
@@ -421,11 +432,11 @@ def _report_for(origin: ScenarioSources) -> ImportReport:
 def get_scenario_files(scenario_id: str) -> dict[str, Any]:
     """Исходные файлы сценария по видам и что с ними сделал импорт (E10).
 
-    Виды: `area`, `zones`, `obstacles` — слои KML в формате заказчика,
-    `params` — параметры задания, `scenario` — собранный JSON. У слоёв —
-    счётчики импорта: прочитано, принято, исправлено, выброшено, вне области.
-    Сценарий, сохранённый без исходников (через `POST /scenarios`), отдаёт
-    пустой список.
+    Виды: `area`, `zones`, `obstacles`, `sites` — слои KML в формате
+    заказчика, `params` — параметры задания, `scenario` — собранный JSON. У
+    слоёв — счётчики импорта: прочитано, принято, исправлено, выброшено, вне
+    области. Сценарий, сохранённый без исходников (через `POST /scenarios`),
+    отдаёт пустой список.
     """
     try:
         store.get(scenario_id)
@@ -436,7 +447,12 @@ def get_scenario_files(scenario_id: str) -> dict[str, Any]:
         return {"scenario_id": scenario_id, "source_id": None, "files": [], "warnings": []}
 
     report = _report_for(origin)
-    stats = {"area": report.area, "zones": report.zones, "obstacles": report.obstacles}
+    stats = {
+        "area": report.area,
+        "zones": report.zones,
+        "obstacles": report.obstacles,
+        "sites": report.sites,
+    }
     files = [
         {
             "kind": kind,
@@ -457,7 +473,10 @@ def get_scenario_files(scenario_id: str) -> dict[str, Any]:
 
 @app.get("/scenarios/{scenario_id}/files/{kind}", tags=["сценарии"])
 def download_scenario_file(scenario_id: str, kind: str) -> FileResponse:
-    """Скачать исходный файл сценария: `area`, `zones`, `obstacles`, `params`, `scenario`."""
+    """Скачать исходный файл сценария.
+
+    Виды: `area`, `zones`, `obstacles`, `sites`, `params`, `scenario`.
+    """
     origin = _sources_for(scenario_id)
     files = {**origin.files, "scenario": origin.scenario} if origin else {}
     if kind not in files:
