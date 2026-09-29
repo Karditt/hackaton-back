@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
-import type { Vehicle } from '../../api';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { fetchPark, storePark, type Vehicle } from '../../api';
 import {
+  asPark,
   editCatalogPayloads,
   editCatalogSpec,
   loadPark,
@@ -14,20 +15,56 @@ import {
   type SpecKey,
 } from './park';
 
+/** Пауза перед отправкой парка на сервер: правка поля — не запрос на каждую букву. */
+const SAVE_DELAY_MS = 500;
+
 /**
- * Парк техники и правки каталога с сохранением в браузере (E10).
+ * Парк техники и правки каталога (E10, долг №50).
  *
- * TODO(E10): заглушка хранения — парк живёт в localStorage этого браузера,
- * сервер о нём не знает. Хранение на сервере — задача `e6-pool-and-hints`
- * (docs/current_state.md §2). Правки ТТХ при этом в расчёт уже идут: они
- * уходят вместе со сценарием (`Scenario.vehicles`).
+ * Хранится на сервере (`GET/PUT /park`): тот же парк на любом компьютере и в
+ * любом браузере. Копия — в localStorage: с неё страница начинает, пока
+ * сервер отвечает, и на ней живёт, если сервер недоступен. Сервер пуст —
+ * ему уходит то, что было в браузере. Правки ТТХ в расчёт идут вместе со
+ * сценарием (`Scenario.vehicles`).
  */
 export function usePark() {
   const [park, setPark] = useState<Park>(loadPark);
   const [persisted, setPersisted] = useState(true);
+  // Пока не ясно, что лежит на сервере, парк туда не отправляется: иначе
+  // пустой парк нового браузера затёр бы серверный.
+  const synced = useRef(false);
 
   useEffect(() => {
-    setPersisted(savePark(park));
+    let cancelled = false;
+    fetchPark()
+      .then((stored) => {
+        if (cancelled) return;
+        const fromServer = stored === null ? null : asPark(stored);
+        if (fromServer) setPark(fromServer);
+        synced.current = true;
+        if (!fromServer) void storePark(loadPark()).catch(() => setPersisted(false));
+      })
+      .catch(() => {
+        // Сервер недоступен — работаем на копии браузера.
+        synced.current = true;
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const local = savePark(park);
+    if (!synced.current) {
+      setPersisted(local);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      storePark(park)
+        .then(() => setPersisted(true))
+        .catch(() => setPersisted(local));
+    }, SAVE_DELAY_MS);
+    return () => window.clearTimeout(timer);
   }, [park]);
 
   const editSpec = useCallback((vehicle: Vehicle, key: SpecKey, value: string) => {

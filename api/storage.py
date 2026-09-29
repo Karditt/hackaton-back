@@ -96,6 +96,11 @@ class ScenarioStore:
         """Файл сценария в хранилище (может ещё не существовать)."""
         return self.directory / f"{scenario_id}.json"
 
+    @property
+    def park_path(self) -> Path:
+        """Файл парка техники веба (вкладка «Техника», долг №50)."""
+        return self.directory / "park" / "park.json"
+
     def uploads_of(self, scenario_id: str) -> Path:
         """Каталог загруженных исходных файлов сценария: слои KML, параметры, отчёт."""
         return self.directory / "uploads" / scenario_id

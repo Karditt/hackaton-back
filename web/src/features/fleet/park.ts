@@ -13,7 +13,8 @@
  * модели уходят записями `Scenario.vehicles`, с перечнем полей пользователя
  * в `user_fields`: план говорит, какие борта летят не по данным каталога.
  *
- * Хранение — в браузере (localStorage). Всё, что здесь есть, — перевод полей
+ * Хранение — на сервере (`GET/PUT /park`, `usePark`), копия — в браузере
+ * (localStorage). Всё, что здесь есть, — перевод полей
  * формы и единиц показа; ни одной величины плана не считается.
  */
 
@@ -683,7 +684,7 @@ export function boardsFromFleet(park: Park, fleet: FleetUnit[], vehicles: Vehicl
 const STORAGE_KEY = 'geoscan.park.v1';
 
 /** Прочитанное из хранилища в парк: хранилище браузера мог испортить кто угодно. */
-function asPark(value: unknown): Park | null {
+export function asPark(value: unknown): Park | null {
   if (typeof value !== 'object' || value === null) return null;
   const park = value as Partial<Park>;
   if (!Array.isArray(park.boards) || !Array.isArray(park.models) || !Array.isArray(park.payloads))
