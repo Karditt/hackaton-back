@@ -91,6 +91,8 @@ export type JobStatus = {
   mission_id: string | null;
   /** Итог расчёта: `feasible` или `infeasible`; невыполнимость — не сбой задачи. */
   mission_status: string | null;
+  /** Алгоритм распределения плана: `baseline:…` — точка сравнения; null — плана ещё нет. */
+  algorithm?: string | null;
 };
 
 /** Статус задачи подсказки — `api/jobs.py`, `HintJob.public()`. */

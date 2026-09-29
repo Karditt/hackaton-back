@@ -4,25 +4,49 @@ Celery, Redis и RabbitMQ запрещены брифом (§3): долгий р
 фоновой задачей внутри процесса API, клиент опрашивает статус поллингом.
 WebSocket — «под вопросом», только если останется время (AGENT.md §9).
 
-Состояние задач живёт в памяти процесса. Многопользовательский режим и
-устойчивость к перезапуску в объём не входят (PROJECT_BRIEF.md §3).
+Состояние идущих задач живёт в памяти процесса. Готовый план пишется на диск
+(`storage/jobs/<id>/`: задача, сценарий, результат) и переживает перезапуск —
+это история прогонов (E9): после запуска список задач восстанавливается сразу,
+а сам план читается с диска при первом обращении. Многопользовательский режим
+в объём не входит (PROJECT_BRIEF.md §3).
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 import math
+import shutil
+import threading
 import traceback
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+from pathlib import Path
 from typing import Any
+
+from pydantic import ValidationError
 
 from core.errors import CoreError
 from core.hints import run_hint
-from core.pipeline import PlanningRun, run_pipeline
-from core.schemas import HintKind, HintReport, HintRun, OptimizationMode, Scenario
+from core.pipeline import ALLOCATORS, PlanningRun, restore_run, run_pipeline
+from core.schemas import (
+    HintKind,
+    HintReport,
+    HintRun,
+    OptimizationMode,
+    PipelineResult,
+    Scenario,
+)
+
+#: Сколько готовых планов хранить на диске: старые удаляются. План на данных
+#: заказчика — десятки мегабайт; тридцати хватает на рабочий день сравнений.
+JOB_HISTORY_LIMIT = 30
+
+logger = logging.getLogger(__name__)
 
 
 class JobState(str, Enum):
@@ -36,7 +60,11 @@ class JobState(str, Enum):
 
 @dataclass
 class Job:
-    """Одна задача расчёта."""
+    """Одна задача расчёта.
+
+    План (`run`) либо посчитан в этом процессе, либо лежит на диске от прошлого
+    запуска — тогда он читается при первом обращении (`loader`).
+    """
 
     id: str
     scenario_id: str
@@ -45,7 +73,33 @@ class Job:
     error: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     finished_at: datetime | None = None
-    run: PlanningRun | None = None
+    mission_id: str | None = None
+    mission_status: str | None = None
+    algorithm: str | None = None
+    """Алгоритм распределения плана: `baseline:…` — точка сравнения."""
+    loader: Callable[[], PlanningRun] | None = field(default=None, repr=False)
+    _run: PlanningRun | None = field(default=None, repr=False)
+    # Маршруты API без `async` идут в пуле потоков, и веб просит результат и
+    # выгрузку разом: план с диска читает один поток, остальные ждут его.
+    _loading: threading.Lock = field(default_factory=threading.Lock, repr=False)
+
+    @property
+    def run(self) -> PlanningRun | None:
+        """План расчёта; с диска — при первом обращении."""
+        if self._run is None and self.loader is not None:
+            with self._loading:
+                if self._run is None and self.loader is not None:
+                    self._run = self.loader()
+                    self.loader = None
+        return self._run
+
+    @run.setter
+    def run(self, value: PlanningRun | None) -> None:
+        self._run = value
+        self.loader = None
+        self.mission_id = value.mission.id if value else None
+        self.mission_status = value.mission.status.value if value else None
+        self.algorithm = value.mission.algorithm if value else None
 
     def public(self) -> dict[str, Any]:
         """Представление задачи для клиента без несериализуемых полей."""
@@ -57,8 +111,9 @@ class Job:
             "error": self.error,
             "created_at": self.created_at.isoformat(),
             "finished_at": self.finished_at.isoformat() if self.finished_at else None,
-            "mission_id": self.run.mission.id if self.run else None,
-            "mission_status": self.run.mission.status.value if self.run else None,
+            "mission_id": self.mission_id,
+            "mission_status": self.mission_status,
+            "algorithm": self.algorithm,
         }
 
 
@@ -119,16 +174,99 @@ def _expected_runs(scenario: Scenario, kind: HintKind) -> int:
     return 1 + math.ceil(math.log2(max(2, size))) + 2
 
 
-class JobRegistry:
-    """Реестр задач расчёта в памяти процесса."""
+def _load_run(directory: Path) -> PlanningRun:
+    """План задачи из её каталога: сценарий и результат — ядром, без расчёта."""
+    scenario = Scenario.model_validate_json((directory / "scenario.json").read_text("utf-8"))
+    result = PipelineResult.model_validate_json((directory / "result.json").read_text("utf-8"))
+    return restore_run(scenario, result)
 
-    def __init__(self) -> None:
+
+class JobRegistry:
+    """Реестр задач расчёта: идущие — в памяти, готовые планы — ещё и на диске."""
+
+    def __init__(self, directory_of: Callable[[], Path] | None = None) -> None:
+        """Реестр задач.
+
+        Args:
+            directory_of: где хранить готовые планы — функция, а не путь:
+                каталог хранилища API может смениться до запуска (тесты).
+                None — только в памяти.
+        """
+        self._directory_of = directory_of
         self._jobs: dict[str, Job] = {}
         self._by_mission: dict[str, Job] = {}
         self._hints: dict[str, HintJob] = {}
         # Ссылки на задачи держатся явно: asyncio хранит их только слабо,
         # и без этого сборщик мусора может снять расчёт на середине.
         self._tasks: set[asyncio.Task[None]] = set()
+
+    def _directory(self) -> Path | None:
+        return self._directory_of() if self._directory_of is not None else None
+
+    def restore(self) -> int:
+        """Поднять с диска готовые планы прошлых запусков — без чтения самих планов.
+
+        Каталог, который не читается, пропускается с записью в журнал.
+
+        Returns:
+            Число восстановленных задач.
+        """
+        directory = self._directory()
+        if directory is None or not directory.is_dir():
+            return 0
+        restored = 0
+        for path in sorted(directory.glob("*/job.json")):
+            try:
+                meta = json.loads(path.read_text("utf-8"))
+                job = Job(
+                    id=meta["id"],
+                    scenario_id=meta["scenario_id"],
+                    state=JobState.DONE,
+                    progress=1.0,
+                    created_at=datetime.fromisoformat(meta["created_at"]),
+                    finished_at=datetime.fromisoformat(meta["finished_at"]),
+                    mission_id=meta["mission_id"],
+                    mission_status=meta["mission_status"],
+                    algorithm=meta.get("algorithm"),
+                    loader=lambda folder=path.parent: _load_run(folder),
+                )
+            except (OSError, ValueError, KeyError, TypeError) as error:
+                logger.warning("Сохранённая задача %s не прочитана: %s", path.parent.name, error)
+                continue
+            if job.id in self._jobs:
+                continue
+            self._jobs[job.id] = job
+            if job.mission_id:
+                self._by_mission[job.mission_id] = job
+            restored += 1
+        return restored
+
+    def _persist(self, job: Job) -> None:
+        """Записать готовый план на диск и оставить только последние `JOB_HISTORY_LIMIT`.
+
+        Сбой записи план не отменяет: задача остаётся в памяти, причина — в журнале.
+        """
+        directory = self._directory()
+        run = job.run
+        if directory is None or run is None:
+            return
+        folder = directory / job.id
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / "scenario.json").write_text(run.scenario.model_dump_json(), "utf-8")
+            (folder / "result.json").write_text(run.result.model_dump_json(), "utf-8")
+            # Описание задачи — последним: по нему задача и восстанавливается.
+            (folder / "job.json").write_text(json.dumps(job.public(), ensure_ascii=False), "utf-8")
+        except (OSError, ValidationError) as error:
+            logger.warning("План задачи %s не сохранён: %s", job.id, error)
+            return
+        stored = sorted(directory.glob("*/job.json"), key=lambda path: path.stat().st_mtime)
+        for path in stored[:-JOB_HISTORY_LIMIT]:
+            stale = path.parent
+            shutil.rmtree(stale, ignore_errors=True)
+            forgotten = self._jobs.pop(stale.name, None)
+            if forgotten is not None and forgotten.mission_id:
+                self._by_mission.pop(forgotten.mission_id, None)
 
     def get(self, job_id: str) -> Job | None:
         """Задача по идентификатору."""
@@ -148,6 +286,7 @@ class JobRegistry:
         mode: OptimizationMode | None = None,
         alpha: float | None = None,
         seed: int | None = None,
+        allocator: str = ALLOCATORS[0],
     ) -> Job:
         """Поставить сценарий в расчёт.
 
@@ -163,13 +302,14 @@ class JobRegistry:
             mode: режим оптимизации, перекрывает сценарий.
             alpha: вес срока в свёртке, перекрывает сценарий.
             seed: зерно ГПСЧ, перекрывает сценарий.
+            allocator: алгоритм распределения из `ALLOCATORS`.
 
         Returns:
             Созданная задача в состоянии PENDING.
         """
         job = Job(id=f"job-{uuid.uuid4().hex[:8]}", scenario_id=scenario.id)
         self._jobs[job.id] = job
-        task = asyncio.create_task(self._execute(job, scenario, mode, alpha, seed))
+        task = asyncio.create_task(self._execute(job, scenario, mode, alpha, seed, allocator))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         return job
@@ -181,6 +321,7 @@ class JobRegistry:
         mode: OptimizationMode | None,
         alpha: float | None,
         seed: int | None,
+        allocator: str,
     ) -> None:
         """Выполнить расчёт и записать результат в задачу.
 
@@ -190,7 +331,9 @@ class JobRegistry:
         """
         job.state = JobState.RUNNING
         try:
-            run = await asyncio.to_thread(run_pipeline, scenario, None, mode, alpha, seed)
+            run = await asyncio.to_thread(
+                run_pipeline, scenario, None, mode, alpha, seed, allocator
+            )
         except CoreError as error:
             job.state = JobState.FAILED
             job.error = str(error)
@@ -201,9 +344,11 @@ class JobRegistry:
             job.run = run
             job.state = JobState.DONE
             job.progress = 1.0
-            self._by_mission[run.mission.id] = job
-        finally:
             job.finished_at = datetime.now(timezone.utc)
+            self._by_mission[run.mission.id] = job
+            await asyncio.to_thread(self._persist, job)
+        finally:
+            job.finished_at = job.finished_at or datetime.now(timezone.utc)
 
     def hint(self, hint_id: str) -> HintJob | None:
         """Задача подсказки по идентификатору."""
@@ -280,11 +425,12 @@ class JobRegistry:
                     state=JobState.DONE,
                     progress=1.0,
                     finished_at=datetime.now(timezone.utc),
-                    run=result.plan,
                 )
+                plan_job.run = result.plan
                 self._jobs[plan_job.id] = plan_job
                 self._by_mission[result.plan.mission.id] = plan_job
                 job.plan_job_id = plan_job.id
+                await asyncio.to_thread(self._persist, plan_job)
             job.state = JobState.DONE
         finally:
             job.finished_at = datetime.now(timezone.utc)

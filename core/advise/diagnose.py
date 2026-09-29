@@ -6,15 +6,20 @@
 Пример заказчика: «невыполнимо, потому что самая удалённая точка, которую
 нужно снять, слишком далеко».
 
-ЗАГЛУШКА E15: рекомендации строятся по кодам причин простыми правилами.
-Место дополнительной площадки — внутренняя точка недоступных подобластей, без
-оптимизации. Подбор площадок для всей области (№28) не делается.
+Рекомендации строятся по кодам причин правилами, а проверяются расчётом
+(`core/advise/verify.py`): совет «добавьте площадку», «борт», «комплекты АКБ»
+считается конвейером и получает итог — хватает ли его. Место площадки — центр
+наименьшего круга, накрывающего недоступные подобласти. Подбор площадок для
+всей области (№28) не делается.
 """
 
 from __future__ import annotations
 
 import math
 
+import shapely
+from shapely.geometry import Point
+from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 
 from core import assumptions
@@ -59,6 +64,26 @@ def _cells(decomposition: Decomposition, warning: PlanWarning) -> list[str]:
     return [item for item in ids.split(",") if item in known]
 
 
+def site_spot(work_area: WorkArea, region: BaseGeometry) -> Point:
+    """Место площадки для подобластей `region`, метры.
+
+    Центр наименьшего круга, накрывающего их, — самое дальнее плечо от него
+    короче всего. Если он в запретной зоне, у препятствия или вне пространства,
+    — внутренняя точка самих подобластей: они вырезаны вне запретного.
+    """
+    center = shapely.minimum_bounding_circle(region).centroid
+    blocked = [
+        zone.buffered
+        for zone in work_area.zones
+        if zone.blocks_altitude(0.0, work_area.corridor_max_m)
+    ]
+    blocked += [item.buffered for item in work_area.obstacles]
+    inside = work_area.airspace is None or work_area.airspace.contains(center)
+    if inside and not any(shape.intersects(center) for shape in blocked):
+        return center
+    return region.representative_point()
+
+
 def _out_of_reach(
     scenario: Scenario,
     work_area: WorkArea,
@@ -88,7 +113,7 @@ def _out_of_reach(
     )
 
     region = unary_union([polygon_to_shapely(by_id[cell_id].polygon) for cell_id in cell_ids])
-    spot = region.representative_point()
+    spot = site_spot(work_area, region)
     return [
         Recommendation(
             kind=RecommendationKind.ADD_SITE,
@@ -164,13 +189,25 @@ def diagnose(
                     )
                 )
         elif reason.code == "allocate.cells_unserviceable":
+            # Модель мультиротора — из пула, если он там есть: её и проверит расчёт.
+            usable = {params.vehicle_id for params in survey_plan.per_vehicle}
+            rotor = next(
+                (
+                    unit.vehicle_id
+                    for unit in scenario.fleet
+                    if unit.vehicle_id in usable and not vehicles[unit.vehicle_id].is_fixed_wing()
+                ),
+                None,
+            )
             recommendations.append(
                 Recommendation(
                     kind=RecommendationKind.ADD_VEHICLE,
                     message=(
-                        "Добавьте мультиротор: подобласти у запретных зон и препятствий "
-                        "самолёт снять не может — ему негде развернуться"
+                        f"Добавьте мультиротор{f' ({vehicles[rotor].name})' if rotor else ''}: "
+                        "подобласти у запретных зон и препятствий самолёт снять не может — "
+                        "ему негде развернуться"
                     ),
+                    vehicle_id=rotor,
                 )
             )
         elif reason.code == "allocate.no_trips_left":
@@ -225,17 +262,28 @@ def diagnose(
     return unique
 
 
-def stub_warning() -> PlanWarning:
-    """Признание заглушки E15 — добавляется, когда рекомендации строились."""
+def advice_note(checked: bool) -> PlanWarning:
+    """Как построены рекомендации — справка к отчёту о невыполнимости.
+
+    Args:
+        checked: проверялись ли советы расчётом (`verify_recommendations`).
+    """
+    how = (
+        "советы «площадка», «борт», «комплекты АКБ» проверены расчётом сценария с этой "
+        "правкой — итог дописан к совету"
+        if checked
+        else "расчётом не проверялись"
+    )
     return PlanWarning(
-        code="stub.advise",
-        severity=Severity.WARNING,
+        code="advise.rules",
+        severity=Severity.INFO,
         stage=Stage.ADVISE,
         message=(
-            "Рекомендации построены простыми правилами по кодам причин; место площадки "
-            "не оптимизируется, подбор площадок для всей области не делается (TODO(E15))"
+            f"Рекомендации выведены правилами по причинам невыполнимости; {how}. Место "
+            "площадки — центр наименьшего круга вокруг недоступных подобластей; подбор "
+            "площадок для всей области не делается"
         ),
     )
 
 
-__all__ = ["diagnose", "stub_warning"]
+__all__ = ["advice_note", "diagnose", "site_spot"]

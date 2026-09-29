@@ -25,6 +25,9 @@
 | [`docs/input_formats.md`](docs/input_formats.md) | Чтение входных слоёв KML: область, зоны, препятствия. **Предложенный формат высот и времени зон** — требование заказчика (№53) |
 | [`docs/export_format.md`](docs/export_format.md) | Формат выгрузки GeoJSON, KML, расписания CSV — требование заказчика (№21) |
 | [`docs/planner_reference.md`](docs/planner_reference.md) | Что взято из ПО заказчика GeoScan Planner: термины, значения по умолчанию, проверки |
+| [`docs/explanatory_note.md`](docs/explanatory_note.md) | Пояснительная записка для жюри: задача, решение, алгоритм, результаты против baseline |
+| [`docs/user_guide.md`](docs/user_guide.md) | Руководство пользователя: вход, интерфейс, итог, выгрузка, подсказки, история, CLI и API |
+| [`docs/known_limitations.md`](docs/known_limitations.md) | Известные ограничения; раздел реестра собирается `assumptions --update`, тест следит за свежестью |
 | [`docs/external_sources.md`](docs/external_sources.md) | ТТХ БВС, подложка, рельеф, препятствия, спецификации форматов |
 
 ## Команды
@@ -45,6 +48,15 @@ python -m core.cli --batch scenarios/ -o out/
 
 # доказательство эффективности: baseline, эвристика и эвристика с локальным поиском в обоих режимах (E12)
 python -m core.cli compare scenarios/ scenarios/real/ -o out/compare.md
+
+# фронт «срок — ресурс»: минимум срока, минимум ресурса и ресурс к срокам между ними
+python -m core.cli pareto scenarios/demo_100km2.json -o out/pareto.md
+
+# подбор места ещё одной площадки: кандидаты у дальней работы, каждый проверен расчётом
+python -m core.cli sites scenarios/demo_100km2.json -o out/sites.md
+
+# известные ограничения: раздел реестра допущений в документе (после правки assumptions.py)
+python -m core.cli assumptions --update docs/known_limitations.md
 
 # подсказки по пулу (флот сценария — пул): срок при N бортах, сколько бортов к сроку, перебор N
 python -m core.cli hints scenarios/demo_100km2.json --boards 4

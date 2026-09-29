@@ -15,7 +15,6 @@ from core.schemas import (
     OptimizationMode,
     RecommendationKind,
     Scenario,
-    Stage,
 )
 from tests.conftest import FEASIBLE, INFEASIBLE, small_scenario
 
@@ -56,11 +55,14 @@ def test_pipeline_is_deterministic(scenario: Scenario, catalog: VehicleCatalog) 
 
 
 def test_stub_stages_are_declared(run: PlanningRun) -> None:
-    """Заглушка обязана объявлять себя: план на заглушках не выглядит настоящим."""
-    if _feasible(run):
-        assert set(run.mission.stub_stages) == set(STUB_STAGES)
-    else:
-        assert Stage.ADVISE in run.mission.stub_stages
+    """Заглушка обязана объявлять себя: план на заглушках не выглядит настоящим.
+
+    Советы невыполнимого плана с 2026-09-29 проверяются расчётом и заглушкой
+    не считаются; как они построены — справка `advise.rules`.
+    """
+    assert set(run.mission.stub_stages) == set(STUB_STAGES)
+    if not _feasible(run):
+        assert any(item.code == "advise.rules" for item in run.mission.warnings)
 
 
 def test_every_sortie_is_a_sequence_of_phases(run: PlanningRun) -> None:
@@ -192,12 +194,42 @@ def test_nasty_is_infeasible_for_lack_of_sorties(runs: dict[str, PlanningRun]) -
 
 
 def test_far_area_gets_add_site_advice_with_a_place(catalog: VehicleCatalog) -> None:
-    """№33: «самая удалённая точка слишком далеко» — и где поставить площадку."""
+    """№33: «самая удалённая точка слишком далеко» — и где поставить площадку.
+
+    Совет проверен расчётом (E15): с площадкой в предложенном месте задание
+    выполнимо — распределение само ставит на неё не приписанный борт.
+    """
     far = small_scenario(sites=[{"id": "base", "position": [30.31, 59.80]}])
     mission = run_pipeline(far, catalog=catalog).mission
     assert mission.status is MissionStatus.INFEASIBLE
     advice = [item for item in mission.recommendations if item.kind is RecommendationKind.ADD_SITE]
     assert advice and advice[0].position is not None
+    assert advice[0].checked is True
+    assert "Проверено расчётом" in advice[0].message
+
+
+def test_advice_is_checked_by_planning(runs: dict[str, PlanningRun]) -> None:
+    """E15: совет «снимите предел вылетов» у «злого» сценария проверен расчётом."""
+    mission = runs["nasty"].mission
+    batteries = next(
+        item for item in mission.recommendations if item.kind is RecommendationKind.ADD_BATTERIES
+    )
+    assert batteries.checked is not None
+    assert "Проверено расчётом: без предела числа вылетов" in batteries.message
+    unchecked = [
+        item
+        for item in mission.recommendations
+        if item.kind in (RecommendationKind.OTHER_MODEL, RecommendationKind.WAIT)
+    ]
+    assert all(item.checked is None for item in unchecked)
+
+
+def test_hints_and_fronts_do_not_check_advice(catalog: VehicleCatalog) -> None:
+    """Проверка советов — ещё прогоны; там, где прогонов много, её нет."""
+    far = small_scenario(sites=[{"id": "base", "position": [30.31, 59.80]}])
+    mission = run_pipeline(far, catalog=catalog, verify=False).mission
+    assert mission.recommendations
+    assert all(item.checked is None for item in mission.recommendations)
 
 
 def test_no_suitable_vehicle_is_infeasible_not_an_exception(catalog: VehicleCatalog) -> None:
@@ -215,6 +247,51 @@ def test_missed_deadline_is_infeasible(catalog: VehicleCatalog) -> None:
     assert mission.status is MissionStatus.INFEASIBLE
     assert any(reason.code == "validate.deadline" for reason in mission.reasons)
     assert any(item.kind is RecommendationKind.ADD_VEHICLE for item in mission.recommendations)
+
+
+def test_fleet_is_a_pool_and_composition_is_a_result(runs: dict[str, PlanningRun]) -> None:
+    """Долг №41 (№48): флот сценария — пул, состав плана — результат.
+
+    В демо 10 бортов пула, в работе 9: у Геоскан 801 нет камеры для этой
+    съёмки. Состав называет площадку каждого борта — штатную.
+    """
+    run = runs["demo_100km2"]
+    mission = run.mission
+    assert mission.metrics is not None
+    pool = sum(unit.count for unit in run.scenario.fleet)
+    used = sum(unit.count for unit in mission.fleet_used)
+    idle = sum(unit.count for unit in mission.fleet_idle)
+    assert used + idle == pool
+    assert used == mission.metrics.vehicle_count
+    assert "geoscan-801" in {unit.vehicle_id for unit in mission.fleet_idle}
+    primary = {site.id for site in run.scenario.primary_sites()}
+    assert all(unit.site_id in primary for unit in mission.fleet_used)
+    note = next(item for item in mission.warnings if item.code == "plan.fleet_idle")
+    assert f"В работе {used} из {pool}" in note.message
+
+
+def test_plan_composition_works_as_a_fleet(
+    simple_scenario: Scenario, catalog: VehicleCatalog
+) -> None:
+    """Состав плана — годный флот: «использовать ровно это» даёт выполнимый план."""
+    first = run_pipeline(simple_scenario, catalog=catalog, mode=OptimizationMode.MIN_RESOURCE)
+    assert first.mission.fleet_used
+    again = run_pipeline(
+        simple_scenario.model_copy(update={"fleet": first.mission.fleet_used}),
+        catalog=catalog,
+        mode=OptimizationMode.MIN_RESOURCE,
+    )
+    assert again.mission.status is MissionStatus.FEASIBLE
+    assert not again.mission.fleet_idle
+
+
+def test_parallel_allocation_gives_the_same_plan(catalog: VehicleCatalog, runs) -> None:
+    """Долг №62: варианты распределения в процессах пула — тот же план, что в одном процессе."""
+    scenario = runs["medium"].scenario
+    alone = run_pipeline(scenario, catalog=catalog, workers=1).mission
+    pooled = run_pipeline(scenario, catalog=catalog, workers=2).mission
+    assert alone.metrics == pooled.metrics
+    assert [s.model_dump() for s in alone.sorties] == [s.model_dump() for s in pooled.sorties]
 
 
 def test_cycle_cost_is_a_registered_assumption() -> None:

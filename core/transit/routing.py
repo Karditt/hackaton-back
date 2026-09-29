@@ -313,13 +313,10 @@ class VisibilityRouter:
             Ломаная обхода; прямая, если обход не нужен или невозможен.
         """
         key, graph = self._graph_for(altitude_m)
-        cache_key = (
-            key,
-            round(start.x_m, 3),
-            round(start.y_m, 3),
-            round(end.x_m, 3),
-            round(end.y_m, 3),
-        )
+        # Ключ — точные координаты: путь начинается и кончается точками вызова.
+        # С округлением путь нёс концы того вызова, что первым заполнил кеш, и
+        # план зависел от порядка расчёта — в разных процессах разный (долг №62).
+        cache_key = (key, start.x_m, start.y_m, end.x_m, end.y_m)
         if cache_key not in self._routes:
             path = graph.route((start.x_m, start.y_m), (end.x_m, end.y_m))
             self._routes[cache_key] = MetricLineString(

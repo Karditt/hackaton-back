@@ -226,3 +226,53 @@
   text-decoration: underline;
   cursor: pointer;
 }
+
+.linkButton:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
+/* Сравнение с baseline (E12): план, baseline, разница. */
+.compare {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.compare th,
+.compare td {
+  padding: 3px 4px;
+  text-align: right;
+  border-bottom: 1px solid var(--line);
+}
+
+.compare th {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.compare td:first-child {
+  text-align: left;
+  color: var(--muted);
+}
+
+.better {
+  color: var(--success);
+  font-weight: 600;
+}
+
+.worse {
+  color: var(--error);
+}
+
+/* Совет проверен расчётом (E15): хватает ли правки. */
+.checkedOk {
+  color: var(--success);
+  font-weight: 600;
+}
+
+.checkedShort {
+  color: var(--warning);
+  font-weight: 600;
+}

@@ -7,10 +7,22 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
+from core.geo.mask import WorkArea
 from core.pipeline import PlanningRun
-from core.schemas import FlightPhase, Sortie
+from core.schemas import (
+    FlightPhase,
+    GeoPoint,
+    MetricPoint,
+    PlanWarning,
+    Severity,
+    Site,
+    SiteKind,
+    Sortie,
+)
 from core.validate import validate_plan
 from tests.conftest import FEASIBLE
 
@@ -208,3 +220,76 @@ def test_unholdable_ground_speed_is_caught(runs: dict[str, PlanningRun]) -> None
     ]
     sorties[0] = sorties[0].model_copy(update={"legs": legs})
     assert "validate.airspeed" in _check(run, sorties)
+
+
+def _soft(run: PlanningRun, work_area: WorkArea) -> dict[str, PlanWarning]:
+    """Мягкие замечания краш-теста по кодам — при своей рабочей области."""
+    assert run.result.decomposition is not None
+    report = validate_plan(
+        run.scenario,
+        work_area,
+        run.result.decomposition,
+        run.result.coverage,
+        run.mission.sorties,
+        run.vehicles,
+    )
+    assert report.ok()
+    return {warning.code: warning for warning in report.warnings}
+
+
+def test_unreachable_alternate_site_is_a_warning(runs: dict[str, PlanningRun]) -> None:
+    """Запасная площадка дальше, чем хватит заряда, — предупреждение, не нарушение (№41).
+
+    Вторая площадка `medium` отнесена за 1000 км: вылетам, садящимся на
+    первую, садиться при её недоступности некуда. План при этом выполним.
+    """
+    run = runs["medium"]
+    far_away = MetricPoint(x_m=1_000_000.0, y_m=1_000_000.0)
+    moved = replace(run.work_area, sites={**run.work_area.sites, "base-east": far_away})
+    warning = _soft(run, moved)["validate.alternate_reach"]
+    assert warning.severity is Severity.WARNING
+    assert warning.context["site_id"] == "base-east"
+    assert warning.geometry is not None
+    assert warning.geometry.points[-1] == far_away
+
+
+def test_alternate_sites_near_the_route_pass(runs: dict[str, PlanningRun]) -> None:
+    """Запасная площадка у каждой точки маршрута — замечания нет."""
+    run = runs["simple"]
+    near = {
+        f"alt-{index}": MetricPoint(x_m=waypoint.x_m, y_m=waypoint.y_m)
+        for index, waypoint in enumerate(
+            waypoint
+            for sortie in run.mission.sorties
+            for leg in sortie.legs
+            for waypoint in leg.waypoints
+        )
+    }
+    sites = [
+        *run.scenario.sites,
+        *(
+            Site(id=site_id, position=GeoPoint(lon=0.0, lat=0.0), kind=SiteKind.RESERVE)
+            for site_id in near
+        ),
+    ]
+    scenario = run.scenario.model_copy(update={"sites": sites})
+    moved = replace(run.work_area, sites={**run.work_area.sites, **near})
+    report = validate_plan(
+        scenario,
+        moved,
+        run.result.decomposition,
+        run.result.coverage,
+        run.mission.sorties,
+        run.vehicles,
+    )
+    codes = {warning.code for warning in report.warnings}
+    assert "validate.alternate_reach" not in codes
+    assert "validate.no_alternate" not in codes
+
+
+def test_single_site_has_no_alternate(runs: dict[str, PlanningRun]) -> None:
+    """Одна площадка на сценарий — справка «запасной площадки нет»."""
+    run = runs["simple"]
+    assert len(run.scenario.sites) == 1
+    note = _soft(run, run.work_area)["validate.no_alternate"]
+    assert note.severity is Severity.INFO

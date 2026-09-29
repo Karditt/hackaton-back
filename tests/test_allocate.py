@@ -36,7 +36,8 @@ def demo_greedy(
     Конвейер пробует несколько стратегий эвристики и целевых сроков, у каждого
     прогона своя книга расписания; возвращаются постановки той, чей план взят.
     Книги различаются самими объектами, а не `id()`: освобождённую книгу
-    сборщик мусора отдаёт, и её `id` достаётся следующей.
+    сборщик мусора отдаёт, и её `id` достаётся следующей. Расчёт — в этом
+    процессе (`workers=1`): в процессах пула подмены `commit` нет.
     """
     commits: dict[BookPlacer, list[tuple[tuple[str, int], tuple[str, ...], float]]] = {}
     original = BookPlacer.commit
@@ -49,7 +50,9 @@ def demo_greedy(
 
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(BookPlacer, "commit", spy)
-        run = run_pipeline(runs["demo_100km2"].scenario, catalog=catalog, allocator="constructive")
+        run = run_pipeline(
+            runs["demo_100km2"].scenario, catalog=catalog, allocator="constructive", workers=1
+        )
     flown = {
         ((sortie.vehicle_id, sortie.vehicle_instance), tuple(sortie.cell_ids))
         for sortie in run.mission.sorties

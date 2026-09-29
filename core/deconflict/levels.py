@@ -20,6 +20,9 @@
 
 from __future__ import annotations
 
+import bisect
+from collections.abc import Sequence
+
 from core import assumptions
 from core.allocate.fleet import FleetInstance
 from core.schemas import PlanWarning, Severity, Stage, SurveyPlan
@@ -67,20 +70,41 @@ def _candidates(
 
 
 def assign_transit_levels(
-    instances: list[FleetInstance], survey_plan: SurveyPlan, corridor_max_m: float
+    instances: list[FleetInstance],
+    survey_plan: SurveyPlan,
+    corridor_max_m: float,
+    obstacle_tops_m: Sequence[float] = (),
 ) -> tuple[dict[tuple[str, int], float], list[PlanWarning]]:
     """Назначить каждому борту эшелон перелёта.
+
+    Из свободных эшелонов борт берёт самый низкий, над которым не мешает ни
+    одно препятствие, а если такого нет под его пределом — самый низкий
+    (долг №39): перелёт над препятствиями идёт по прямой, а не в обход. Делить
+    эшелон, если свободных не осталось, — на наименее занятом, при равной
+    занятости — над препятствиями, если такой есть. Демо: коптер уходит с
+    285 м (мачта, безопасная высота 300 м) на 315 м, срок −0,5%, ресурс
+    −0,8%. На данных заказчика под потолком Gemini чистого эшелона нет (у
+    четырёх препятствий безопасная высота выше 405 м) — выбор прежний.
 
     Args:
         instances: физические борта.
         survey_plan: параметры съёмки (высоты).
         corridor_max_m: верхняя граница коридора, м AGL.
+        obstacle_tops_m: высоты безопасного пролёта над препятствиями
+            области, м AGL (`ObstacleArea.safe_altitude_m`). Пусто —
+            препятствия выбор не меняют.
 
     Returns:
         Пара «эшелон по ключу борта (модель, экземпляр), предупреждения».
         Если свободных эшелонов под потолком борта не осталось, эшелон
         достаётся нескольким бортам, и разводить их остаётся расписанию.
     """
+    tops = sorted(obstacle_tops_m)
+
+    def blocked(level_m: float) -> int:
+        """Сколько препятствий мешает перелёту на этой высоте."""
+        return len(tops) - bisect.bisect_right(tops, level_m)
+
     survey_altitudes = sorted({params.altitude_agl_m for params in survey_plan.per_vehicle})
 
     own: dict[tuple[str, int], float] = {}
@@ -105,10 +129,11 @@ def assign_transit_levels(
         free = [level for level in available if _clear_of(level, taken)]
         shared = [level for level in available if level in on_level]
         if free:
-            level = free[0]
+            clear = [item for item in free if not blocked(item)]
+            level = clear[0] if clear else free[0]
         elif shared:
             # Своего места не осталось — встаём вторым на наименее занятый.
-            level = min(shared, key=lambda item: (len(on_level[item]), item))
+            level = min(shared, key=lambda item: (len(on_level[item]), blocked(item) > 0, item))
         else:
             assigned[instance.key] = own[instance.key]
             warnings.append(

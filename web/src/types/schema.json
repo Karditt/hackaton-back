@@ -897,6 +897,7 @@
           "$ref": "#/definitions/Wind"
         },
         "fleet": {
+          "description": "Пул доступной техники: модель и доступное количество. Состав плана выбирает расчёт (Mission.fleet_used): борт, которому работы не досталось, остаётся на земле",
           "items": {
             "$ref": "#/definitions/FleetUnit"
           },
@@ -1528,6 +1529,22 @@
           "title": "Warnings",
           "type": "array"
         },
+        "fleet_used": {
+          "description": "Состав плана — результат, а не вход: борта пула, получившие работу, по модели, нагрузке и площадке первого взлёта. Пусто у невыполнимого плана",
+          "items": {
+            "$ref": "#/definitions/FleetUnit"
+          },
+          "title": "Fleet Used",
+          "type": "array"
+        },
+        "fleet_idle": {
+          "description": "Борта пула, оставшиеся на земле: плану не понадобились или не годятся для этой съёмки. Пусто у невыполнимого плана",
+          "items": {
+            "$ref": "#/definitions/FleetUnit"
+          },
+          "title": "Fleet Idle",
+          "type": "array"
+        },
         "algorithm": {
           "title": "Algorithm",
           "type": "string"
@@ -1785,6 +1802,19 @@
           ],
           "default": null,
           "title": "Vehicle Id"
+        },
+        "checked": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Проверено расчётом сценария с этой правкой: True — с ней задание выполнимо, False — её одной мало (итог — в конце сообщения), None — не проверялось",
+          "title": "Checked"
         }
       },
       "required": [

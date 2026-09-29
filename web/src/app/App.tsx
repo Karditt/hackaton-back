@@ -18,6 +18,7 @@ import type { OptimizationMode } from '../api';
 import { useScenarioFiles, useScenarioLayers, useUploads } from '../features/data';
 import { FleetPage, fleetCatalog, parkToFleetRows, usePark, userVehicles } from '../features/fleet';
 import { HintPanel, useHint } from '../features/hints';
+import { HistoryPanel } from '../features/history';
 import { MapView } from '../features/map/MapView';
 import { allLayers, resetPlanLayers, type MapFilter } from '../features/map/layers';
 import {
@@ -188,10 +189,16 @@ export default function App() {
             disabledNote={planningNote}
             lastRunS={lastRunS}
             vehicles={catalog}
-            onShowPlan={(jobId, label) => void planning.showJob(jobId, label)}
+            onShowPlan={(jobId, label) => void planning.showJob(jobId, label, 'hint')}
             planBusy={planning.busy}
           />
-          {run && <ResultPanel run={run} onOpenSchedule={() => open('schedule')} />}
+          <HistoryPanel
+            onShow={(jobId, label) => void planning.showJob(jobId, label, 'history')}
+            busy={planning.busy}
+          />
+          {run && (
+            <ResultPanel run={run} vehicles={catalog} onOpenSchedule={() => open('schedule')} />
+          )}
         </aside>
 
         <div className={styles.splitter} {...splitter.separatorProps} />

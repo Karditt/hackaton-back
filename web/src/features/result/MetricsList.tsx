@@ -1,8 +1,13 @@
-import type { PipelineResult } from '../../api';
+import type { PipelineResult, Vehicle } from '../../api';
+import { boardCount, composition } from '../../shared/fleet';
 import { hours, kilometres, minutes } from '../../shared/format';
 import styles from './result.module.css';
 
-type Props = { result: PipelineResult };
+type Props = {
+  result: PipelineResult;
+  /** Каталог моделей — для имён в составе плана. */
+  vehicles: Vehicle[];
+};
 
 const MODE_LABEL: Record<string, string> = {
   min_makespan: 'минимум срока',
@@ -10,10 +15,15 @@ const MODE_LABEL: Record<string, string> = {
 };
 
 /** Метрики выполнимого плана (PROJECT_BRIEF.md §4.3). */
-export function MetricsList({ result }: Props) {
+export function MetricsList({ result, vehicles }: Props) {
   const { mission, crs } = result;
   const metrics = mission.metrics;
   if (!metrics) return null;
+
+  const modelName = (vehicleId: string) =>
+    vehicles.find((vehicle) => vehicle.id === vehicleId)?.name ?? vehicleId;
+  const used = mission.fleet_used ?? [];
+  const idle = mission.fleet_idle ?? [];
 
   const rows: [label: string, value: string][] = [
     ['Режим', MODE_LABEL[metrics.mode] ?? metrics.mode],
@@ -23,10 +33,21 @@ export function MetricsList({ result }: Props) {
     ['Суммарный налёт', hours(metrics.total_flight_time_s)],
     ['Циклов взлёт-посадка', String(metrics.cycle_count)],
     ['Вылетов / бортов', `${metrics.sortie_count} / ${metrics.vehicle_count}`],
+  ];
+  if (used.length > 0) {
+    // Состав плана выбирает расчёт: флот сценария — пул доступной техники.
+    const pool = boardCount(used) + boardCount(idle);
+    rows.push([
+      'Состав плана',
+      `${composition(used, modelName)} — ${boardCount(used)} из ${pool} бортов пула`,
+    ]);
+    if (idle.length > 0) rows.push(['На земле', composition(idle, modelName)]);
+  }
+  rows.push(
     ['Подобластей снято', `${metrics.cells_covered} из ${metrics.cells_planned}`],
     ['Дистанция', kilometres(metrics.total_distance_m)],
     ['Проекция', `EPSG:${crs.epsg}`],
-  ];
+  );
   if (metrics.deadline_s != null) {
     rows.push([
       'Ограничение по сроку',
