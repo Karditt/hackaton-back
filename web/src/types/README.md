@@ -8,7 +8,7 @@
 (скрипты `predev` / `prebuild`), в том числе внутри образа Docker. Импортировать
 контрактные типы в коде — через `src/api/types.ts`.
 
-Руками не правится ни то, ни другое (AGENT.md §2: дублирование схем запрещено).
+Руками не правится ни то, ни другое (docs/dev/AGENT.md §2: дублирование схем запрещено).
 
 После ЛЮБОЙ правки `core/schemas.py`:
 
@@ -17,5 +17,5 @@ python -m core.cli export-schema -o web/src/types/schema.json
 npm run gen:types
 ```
 
-и отметка в `docs/current_state.md` → «Журнал изменений» о правке контракта
-(AGENT.md §4).
+и отметка в `docs/dev/current_state.md` → «Журнал изменений» о правке контракта
+(docs/dev/AGENT.md §4).

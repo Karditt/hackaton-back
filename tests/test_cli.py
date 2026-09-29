@@ -80,7 +80,7 @@ def test_export_schema_produces_valid_json(tmp_path: Path) -> None:
 
 def test_export_schema_includes_vehicle_catalog(tmp_path: Path) -> None:
     """Борт каталога — тоже корень выгрузки: панель параметров веба набирает флот из
-    `GET /vehicles`, а типы контракта руками не пишутся (AGENT.md §2)."""
+    `GET /vehicles`, а типы контракта руками не пишутся (docs/dev/AGENT.md §2)."""
     output = tmp_path / "schema.json"
     assert main(["export-schema", "-o", str(output)]) == 0
     schema = json.loads(output.read_text(encoding="utf-8"))

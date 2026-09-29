@@ -10,8 +10,8 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 
-# Предпочтительный стек — PROJECT_BRIEF.md §3. Заказчик ограничений не ставит
-# (docs/customer_qa.md, №18); новая зависимость отмечается в current_state.md.
+# Предпочтительный стек — docs/dev/PROJECT_BRIEF.md §3. Заказчик ограничений не ставит
+# (docs/dev/customer_qa.md, №18); новая зависимость отмечается в current_state.md.
 dependencies = [
     "numpy>=1.26",
     "shapely>=2.0",

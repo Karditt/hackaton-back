@@ -4,10 +4,10 @@
 
     python -m core.cli scenarios/simple.json -o out/mission.geojson
 
-Инвариант 2 (PROJECT_BRIEF.md §5): `core` не импортирует ничего из `api` и `web`.
+Инвариант 2 (docs/dev/PROJECT_BRIEF.md §5): `core` не импортирует ничего из `api` и `web`.
 Любой такой импорт — дефект, даже «только для типов».
 
-Конвейер стадий (по ответам заказчика, docs/customer_qa.md):
+Конвейер стадий (по ответам заказчика, docs/dev/customer_qa.md):
 
     Scenario → SurveyPlan → Decomposition → Allocation → Coverage
              → вылеты → Schedule → Validation → Mission → Files

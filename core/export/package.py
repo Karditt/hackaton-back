@@ -29,7 +29,7 @@ from core.geo.project import Projector
 from core.schemas import PipelineResult, Scenario
 
 #: Метка времени записей архива. Постоянная, чтобы один расчёт давал
-#: побитово один и тот же архив (AGENT.md §8); 1980-01-01 — начало эпохи ZIP.
+#: побитово один и тот же архив (docs/dev/AGENT.md §8); 1980-01-01 — начало эпохи ZIP.
 _ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 
 _UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")

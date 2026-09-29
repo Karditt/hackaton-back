@@ -186,7 +186,7 @@ def test_more_boards_than_the_pool(catalog: VehicleCatalog) -> None:
 
 
 def test_same_question_same_answer(medium, catalog: VehicleCatalog) -> None:
-    """Детерминированность (AGENT.md §8): тот же вопрос — те же прогоны."""
+    """Детерминированность (docs/dev/AGENT.md §8): тот же вопрос — те же прогоны."""
     first = sweep_hint(medium, catalog).report
     second = sweep_hint(medium, catalog).report
     assert [(run.boards, run.makespan_s, run.note) for run in first.runs] == [

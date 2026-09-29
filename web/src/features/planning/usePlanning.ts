@@ -84,7 +84,7 @@ export async function scenarioToRun(
  *
  * Результат отдаётся наружу, только пока выбранные параметры совпадают с
  * теми, с которыми он посчитан. Иначе метрики прошлого расчёта легко принять
- * за текущие (долг №18 в docs/current_state.md).
+ * за текущие (долг №18 в docs/dev/current_state.md).
  */
 export function usePlanning({
   scenarioId,

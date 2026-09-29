@@ -480,7 +480,7 @@ def test_package_holds_overview_and_board_files(runs: dict[str, PlanningRun]) ->
 def test_without_start_time_the_time_is_relative(catalog: VehicleCatalog) -> None:
     """Долг №30: без начала работ нет ни TimeSpan, ни трека — и это сказано явно.
 
-    «Сейчас» не подставляется: один сценарий давал бы разные файлы (AGENT.md §8).
+    «Сейчас» не подставляется: один сценарий давал бы разные файлы (docs/dev/AGENT.md §8).
     """
     scenario = load_scenario(SCENARIOS_DIR / "simple.json").model_copy(update={"start_time": None})
     run = run_pipeline(scenario, catalog=catalog)

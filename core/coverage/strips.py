@@ -2,7 +2,7 @@
 
 Геометрия: метры, обрезка по подобласти, змейка, шаг — свой у каждого борта
 (№27). Направление галсов выбирается на подобласть и борт (E3, как у
-GeoScan Planner — docs/planner_reference.md §4): `candidate_azimuths` даёт
+GeoScan Planner — docs/dev/planner_reference.md §4): `candidate_azimuths` даёт
 кандидатов в порядке времени съёмки, покрытие (`CoverageOracle`) берёт
 первого, при котором зона манёвра самолёта не задевает запрещённого.
 

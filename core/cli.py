@@ -644,7 +644,7 @@ def command_check_sources(args: argparse.Namespace) -> int:
 def command_export_schema(args: argparse.Namespace) -> int:
     """Выгрузить JSON Schema контракта для генерации TypeScript-типов.
 
-    AGENT.md §4: после ЛЮБОЙ правки `core/schemas.py` эта команда прогоняется
+    docs/dev/AGENT.md §4: после ЛЮБОЙ правки `core/schemas.py` эта команда прогоняется
     заново, иначе типы фронта расходятся с ядром молча.
 
     Корни выгрузки — то, что фронт получает от API целиком: сценарий
@@ -652,7 +652,7 @@ def command_export_schema(args: argparse.Namespace) -> int:
     борт каталога (`GET /vehicles`), отчёт импорта слоёв
     (`POST /scenarios/import`) и отчёт подсказки (`GET /hints/{id}`).
     Последние три не достижимы из первых, поэтому названы отдельно: иначе их
-    типы пришлось бы писать руками, что запрещено (AGENT.md §2).
+    типы пришлось бы писать руками, что запрещено (docs/dev/AGENT.md §2).
     """
     schema = {
         "$schema": "http://json-schema.org/draft-07/schema#",
@@ -808,7 +808,7 @@ def command_assumptions(args: argparse.Namespace) -> int:
             print(f"    почему  : {item.rationale}")
     print(
         f"\nВсего {len(items)}; «!» — допущение команды, «*» — значение заказчика "
-        "(docs/customer_qa.md)."
+        "(docs/dev/customer_qa.md)."
     )
     return 0
 

@@ -155,7 +155,7 @@ def test_local_search_improves_on_the_heuristic(
 
 
 def test_local_search_is_deterministic(catalog: VehicleCatalog) -> None:
-    """AGENT.md §8: один сценарий — побитово один план."""
+    """docs/dev/AGENT.md §8: один сценарий — побитово один план."""
     scenario = load_scenario(SCENARIOS_DIR / "medium.json")
     first = run_pipeline(scenario, catalog=catalog)
     second = run_pipeline(scenario, catalog=catalog)
