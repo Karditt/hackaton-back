@@ -12,7 +12,21 @@ const KIND_LABEL: Record<RecommendationKind, string> = {
 
 type Props = { items: Recommendation[] };
 
-/** Что добавить, чтобы задание стало выполнимым (заказчик, №33, №42). */
+/** Итог проверки совета расчётом: хватает ли правки; без проверки — ничего. */
+function CheckBadge({ checked }: { checked?: boolean | null }) {
+  if (checked == null) return null;
+  return checked ? (
+    <span className={styles.checkedOk}> · проверено: хватает</span>
+  ) : (
+    <span className={styles.checkedShort}> · проверено: одного этого мало</span>
+  );
+}
+
+/**
+ * Что добавить, чтобы задание стало выполнимым (заказчик, №33, №42). Советы
+ * «площадка», «борт», «вылеты» сервер проверяет расчётом сценария с правкой —
+ * итог в конце сообщения и отметкой.
+ */
 export function RecommendationsList({ items }: Props) {
   if (items.length === 0) {
     return <p className={styles.empty}>Рекомендаций нет.</p>;
@@ -23,6 +37,7 @@ export function RecommendationsList({ items }: Props) {
         <li key={`${item.kind}-${index}`} className={`${styles.warningItem} ${styles.advice}`}>
           <b>{KIND_LABEL[item.kind] ?? item.kind}</b>
           {item.position ? ' · место отмечено на карте' : ''}
+          <CheckBadge checked={item.checked} />
           <br />
           {item.message}
         </li>

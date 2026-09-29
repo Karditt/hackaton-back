@@ -37,7 +37,12 @@ export type PlanningRun = {
   document: GeoJsonDocument;
   /** Откуда план, если не из расчёта сценария: «План подсказки: 5 бортов». */
   label?: string;
+  /** Чей это готовый план: ответ подсказки или сохранённый расчёт из истории. */
+  origin?: PlanOrigin;
 };
+
+/** Готовый план, показанный без расчёта: из подсказки по флоту или из истории. */
+export type PlanOrigin = 'hint' | 'history';
 
 /**
  * Состояние расчёта для показа: не считали, идёт, готов (выполним или нет),
@@ -148,9 +153,10 @@ export function usePlanning({
    *
    * @param jobId задача расчёта с готовым планом
    * @param label откуда план — показывается в шапке и над результатом
+   * @param origin подсказка по флоту или история расчётов
    */
   const showJob = useCallback(
-    async (jobId: string, label: string) => {
+    async (jobId: string, label: string, origin: PlanOrigin = 'hint') => {
       setBusy(true);
       setPhase('running');
       setError(null);
@@ -169,6 +175,7 @@ export function usePlanning({
           result,
           document,
           label,
+          origin,
         });
         setRanSignature(signature);
         setStatus(feasible ? `${label} — готов` : `${label} — задание невыполнимо`);

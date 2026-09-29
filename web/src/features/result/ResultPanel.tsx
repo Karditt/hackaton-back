@@ -1,7 +1,8 @@
-import type { PipelineResult, PlanWarning } from '../../api';
+import type { PipelineResult, PlanWarning, Vehicle } from '../../api';
 import { Notice } from '../../shared/ui/Notice';
 import { Section } from '../../shared/ui/Section';
 import type { PlanningRun } from '../planning';
+import { BaselineCompare } from './BaselineCompare';
 import { ExportLinks } from './ExportLinks';
 import { MetricsList } from './MetricsList';
 import { RecommendationsList } from './RecommendationsList';
@@ -10,6 +11,8 @@ import styles from './result.module.css';
 
 type Props = {
   run: PlanningRun;
+  /** Каталог моделей — для имён в составе плана. */
+  vehicles: Vehicle[];
   /** Открыть вкладку «Расписание» — диаграмма и таблица живут там во всю ширину. */
   onOpenSchedule: () => void;
 };
@@ -30,7 +33,7 @@ function collectWarnings(result: PipelineResult): PlanWarning[] {
  * Итог расчёта. Выполнимый план — метрики и расписание; невыполнимый — причины
  * и что добавить (заказчик, №33, №42). Частичных планов нет.
  */
-export function ResultPanel({ run, onOpenSchedule }: Props) {
+export function ResultPanel({ run, vehicles, onOpenSchedule }: Props) {
   const { result } = run;
   const mission = result.mission;
   const feasible = mission.status === 'feasible';
@@ -40,7 +43,13 @@ export function ResultPanel({ run, onOpenSchedule }: Props) {
 
   return (
     <>
-      {run.label && (
+      {run.label && run.origin === 'history' && (
+        <Notice tone="caution">
+          {run.label} — сохранённый расчёт, параметры могли с тех пор измениться. Посчитать по
+          текущим — «Рассчитать».
+        </Notice>
+      )}
+      {run.label && run.origin !== 'history' && (
         <Notice tone="caution">
           {run.label} — не расчёт флота сценария: борта подобраны подсказкой, режим «минимум срока».
           Чтобы вернуться к флоту сценария — «Рассчитать».
@@ -56,7 +65,14 @@ export function ResultPanel({ run, onOpenSchedule }: Props) {
 
       {feasible && mission.metrics && (
         <Section title="Метрики">
-          <MetricsList result={result} />
+          <MetricsList result={result} vehicles={vehicles} />
+        </Section>
+      )}
+
+      {feasible && mission.metrics && !mission.algorithm.startsWith('baseline') && (
+        <Section title="Сравнение с baseline">
+          {/* Новый план — новое сравнение: прежнее относилось к другому расчёту. */}
+          <BaselineCompare key={run.jobId} run={run} />
         </Section>
       )}
 

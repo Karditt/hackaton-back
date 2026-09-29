@@ -33,7 +33,7 @@ from core.export.kml import kml_to_bytes, mission_to_kml
 from core.export.package import file_stem, mission_zip
 from core.export.schedule import schedule_to_csv
 from core.geo.kml_import import import_layers
-from core.pipeline import check_scenario
+from core.pipeline import ALLOCATORS, check_scenario
 from core.schemas import (
     ExportFormat,
     HintKind,
@@ -54,7 +54,7 @@ CUSTOM_SUFFIX = "--custom"
 _MEDIA_TYPES = {".kml": "application/vnd.google-earth.kml+xml", ".json": "application/json"}
 
 store = ScenarioStore()
-jobs = JobRegistry()
+jobs = JobRegistry(lambda: store.directory / "jobs")
 sources: dict[str, ScenarioSources] = {}
 _reports: dict[str, ImportReport] = {}
 
@@ -75,6 +75,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     for scenario_id in store.list_ids():
         if scenario_id not in sources:
             _register_uploads(scenario_id)
+    # Готовые планы прошлых запусков: история прогонов (E9).
+    jobs.restore()
     yield
 
 
@@ -117,7 +119,15 @@ def _finished_job(job: Job) -> Job:
     """Задача, у которой есть результат, либо осмысленная ошибка."""
     if job.state is JobState.FAILED:
         raise HTTPException(status_code=422, detail=job.error or "Расчёт не удался")
-    if job.run is None:
+    try:
+        run = job.run
+    except (CoreError, OSError, ValueError) as error:
+        # План прошлого запуска лежит на диске, но уже не читается (правка
+        # контракта, каталога техники, удалённый файл).
+        raise HTTPException(
+            status_code=410, detail=f"Сохранённый план задачи не читается: {error}"
+        ) from error
+    if run is None:
         raise HTTPException(status_code=409, detail=f"Расчёт ещё идёт: {job.state.value}")
     return job
 
@@ -459,6 +469,7 @@ async def start_planning(
     mode: OptimizationMode | None = Query(default=None),
     alpha: float | None = Query(default=None, ge=0.0, le=1.0),
     seed: int | None = Query(default=None),
+    allocator: str = Query(default=ALLOCATORS[0]),
 ) -> dict[str, Any]:
     """Поставить сценарий в расчёт.
 
@@ -468,15 +479,22 @@ async def start_planning(
             Перекрывает сценарий.
         alpha: вес срока в свёртке для фронта Парето, 0..1. Перекрывает сценарий.
         seed: зерно ГПСЧ. Перекрывает сценарий.
+        allocator: алгоритм распределения — `local_search` (по умолчанию),
+            `constructive` или `baseline` (равные площади, точка сравнения E12).
 
     Returns:
         Идентификатор фоновой задачи для поллинга.
     """
+    if allocator not in ALLOCATORS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Алгоритм распределения {allocator!r} неизвестен: {', '.join(ALLOCATORS)}",
+        )
     try:
         scenario = store.get(scenario_id)
     except ScenarioError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
-    return jobs.submit(scenario, mode=mode, alpha=alpha, seed=seed).public()
+    return jobs.submit(scenario, mode=mode, alpha=alpha, seed=seed, allocator=allocator).public()
 
 
 @app.post("/scenarios/{scenario_id}/hints", tags=["подсказки"], status_code=202)

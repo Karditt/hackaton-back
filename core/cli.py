@@ -10,6 +10,7 @@
     python -m core.cli hints scenarios/demo_100km2.json --boards 4
     python -m core.cli hints scenarios/demo_100km2.json --deadline-h 6 -o out/hints.md
     python -m core.cli hints scenarios/demo_100km2.json --sweep
+    python -m core.cli pareto scenarios/demo_100km2.json -o out/pareto.md
     python -m core.cli import-layers --area area.kml --zones zones.kml \
         --obstacles obstacles.kml --params params.json -o scenarios/real.json
     python -m core.cli export-layers scenarios/simple.json -o scenarios/sources/simple
@@ -18,6 +19,7 @@
     python -m core.cli check-sources
     python -m core.cli export-schema -o web/src/types/schema.json
     python -m core.cli assumptions
+    python -m core.cli assumptions --update docs/known_limitations.md
 """
 
 from __future__ import annotations
@@ -38,6 +40,7 @@ from core.export.writer import export_mission, format_for
 from core.geo.kml_import import import_layers, read_area
 from core.geo.relayout import DEFAULT_LINK_M, relayout_area
 from core.hints import boards_text, duration_text, run_hint
+from core.pareto import ParetoPoint, pareto_front
 from core.pipeline import ALLOCATORS, PlanningRun, run_pipeline
 from core.schemas import (
     GeoPoint,
@@ -65,6 +68,7 @@ SUBCOMMANDS = (
     "check-sources",
     "export-schema",
     "assumptions",
+    "pareto",
 )
 
 
@@ -254,7 +258,9 @@ def command_compare(args: argparse.Namespace) -> int:
             cells: list[str] = []
             metrics = {}
             for allocator in ("baseline", "constructive", "local_search"):
-                run = run_pipeline(scenario, catalog=catalog, mode=mode, allocator=allocator)
+                run = run_pipeline(
+                    scenario, catalog=catalog, mode=mode, allocator=allocator, verify=False
+                )
                 metrics[allocator] = run.mission.metrics
                 if run.mission.metrics is None:
                     cells.extend(["невыполним", "—"])
@@ -388,6 +394,54 @@ def command_hints(args: argparse.Namespace) -> int:
         for written in _write_outputs(result.plan, Path(args.plan_out), True, None):
             print(f"  план ответа    : {written}")
     return 0 if report.answer_boards is not None else 1
+
+
+def _pareto_row(point: ParetoPoint) -> list[str]:
+    """Ячейки строки фронта: план, срок, ресурс, вылетов, бортов, на фронте ли."""
+    if not point.feasible:
+        return [point.label, "невыполним", "—", "—", "—", "—"]
+    return [
+        point.label,
+        _hours(point.makespan_s or 0.0),
+        _hours(point.resource_s or 0.0),
+        str(point.sortie_count),
+        str(point.vehicle_count),
+        "нет — есть план не хуже" if point.dominated else "да",
+    ]
+
+
+def command_pareto(args: argparse.Namespace) -> int:
+    """Фронт Парето «срок — ресурс» (E12): что стоит закончить к каждому сроку.
+
+    Края — планы «минимум срока» и «минимум ресурса», между ними — «минимум
+    ресурса» с ограничением по сроку. Каждая точка — полный расчёт с
+    краш-тестом.
+    """
+    scenario = load_scenario(Path(args.scenario))
+    catalog = load_catalog(args.vehicles)
+    header = ["План", "Срок, ч", "Ресурс, ч", "Вылетов", "Бортов", "На фронте"]
+    print(f"=== {scenario.id}: фронт «срок — ресурс»")
+
+    def on_point(point: ParetoPoint) -> None:
+        # Доминируемость видна только в конце — по ходу печатаются числа.
+        cells = _pareto_row(point)[:5]
+        print(f"  {' | '.join(cells)} | {point.elapsed_s:.0f} с", flush=True)
+
+    points = pareto_front(scenario, catalog, steps=args.steps, on_point=on_point)
+    lines = [
+        f"Фронт «срок — ресурс», сценарий `{scenario.id}`.",
+        "",
+        "| " + " | ".join(header) + " |",
+        "|" + "---|" * len(header),
+    ]
+    lines += ["| " + " | ".join(_pareto_row(point)) + " |" for point in points]
+    print("\n" + "\n".join(lines))
+    if args.output:
+        target = Path(args.output)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        print(f"  записано: {target}")
+    return 0 if any(point.feasible for point in points) else 1
 
 
 def command_import_layers(args: argparse.Namespace) -> int:
@@ -558,11 +612,95 @@ def command_export_schema(args: argparse.Namespace) -> int:
     return 0
 
 
+#: Где в документе «известные ограничения» начинается и кончается раздел,
+#: собранный из реестра допущений (`assumptions --update`).
+REGISTRY_BEGIN = "<!-- registry:begin -->"
+REGISTRY_END = "<!-- registry:end -->"
+
+#: Разделы реестра в документе: вид записи и заголовок.
+_REGISTRY_SECTIONS = (
+    (assumptions_module.Kind.TEAM, "Допущения команды"),
+    (assumptions_module.Kind.CUSTOMER, "Значения заказчика"),
+    (assumptions_module.Kind.MEASURED, "Физические константы и значения из документов"),
+    (assumptions_module.Kind.DERIVED, "Выведенные величины"),
+)
+
+
+def _cell(text: object) -> str:
+    """Текст для ячейки таблицы Markdown: без переводов строк и вертикальных черт."""
+    return " ".join(str(text).split()).replace("|", "\\|")
+
+
+def registry_markdown() -> str:
+    """Реестр допущений разделом Markdown — часть документа «известные ограничения».
+
+    Собирается механически из `core/assumptions.py`: каждое число с источником и
+    обоснованием; допущения команды — первыми, это и есть известные
+    ограничения решения (E13).
+
+    Returns:
+        Текст раздела без маркеров начала и конца.
+    """
+    items = assumptions_module.all_assumptions()
+    lines = [
+        "Раздел собран из реестра `core/assumptions.py` командой "
+        "`python -m core.cli assumptions --update docs/known_limitations.md`; руками не "
+        f"правится. Всего записей — {len(items)}, из них допущений команды — "
+        f"{len(assumptions_module.team_assumptions())}.",
+    ]
+    for kind, title in _REGISTRY_SECTIONS:
+        group = [item for item in items if item.kind is kind]
+        if not group:
+            continue
+        lines += [
+            "",
+            f"### {title} ({len(group)})",
+            "",
+            "| Имя | Значение | Источник | Почему так |",
+            "|---|---|---|---|",
+        ]
+        lines += [
+            f"| `{item.name}` | {_cell(item.value)} {_cell(item.unit)} | {_cell(item.source)} "
+            f"| {_cell(item.rationale) or '—'} |"
+            for item in group
+        ]
+    return "\n".join(lines) + "\n"
+
+
+def _update_registry(path: Path) -> bool:
+    """Заменить раздел реестра в документе между маркерами.
+
+    Returns:
+        True — документ изменился.
+
+    Raises:
+        CoreError: в документе нет маркеров раздела.
+    """
+    text = path.read_text(encoding="utf-8")
+    begin, end = text.find(REGISTRY_BEGIN), text.find(REGISTRY_END)
+    if begin < 0 or end < begin:
+        raise CoreError(f"В {path} нет маркеров {REGISTRY_BEGIN} … {REGISTRY_END}")
+    updated = text[: begin + len(REGISTRY_BEGIN)] + "\n\n" + registry_markdown() + "\n" + text[end:]
+    if updated == text:
+        return False
+    path.write_text(updated, encoding="utf-8")
+    return True
+
+
 def command_assumptions(args: argparse.Namespace) -> int:
     """Напечатать реестр допущений — основу раздела «известные ограничения».
 
-    Знак «!» — допущение команды, «*» — значение заказчика.
+    Знак «!» — допущение команды, «*» — значение заказчика. С `--markdown` —
+    раздел документа, с `--update` — он же прямо в документ.
     """
+    if args.update:
+        path = Path(args.update)
+        changed = _update_registry(path)
+        print(f"{path}: {'раздел реестра обновлён' if changed else 'раздел реестра уже свежий'}")
+        return 0
+    if args.markdown:
+        print(registry_markdown(), end="")
+        return 0
     items = (
         assumptions_module.team_assumptions()
         if args.team_only
@@ -741,9 +879,29 @@ def build_parser() -> argparse.ArgumentParser:
     )
     schema.set_defaults(handler=command_export_schema)
 
+    pareto = subparsers.add_parser(
+        "pareto", help="фронт «срок — ресурс»: планы от минимума срока до минимума ресурса"
+    )
+    pareto.add_argument("scenario", help="путь к JSON-сценарию")
+    pareto.add_argument(
+        "--steps",
+        type=int,
+        default=assumptions_module.PARETO_STEPS,
+        help="сколько промежуточных сроков между краями",
+    )
+    pareto.add_argument("--vehicles", help="путь к каталогу техники вместо data/vehicles.yaml")
+    pareto.add_argument("-o", "--output", help="куда записать таблицу Markdown")
+    pareto.set_defaults(handler=command_pareto)
+
     registry = subparsers.add_parser("assumptions", help="напечатать реестр допущений")
     registry.add_argument("--json", action="store_true", help="машиночитаемый вывод")
     registry.add_argument("--team-only", action="store_true", help="только допущения команды")
+    registry.add_argument(
+        "--markdown", action="store_true", help="раздел документа «известные ограничения»"
+    )
+    registry.add_argument(
+        "--update", help="документ с маркерами раздела: заменить раздел реестра в нём"
+    )
     registry.set_defaults(handler=command_assumptions)
 
     return parser

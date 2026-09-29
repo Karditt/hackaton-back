@@ -12,17 +12,23 @@ import type { GeoJsonDocument, JobStatus, OptimizationMode, PipelineResult } fro
 /** Форматы выгрузки: полётное задание или отчёт, расписание — CSV (docs/export_format.md). */
 export type ExportFormat = 'geojson' | 'kml' | 'schedule';
 
+/** Алгоритм распределения: по умолчанию — эвристика с поиском; baseline — точка сравнения. */
+export type Allocator = 'local_search' | 'constructive' | 'baseline';
+
 /**
  * Поставить сценарий в расчёт.
  *
  * @param scenarioId идентификатор сохранённого сценария
  * @param mode режим оптимизации: минимум срока или минимум ресурса (заказчик, №23)
+ * @param allocator алгоритм распределения; без него — по умолчанию сервера
  */
 export async function startPlanning(
   scenarioId: string,
   mode: OptimizationMode,
+  allocator?: Allocator,
 ): Promise<JobStatus> {
   const query = new URLSearchParams({ mode });
+  if (allocator) query.set('allocator', allocator);
   return request<JobStatus>(`/scenarios/${encodeURIComponent(scenarioId)}/plan?${query}`, {
     method: 'POST',
   });
@@ -30,6 +36,11 @@ export async function startPlanning(
 
 export async function getJob(jobId: string): Promise<JobStatus> {
   return request<JobStatus>(`/jobs/${jobId}`);
+}
+
+/** Все задачи расчёта, новые первыми: и этого запуска сервера, и сохранённые прежде. */
+export async function listJobs(): Promise<JobStatus[]> {
+  return (await request<{ jobs: JobStatus[] }>('/jobs')).jobs;
 }
 
 /** Полный результат прогона: все стадии конвейера, а не только итог. */

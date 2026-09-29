@@ -15,6 +15,8 @@ import pytest
 
 fastapi_testclient = pytest.importorskip("fastapi.testclient")
 
+import api.main as api_main  # noqa: E402
+from api.jobs import JobRegistry  # noqa: E402
 from api.main import app, store  # noqa: E402
 from api.storage import ScenarioStore  # noqa: E402
 from tests.conftest import SCENARIOS_DIR  # noqa: E402
@@ -275,6 +277,35 @@ def test_board_export_and_package(client) -> None:
         names = set(archive.namelist())
     assert {"simple.kml", "simple.geojson", "simple.schedule.csv"} <= names
     assert {f"simple.{item['board_id']}.kml" for item in boards} <= names
+
+
+def test_finished_plans_survive_restart(client, monkeypatch: pytest.MonkeyPatch) -> None:
+    """E9: готовый план пишется на диск и после перезапуска отдаётся как был.
+
+    «Перезапуск» — новый реестр задач на том же каталоге хранилища: список
+    задач поднимается сразу, план читается при первом обращении.
+    """
+    job_id = client.post("/scenarios/simple/plan").json()["id"]
+    _wait_for_job(client, job_id)
+    before = client.get(f"/jobs/{job_id}/result").json()["mission"]
+    kml_before = client.get(f"/jobs/{job_id}/export", params={"format": "kml"}).text
+    saved = store.directory / "jobs" / job_id / "job.json"
+    deadline = time.monotonic() + 30.0
+    while not saved.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert saved.exists()
+
+    fresh = JobRegistry(lambda: store.directory / "jobs")
+    assert fresh.restore() >= 1
+    monkeypatch.setattr(api_main, "jobs", fresh)
+    listed = {item["id"]: item for item in client.get("/jobs").json()["jobs"]}
+    assert listed[job_id]["state"] == "done"
+    assert listed[job_id]["mission_id"] == before["id"]
+
+    after = client.get(f"/jobs/{job_id}/result").json()["mission"]
+    assert after["metrics"] == before["metrics"]
+    assert after["sorties"] == before["sorties"]
+    assert client.get(f"/jobs/{job_id}/export", params={"format": "kml"}).text == kml_before
 
 
 def test_scenario_layers_are_served_before_planning(client) -> None:

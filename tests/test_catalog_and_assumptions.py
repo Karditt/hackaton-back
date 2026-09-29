@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
 
 import pytest
 import yaml
@@ -10,6 +11,7 @@ import yaml
 from core import assumptions
 from core.assumptions import Kind
 from core.catalog import DEFAULT_CATALOG_PATH, VehicleCatalog, load_catalog
+from core.cli import REGISTRY_BEGIN, REGISTRY_END, registry_markdown
 from core.errors import CatalogError
 from core.schemas import VehicleType
 from core.survey.plan import build_survey_plan
@@ -21,6 +23,24 @@ def test_every_assumption_has_a_source() -> None:
     for item in assumptions.all_assumptions():
         assert item.source.strip(), f"{item.name}: пустой источник"
         assert item.unit.strip(), f"{item.name}: не указана единица измерения"
+
+
+def test_known_limitations_document_follows_the_registry() -> None:
+    """E13: раздел реестра в «известных ограничениях» совпадает с `core/assumptions.py`.
+
+    Раздел собирается командой `assumptions --update`; новое допущение без
+    обновления документа — дефект документации.
+    """
+    text = (Path(__file__).parent.parent / "docs" / "known_limitations.md").read_text(
+        encoding="utf-8"
+    )
+    begin = text.index(REGISTRY_BEGIN) + len(REGISTRY_BEGIN)
+    end = text.index(REGISTRY_END)
+    assert text[begin:end].strip() == registry_markdown().strip(), (
+        "обновите: python -m core.cli assumptions --update docs/known_limitations.md"
+    )
+    for item in assumptions.team_assumptions():
+        assert f"`{item.name}`" in text
 
 
 def test_team_assumptions_explain_themselves() -> None:
