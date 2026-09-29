@@ -35,6 +35,7 @@ export type {
   ScheduleEntry,
   Severity,
   Site,
+  Stage,
   SurveyType,
   Vehicle,
   VehicleType,

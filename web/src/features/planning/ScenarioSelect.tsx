@@ -9,6 +9,10 @@ type Props = {
 };
 
 export function ScenarioSelect({ scenarios, value, onChange, disabled }: Props) {
+  const selected = scenarios.find((item) => item.id === value);
+  // Пояснение доступного сценария — что в нём и сколько идёт расчёт. Почему
+  // недоступный не считается, форма говорит отдельно, у кнопки расчёта.
+  const note = selected?.planning_available !== false ? selected?.planning_note : null;
   return (
     <label className={styles.field}>
       Сценарий
@@ -24,6 +28,7 @@ export function ScenarioSelect({ scenarios, value, onChange, disabled }: Props) 
           </option>
         ))}
       </select>
+      {note && <span className={styles.hint}>{note}</span>}
     </label>
   );
 }

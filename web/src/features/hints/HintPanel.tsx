@@ -113,12 +113,12 @@ export function HintPanel(props: Props) {
   const runs = expectedRuns(kind, size);
   const runsText =
     kind === 'boards'
-      ? 'Один прогон конвейера'
-      : `Около ${runs} ${plural(runs, ['прогона', 'прогонов', 'прогонов'])} конвейера`;
+      ? 'Один расчёт плана'
+      : `Около ${runs} ${plural(runs, ['расчёта', 'расчётов', 'расчётов'])} плана`;
   const waitHint =
     props.lastRunS !== null
       ? `Расчёт этого сценария шёл ${waitText(props.lastRunS)}: ждать около ${waitText(runs * props.lastRunS)}.`
-      : 'На данных заказчика прогон идёт до минуты, и вопрос занимает минуты; на тестовых сценариях — секунды.';
+      : 'На больших областях каждый расчёт идёт минуты, на небольших — секунды.';
 
   const answer = hint.answer;
   const report = answer?.status.report ?? null;
@@ -152,8 +152,8 @@ export function HintPanel(props: Props) {
         )}
       </summary>
       <p className={styles.lead}>
-        Флот сценария — пул доступной техники. На каждое число бортов считается настоящий план с
-        краш-тестом, так что ответ подтверждён планом.
+        Пул сценария — доступная техника. На каждое число бортов считается полный план с проверкой
+        безопасности, так что ответ подтверждён планом.
       </p>
 
       <fieldset className={formStyles.field}>
@@ -213,8 +213,8 @@ export function HintPanel(props: Props) {
       )}
 
       <p className={styles.note}>
-        В пуле {boardsText(size)}. {runsText}, каждый — полный расчёт плана; если состав приходится
-        чинить, прогонов больше. {waitHint}
+        В пуле {boardsText(size)}. {runsText}; если состав приходится подбирать заново, расчётов
+        больше. {waitHint}
       </p>
 
       <button
@@ -235,7 +235,7 @@ export function HintPanel(props: Props) {
         <div className={styles.progressBox} role="status">
           <progress className={styles.progress} value={hint.tick?.progress ?? 0} max={1} />
           <span>
-            {hint.tick ? `${hint.status}: прогонов сделано ${hint.tick.runs_done}` : hint.status} ·{' '}
+            {hint.tick ? `${hint.status}: готово расчётов — ${hint.tick.runs_done}` : hint.status} ·{' '}
             {waitText(elapsedS)}
           </span>
         </div>
@@ -251,8 +251,8 @@ export function HintPanel(props: Props) {
           )}
           <p className={styles.answerText}>{report.answer}</p>
           <p className={styles.note}>
-            Прогоны — в режиме «минимум срока» и без дедлайна сценария: срок сравнивается с итогом.
-            Выделена строка ответа.
+            Все расчёты — по критерию «минимум срока», без дедлайна сценария: срок вопроса
+            сравнивается с итогом. Выделена строка ответа.
           </p>
           <HintRunsTable report={report} modelName={modelName} />
           {(report.warnings ?? []).length > 0 && (

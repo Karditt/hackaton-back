@@ -35,7 +35,7 @@ export function BaselineCompare({ run }: Props) {
     try {
       const job = await startPlanning(run.scenarioId, run.mode, 'baseline');
       const finished = await waitForJob(job.id, () => undefined);
-      if (finished.state === 'failed') throw new Error(finished.error ?? 'расчёт не удался');
+      if (finished.state === 'failed') throw new Error(finished.error ?? 'Расчёт не удался');
       const mission = (await getResult(job.id)).mission;
       setComparison({
         state: 'done',
@@ -50,14 +50,15 @@ export function BaselineCompare({ run }: Props) {
   if (comparison.state === 'idle' || comparison.state === 'running') {
     return (
       <p className={styles.scheduleLink}>
-        Baseline — равное деление площади между бортами, без оптимизатора.{' '}
+        Точка отсчёта — та же работа, поделённая между бортами поровну по площади, как без
+        оптимизатора.{' '}
         <button
           type="button"
           className={styles.linkButton}
           disabled={comparison.state === 'running'}
           onClick={() => void compare()}
         >
-          {comparison.state === 'running' ? 'Считаю baseline…' : 'Сравнить с baseline →'}
+          {comparison.state === 'running' ? 'Считаю…' : 'Сравнить →'}
         </button>
       </p>
     );
@@ -67,8 +68,11 @@ export function BaselineCompare({ run }: Props) {
   if (!baseline) {
     return (
       <Notice tone="caution">
-        Baseline с этим флотом задание не выполняет
-        {comparison.reason ? `: ${comparison.reason}` : ''}. Оптимизатор выполняет.
+        Равным делением с этим пулом задание не выполнить
+        {comparison.reason
+          ? `: ${comparison.reason.charAt(0).toLowerCase()}${comparison.reason.slice(1)}`
+          : ''}
+        . Оптимизатор задание выполняет.
       </Notice>
     );
   }
@@ -85,7 +89,7 @@ export function BaselineCompare({ run }: Props) {
         <tr>
           <th />
           <th>План</th>
-          <th>Baseline</th>
+          <th>Поровну</th>
           <th>Разница</th>
         </tr>
       </thead>

@@ -46,6 +46,10 @@
   border-left-color: var(--line);
 }
 
+.stage {
+  color: var(--muted);
+}
+
 .exports {
   margin-top: 16px;
 }

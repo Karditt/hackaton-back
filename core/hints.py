@@ -57,6 +57,7 @@ from core.schemas import (
     VehicleType,
 )
 from core.survey.plan import build_survey_plan
+from core.text import lower_first
 
 #: Причины, по которым план проваливается из-за состава, а не из-за числа
 #: бортов: часть работы не может снять ни один борт подбора — самолёту у зоны
@@ -345,7 +346,9 @@ class _Session:
                 board = self.pool[index]
                 alternative = sorted([*chosen[:victim], *chosen[victim + 1 :], index])
                 why = "без замены область не покрыть"
-                swap = self._swap_note(removed, board, why if note else f"{why} — {reason.message}")
+                swap = self._swap_note(
+                    removed, board, why if note else f"{why} — {lower_first(reason.message)}"
+                )
                 alt_run, alt_plan = self._run(alternative, "; ".join(filter(None, [note, swap])))
                 alt_deficit_m2 = _deficit_m2(alt_plan)
                 if alt_deficit_m2 < (best[0] if best else deficit_m2):
@@ -388,8 +391,8 @@ class _Session:
                         message=(
                             f"Больше бортов — не быстрее: при {boards_text(count, 'loc')} срок "
                             f"{duration_text(makespan_s)}, при {boards_text(best[0], 'loc')} — "
-                            f"{duration_text(best[1])}. Лишний борт планировщик пока не "
-                            "оставляет на земле"
+                            f"{duration_text(best[1])}. Работа делится на весь состав, и "
+                            "лишние борта ждут друг друга на разведении"
                         ),
                     )
                 )
@@ -462,7 +465,7 @@ def _verdict(session: _Session, run: HintRun) -> str:
     subject = f"{boards_text(run.boards)} ({session.composition(run.boards)})"
     if run.makespan_s is None:
         reason = run.reasons[0].message if run.reasons else "план не прошёл проверку"
-        return f"{subject}: задание невыполнимо — {reason}"
+        return f"{subject}: задание невыполнимо — {lower_first(reason)}"
     one = run.boards % 10 == 1 and run.boards % 100 != 11
     text = f"{subject} {'снимает' if one else 'снимают'} область за {duration_text(run.makespan_s)}"
     if session.deadline_s is not None:

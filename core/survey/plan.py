@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import math
 
-from core import assumptions
+from core import assumptions, text
 from core.flight.wind import wind_vector
 from core.schemas import (
     FleetUnit,
@@ -215,7 +215,7 @@ def _select_payload(
                 code="survey.payload_unknown",
                 severity=Severity.ERROR,
                 stage=Stage.SURVEY,
-                message=f"У борта {vehicle.id} нет нагрузки {unit.payload_id!r}",
+                message=f"У борта {vehicle.name} нет нагрузки «{unit.payload_id}»",
                 context={"vehicle_id": vehicle.id},
             )
         if payload.kind not in allowed:
@@ -224,8 +224,8 @@ def _select_payload(
                 severity=Severity.ERROR,
                 stage=Stage.SURVEY,
                 message=(
-                    f"Нагрузка {payload.id} (класс {payload.kind.value}) не подходит для "
-                    f"съёмки типа {survey_type.value}"
+                    f"{vehicle.name}: нагрузка «{payload.name}» не подходит для "
+                    f"{text.SURVEY_TYPE_LABELS[survey_type]}"
                 ),
                 context={"vehicle_id": vehicle.id, "payload_id": payload.id},
             )
@@ -240,8 +240,8 @@ def _select_payload(
         severity=Severity.ERROR,
         stage=Stage.SURVEY,
         message=(
-            f"У борта {vehicle.name} нет нагрузки, пригодной для съёмки типа "
-            f"{survey_type.value}, — борт исключён из планирования"
+            f"У борта {vehicle.name} нет нагрузки, пригодной для "
+            f"{text.SURVEY_TYPE_LABELS[survey_type]}, — борт исключён из планирования"
         ),
         context={"vehicle_id": vehicle.id},
     )
@@ -276,10 +276,10 @@ def _params_for(
                 vehicle,
                 "survey.optics_unknown",
                 (
-                    f"{vehicle.name}: у нагрузки {payload.id} в официальном источнике нет "
-                    f"оптики для расчёта высоты по GSD "
-                    f"({'; '.join(payload.gaps) or 'пробел не описан'}). Инвариант 6 "
-                    "запрещает подставлять правдоподобные числа — борт исключён"
+                    f"{vehicle.name}: у нагрузки «{payload.name}» в документации производителя "
+                    "нет оптики для расчёта высоты по GSD "
+                    f"({'; '.join(text.gap_text(gap) for gap in payload.gaps) or 'данных нет'})"
+                    ". Подставлять неизвестные числа нельзя — борт исключён"
                 ),
                 payload_id=payload.id,
             )
@@ -291,8 +291,8 @@ def _params_for(
                 vehicle,
                 "survey.wind_over_limit",
                 (
-                    f"{vehicle.name}: ветер {wind_mps:.1f} м/с выше паспортного предела "
-                    f"{vehicle.max_wind_mps:.1f} м/с — борт исключён"
+                    f"{vehicle.name}: ветер {text.num(wind_mps)} м/с выше паспортного предела "
+                    f"{text.num(vehicle.max_wind_mps)} м/с — борт исключён"
                 ),
             )
         ]
@@ -329,9 +329,10 @@ def _params_for(
                 severity=Severity.WARNING,
                 stage=Stage.SURVEY,
                 message=(
-                    f"{vehicle.name}: требуемый GSD {quality.gsd_m * 100:.1f} см/пикс достижим "
-                    f"ниже минимальной безопасной высоты {floor_m:.0f} м. Высота поднята, "
-                    f"фактический GSD {gsd_m * 100:.1f} см/пикс — грубее требуемого"
+                    f"{vehicle.name}: требуемый GSD {text.num(quality.gsd_m * 100)} см/пикс "
+                    f"достижим только ниже минимальной безопасной высоты {floor_m:.0f} м. "
+                    f"Высота поднята, фактический GSD {text.num(gsd_m * 100)} см/пикс — грубее "
+                    "требуемого"
                 ),
                 context={"vehicle_id": vehicle.id},
             )
@@ -347,7 +348,7 @@ def _params_for(
                 message=(
                     f"{vehicle.name}: высота под требуемый GSD выше допустимой "
                     f"{ceiling_m:.0f} м (потолок борта или коридор минус эшелон перелёта). "
-                    f"Съёмка ниже, фактический GSD {gsd_m * 100:.1f} см/пикс — точнее "
+                    f"Съёмка ниже, фактический GSD {text.num(gsd_m * 100)} см/пикс — точнее "
                     "требуемого, галсов больше"
                 ),
                 context={"vehicle_id": vehicle.id},
@@ -370,10 +371,9 @@ def _params_for(
                 vehicle,
                 "survey.wind_speed_band_empty",
                 (
-                    f"{vehicle.name}: при ветре {wind_mps:.1f} м/с нет путевой скорости, "
-                    f"которую борт удержит на любом курсе (нужно от {lower_mps:.1f} до "
-                    f"{survey_cap_mps:.1f} м/с) — борт исключён. Выбор направления галсов "
-                    "поперёк ветра (E3) может расширить диапазон"
+                    f"{vehicle.name}: при ветре {text.num(wind_mps)} м/с нет путевой скорости, "
+                    f"которую борт удержит на любом курсе (нужно от {text.num(lower_mps)} до "
+                    f"{text.num(survey_cap_mps)} м/с) — борт исключён"
                 ),
             )
         ]
@@ -407,11 +407,12 @@ def _params_for(
                 severity=Severity.INFO,
                 stage=Stage.SURVEY,
                 message=(
-                    f"{vehicle.name}: путевая скорость на галсах вдоль ветра {survey_mps:.1f} м/с "
-                    f"вместо крейсерской {vehicle.cruise_speed_mps:.1f} м/с — иначе против ветра "
-                    f"{wind_mps:.1f} м/с не хватит воздушной скорости или интервала съёмки. На "
-                    f"галсах поперёк ветра — {across_mps:.1f} м/с: направление галсов "
-                    "выбирается с учётом этого"
+                    f"{vehicle.name}: путевая скорость на галсах вдоль ветра "
+                    f"{text.num(survey_mps)} м/с вместо крейсерской "
+                    f"{text.num(vehicle.cruise_speed_mps)} м/с — иначе против ветра "
+                    f"{text.num(wind_mps)} м/с не хватит воздушной скорости или интервала "
+                    f"съёмки. На галсах поперёк ветра — {text.num(across_mps)} м/с: направление "
+                    "галсов выбирается с учётом этого"
                 ),
                 context={"vehicle_id": vehicle.id},
             )

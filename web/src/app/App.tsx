@@ -193,6 +193,7 @@ export default function App() {
             planBusy={planning.busy}
           />
           <HistoryPanel
+            scenarios={scenarios}
             onShow={(jobId, label) => void planning.showJob(jobId, label, 'history')}
             busy={planning.busy}
           />
@@ -222,6 +223,7 @@ export default function App() {
         <main className={styles.page}>
           <SchedulePage
             run={run}
+            vehicles={catalog}
             busy={planning.busy}
             onGoPlan={() => open('plan')}
             onShowBoard={showBoard}
@@ -235,7 +237,6 @@ export default function App() {
             vehicles={vehicles}
             catalogError={catalogError}
             park={park}
-            scenarioId={scenarioId}
             scenarioFleet={draft.scenario?.fleet ?? null}
           />
         </main>

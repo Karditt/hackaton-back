@@ -51,6 +51,7 @@ export function drawMission(map: L.Map, document: GeoJsonDocument, fit = true): 
   // Сортировка устойчива: внутри одного слоя порядок файла сохраняется.
   const features = [...document.features].sort((a, b) => drawRank(a) - drawRank(b));
   const ordered: GeoJsonDocument = { ...document, features };
+  const context = { boards: document.properties?.boards ?? [] };
   const layer = L.geoJSON(ordered as never, {
     style: (feature) => {
       const properties = (feature?.properties ?? {}) as Record<string, string | undefined>;
@@ -65,7 +66,7 @@ export function drawMission(map: L.Map, document: GeoJsonDocument, fit = true): 
       return L.circleMarker(latlng, fill ? { ...marker, fillColor: fill } : marker);
     },
     onEachFeature: (feature, featureLayer) => {
-      featureLayer.bindPopup(describeFeature(feature.properties ?? {}));
+      featureLayer.bindPopup(describeFeature(feature.properties ?? {}, context));
     },
   }).addTo(map);
 

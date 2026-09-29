@@ -23,7 +23,7 @@ from __future__ import annotations
 import bisect
 from collections.abc import Sequence
 
-from core import assumptions
+from core import assumptions, text
 from core.allocate.fleet import FleetInstance
 from core.schemas import PlanWarning, Severity, Stage, SurveyPlan
 
@@ -205,10 +205,12 @@ def _shared_level_warnings(
                 severity=Severity.WARNING,
                 stage=Stage.SCHEDULE,
                 message=(
-                    f"Эшелон {level:.0f} м делят {len(group)} бортов "
-                    f"({', '.join(item.label for item in group)}): из {room} эшелонов между "
-                    f"съёмкой {own[tightest.key]:.0f} м и пределом {limit[tightest.key]:.0f} м "
-                    "свободных не осталось — их разводит расписание"
+                    f"Эшелон {level:.0f} м делят "
+                    f"{text.counted(len(group), ('борт', 'борта', 'бортов'))} "
+                    f"({', '.join(item.label for item in group)}): из "
+                    f"{text.counted(room, ('эшелона', 'эшелонов', 'эшелонов'))} между съёмкой "
+                    f"{own[tightest.key]:.0f} м и пределом {limit[tightest.key]:.0f} м "
+                    "свободных не осталось — эти борта разводит расписание"
                 ),
                 context={
                     "level_m": f"{level:.0f}",

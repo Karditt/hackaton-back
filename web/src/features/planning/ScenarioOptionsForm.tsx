@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { Scenario, Vehicle } from '../../api';
 import { Notice } from '../../shared/ui/Notice';
 import { FleetEditor, type ParkFleet } from './FleetEditor';
-import { SURVEY_TYPES, customScenarioId, type ScenarioOptions } from './scenarioOptions';
+import { SURVEY_TYPES, type ScenarioOptions } from './scenarioOptions';
 import styles from './PlanningForm.module.css';
 
 type Props = {
@@ -42,7 +42,7 @@ export function ScenarioOptionsForm(props: Props) {
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
       <summary className={styles.summary}>
-        Параметры сценария{props.edited && <span className={styles.badge}>правлены</span>}
+        Параметры задания{props.edited && <span className={styles.badge}>изменены</span>}
       </summary>
 
       <label className={styles.field}>
@@ -109,8 +109,8 @@ export function ScenarioOptionsForm(props: Props) {
           </label>
         </div>
         <span className={styles.hint}>
-          направление — метеорологическое: 0° — ветер с севера. В расход не входит; влияет на
-          выполнимость и на направление галсов — поперёк ветра борт держит скорость выше
+          направление — откуда дует: 0° — ветер с севера. Влияет на выполнимость и направление
+          галсов (поперёк ветра борт держит скорость выше), на расход заряда — нет
         </span>
       </fieldset>
 
@@ -138,8 +138,8 @@ export function ScenarioOptionsForm(props: Props) {
           disabled={disabled}
         />
         <span className={styles.hint}>
-          пусто — время в плане относительное, «T+чч:мм:сс»; окна временных зон тогда не
-          проверяются
+          пусто — время в плане отсчитывается от начала работ, а временные зоны считаются
+          действующими всегда
         </span>
       </label>
 
@@ -183,7 +183,7 @@ export function ScenarioOptionsForm(props: Props) {
             type="number"
             min={0}
             step={1}
-            placeholder="по умолч."
+            placeholder="10"
             title="Межвылетная подготовка между вылетами одного борта"
             value={options.turnaround_min}
             onChange={(event) => set({ turnaround_min: event.target.value })}
@@ -203,10 +203,9 @@ export function ScenarioOptionsForm(props: Props) {
 
       {props.edited && (
         <Notice tone="caution">
-          Параметры правлены. Расчёт пойдёт по копии сценария{' '}
-          <code>{customScenarioId(scenario.id ?? 'scenario')}</code>; исходный не меняется.{' '}
+          Параметры изменены: расчёт пойдёт по копии сценария, исходный не меняется.{' '}
           <button type="button" className={styles.linkButton} onClick={props.onReset}>
-            вернуть исходные
+            Вернуть исходные
           </button>
         </Notice>
       )}

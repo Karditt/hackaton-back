@@ -32,7 +32,7 @@ from shapely.geometry import LineString, Point
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 
-from core import assumptions
+from core import assumptions, text
 from core.flight.cost import retime_sortie
 from core.flight.maneuver import ManeuverWindow, maneuver_overlap, maneuver_windows
 from core.flight.track import Track, build_track, first_conflict
@@ -444,9 +444,10 @@ def build_schedule(
                     severity=Severity.ERROR,
                     stage=Stage.SCHEDULE,
                     message=(
-                        f"Вылет {sortie.id}: за {assumptions.SCHEDULE_MAX_DELAY_S / 3600:.0f} ч "
-                        "сдвигов старта не нашлось окна без сближений с другими бортами (включая "
-                        "зоны манёвра) и без временных запретных зон"
+                        f"{text.sortie_label(sortie, {vehicle.id: vehicle.name})}: за "
+                        f"{assumptions.SCHEDULE_MAX_DELAY_S / 3600:.0f} ч сдвигов старта не "
+                        "нашлось окна без сближений с другими бортами (включая зоны манёвра) "
+                        "и без временных запретных зон"
                         + (
                             ", со съёмкой внутри окна по высоте Солнца"
                             if work_area.daylight is not None
@@ -477,16 +478,24 @@ def build_schedule(
         )
 
     waited = [entry for entry in entries if entry.delay_s > 0.0]
+    total_s = sum(entry.delay_s for entry in waited)
+    reasons = "разведение бортов, окна временных зон" + (
+        " и высоты Солнца" if work_area.daylight is not None else ""
+    )
+    held = (
+        f"Задержка старта на земле: ждут {len(waited)} из {len(entries)} вылетов, суммарно "
+        f"{text.duration_text(total_s)} ({reasons})."
+        if waited
+        else f"Ни одному из {len(entries)} вылетов не пришлось ждать старта на земле."
+    )
     warnings.append(
         PlanWarning(
             code="schedule.ground_holding",
             severity=Severity.INFO,
             stage=Stage.SCHEDULE,
             message=(
-                "Разведение бортов — задержкой вылета на земле: "
-                f"{len(waited)} из {len(entries)} вылетов ждут старта, всего "
-                f"{sum(entry.delay_s for entry in waited) / 3600.0:.1f} ч. Маршрут ради "
-                "разведения не перестраивается, круг ожидания в воздухе не используется"
+                f"{held} Борта разводятся только сдвигом старта: маршруты ради этого не "
+                "перестраиваются, ожидания в воздухе нет"
             ),
             context={"delayed": str(len(waited))},
         )

@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -312,7 +313,11 @@ def _report_features(mission: Mission, projector: Projector) -> list[dict[str, A
 
 
 def mission_to_geojson(
-    result: PipelineResult, scenario: Scenario, projector: Projector, board: str | None = None
+    result: PipelineResult,
+    scenario: Scenario,
+    projector: Projector,
+    board: str | None = None,
+    names: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Собрать FeatureCollection: полётное задание или отчёт о невыполнимости.
 
@@ -322,6 +327,8 @@ def mission_to_geojson(
         projector: преобразователь рабочей проекции в WGS84.
         board: идентификатор борта (`board_id`) — задание одного борта;
             None — весь план.
+        names: название модели по идентификатору — подписи бортов
+            «Геоскан Gemini #3»; None — подпись по идентификатору модели.
 
     Returns:
         Словарь GeoJSON FeatureCollection, готовый к сериализации.
@@ -330,7 +337,7 @@ def mission_to_geojson(
         ExportError: борта с таким идентификатором в плане нет.
     """
     mission = result.mission
-    boards = select_boards(mission, board)
+    boards = select_boards(mission, board, names)
     features: list[dict[str, Any]] = []
     if mission.is_feasible():
         for item in boards:
@@ -448,6 +455,7 @@ def write_geojson(
     projector: Projector,
     path: Path,
     board: str | None = None,
+    names: Mapping[str, str] | None = None,
 ) -> Path:
     """Записать GeoJSON на диск.
 
@@ -457,12 +465,13 @@ def write_geojson(
         projector: преобразователь рабочей проекции в WGS84.
         path: путь файла.
         board: идентификатор борта; None — весь план.
+        names: название модели по идентификатору — подписи бортов.
 
     Returns:
         Путь записанного файла.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    document = mission_to_geojson(result, scenario, projector, board)
+    document = mission_to_geojson(result, scenario, projector, board, names)
     path.write_text(geojson_to_text(document), encoding="utf-8")
     return path
 

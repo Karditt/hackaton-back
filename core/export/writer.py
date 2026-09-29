@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 
 from core.export.geojson import write_geojson
@@ -43,6 +44,7 @@ def export_mission(
     path: Path,
     export_format: ExportFormat | None = None,
     board: str | None = None,
+    names: Mapping[str, str] | None = None,
 ) -> Path:
     """Выгрузить итог конвейера в файл.
 
@@ -53,6 +55,7 @@ def export_mission(
         path: путь выходного файла.
         export_format: формат. None — определить по расширению пути.
         board: идентификатор борта — задание одного борта; None — весь план.
+        names: название модели по идентификатору — подписи бортов.
 
     Returns:
         Путь записанного файла.
@@ -62,10 +65,10 @@ def export_mission(
     """
     chosen = export_format or format_for(path)
     if chosen is ExportFormat.KML:
-        return write_kml(result, scenario, projector, path, board)
+        return write_kml(result, scenario, projector, path, board, names)
     if chosen is ExportFormat.SCHEDULE:
         return write_schedule(result.mission, scenario, path, board)
-    return write_geojson(result, scenario, projector, path, board)
+    return write_geojson(result, scenario, projector, path, board, names)
 
 
 __all__ = [

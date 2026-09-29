@@ -27,7 +27,7 @@ type Props = {
 };
 
 /** Что возьмётся у выбранного сценария, если файла вида не загрузили. */
-function borrowedNote(uploads: Uploads, scenarioId: string): string | null {
+function borrowedNote(uploads: Uploads): string | null {
   const kinds = new Set(uploads.files.map((file) => file.kind));
   if (kinds.has('scenario')) return null;
   const missing = [
@@ -37,7 +37,7 @@ function borrowedNote(uploads: Uploads, scenarioId: string): string | null {
     !(kinds.has('params') || kinds.has('site') || kinds.has('airspace')) && 'параметры задания',
   ].filter(Boolean);
   if (missing.length === 0) return null;
-  return `У сценария «${scenarioId}» возьмутся: ${missing.join(', ')}.`;
+  return `Из выбранного сценария возьмутся: ${missing.join(', ')}.`;
 }
 
 /** Сколько объектов вида в сценарии — подпись раздела. */
@@ -132,7 +132,7 @@ function SourceFile({
 export function FileManager(props: Props) {
   const { layers, files, filter, uploads } = props;
   const pending = uploads.files.length;
-  const borrowed = borrowedNote(uploads, props.scenarioId);
+  const borrowed = borrowedNote(uploads);
   const sourceId = files?.source_id ?? null;
   const byKind = new Map((files?.files ?? []).map((file) => [file.kind, file]));
   const warnings = files?.warnings ?? [];
@@ -145,8 +145,8 @@ export function FileManager(props: Props) {
           : sourceId === null
             ? 'Сценарий сохранён без исходных файлов — данные взяты из него самого.'
             : sourceId === props.scenarioId
-              ? `Файлы сценария «${sourceId}» — в формате заказчика`
-              : `Копия с правками параметров; файлы — исходного сценария «${sourceId}»`}
+              ? 'Исходные файлы сценария: слои KML и параметры задания'
+              : 'Копия с изменёнными параметрами; файлы — исходного сценария'}
       </p>
 
       <ul className={styles.kinds}>
@@ -196,7 +196,7 @@ export function FileManager(props: Props) {
                       <span className={styles.fileSize}>{fileSize(file.size)}</span>
                       <span
                         className={styles.stub}
-                        title="Уйдёт на сервер по кнопке «Собрать сценарий»"
+                        title="Будет прочитан по кнопке «Собрать сценарий»"
                       >
                         ждёт сборки
                       </span>
@@ -233,8 +233,8 @@ export function FileManager(props: Props) {
       {uploads.imported && uploads.imported.id === props.scenarioId && (
         <Notice tone="success">
           Сценарий «{uploads.imported.name}» собран из файлов: площадь{' '}
-          {decimal(uploads.imported.report.area_km2 ?? 0, 1)} км². Что импорт сделал с каждым слоем
-          — под видами выше.
+          {decimal(uploads.imported.report.area_km2 ?? 0, 1)} км². Итог импорта каждого слоя — под
+          видами выше.
         </Notice>
       )}
 
@@ -251,15 +251,15 @@ export function FileManager(props: Props) {
           <p className={styles.help}>
             Выбрано файлов: {pending}.{' '}
             {uploads.files.some((file) => file.kind === 'scenario')
-              ? 'Сценарий целиком уйдёт на сервер как есть; сервер проверит его на приёме.'
-              : `Слои KML прочитает ядро и ответит отчётом импорта. ${borrowed ?? ''}`}
+              ? 'Сценарий будет проверен при загрузке; ошибка — с указанием поля.'
+              : `Слои KML будут прочитаны и проверены, по каждому — итог импорта. ${borrowed ?? ''}`}
           </p>
         </div>
       ) : (
         <p className={styles.help}>
-          Свои данные — кнопками «Загрузить»: слои KML в формате заказчика, параметры задания или
-          сценарий целиком (JSON). Недостающие виды возьмутся у выбранного сценария — так можно
-          заменить один слой.
+          Свои данные — кнопками «Загрузить»: слои KML (область, зоны, препятствия), параметры
+          задания или сценарий целиком (JSON). Недостающие виды возьмутся из выбранного сценария —
+          так можно заменить один слой.
         </p>
       )}
     </div>

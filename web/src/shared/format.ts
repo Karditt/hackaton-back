@@ -5,7 +5,7 @@
 
 /** @param seconds длительность, секунды */
 export function minutes(seconds: number): string {
-  return `${(seconds / 60).toFixed(1)} мин`;
+  return `${decimal(seconds / 60, 1)} мин`;
 }
 
 /** @param seconds длительность, секунды — часы и минуты для длинных величин */
@@ -23,15 +23,38 @@ export function hours(seconds: number): string {
  * @param offsetSeconds смещение от начала работ, секунды
  */
 export function clockTime(originMs: number, offsetSeconds: number): string {
-  const moment = new Date(originMs + offsetSeconds * 1000);
-  const day = moment.toISOString().slice(5, 10);
-  const time = moment.toISOString().slice(11, 16);
-  return `${day} ${time}`;
+  const iso = new Date(originMs + offsetSeconds * 1000).toISOString();
+  return `${iso.slice(8, 10)}.${iso.slice(5, 7)} ${iso.slice(11, 16)}`;
+}
+
+/**
+ * Момент из строки ISO 8601 — «25.09.2026 06:00 UTC». Нераспознанная строка
+ * возвращается как есть: подпись не должна пропасть из-за формата.
+ */
+export function utcMoment(iso: string): string {
+  const parsed = Date.parse(iso);
+  if (Number.isNaN(parsed)) return iso;
+  const text = new Date(parsed).toISOString();
+  return `${text.slice(8, 10)}.${text.slice(5, 7)}.${text.slice(0, 4)} ${text.slice(11, 16)} UTC`;
+}
+
+/** @param seconds длительность, секунды — «3 мин 20 с», «45 с», «1 ч 5 мин» */
+export function duration(seconds: number): string {
+  if (seconds >= 3600) return hours(seconds);
+  const total = Math.round(seconds);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return m > 0 ? `${m} мин ${s} с` : `${s} с`;
+}
+
+/** @param metres длина, метры — «850 м» или «1,2 км» */
+export function length(metres: number): string {
+  return metres < 1000 ? `${Math.round(metres)} м` : `${decimal(metres / 1000, 1)} км`;
 }
 
 /** @param metres расстояние, метры */
 export function kilometres(metres: number): string {
-  return `${(metres / 1000).toFixed(1)} км`;
+  return `${decimal(metres / 1000, 1)} км`;
 }
 
 /** Число с русской десятичной запятой, не больше `digits` знаков после неё. */

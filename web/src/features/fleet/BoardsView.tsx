@@ -19,7 +19,6 @@ import styles from './fleet.module.css';
 type Props = {
   vehicles: Vehicle[];
   park: ParkState;
-  scenarioId: string;
   scenarioFleet: FleetUnit[] | null;
   /** Перейти к ТТХ модели. */
   onOpenModel: (modelId: string) => void;
@@ -34,7 +33,7 @@ const FILTERS: [Filter, string][] = [
 ];
 
 /** Борта парка: список с переключателем «в строю» и карточка выбранного борта. */
-export function BoardsView({ vehicles, park, scenarioId, scenarioFleet, onOpenModel }: Props) {
+export function BoardsView({ vehicles, park, scenarioFleet, onOpenModel }: Props) {
   const models = allModels(vehicles, park.park);
   const usable = models.filter((model) => !model.hidden);
   const [selectedId, setSelectedId] = useState('');
@@ -145,7 +144,7 @@ export function BoardsView({ vehicles, park, scenarioId, scenarioFleet, onOpenMo
               onClick={seedScenario}
               disabled={scenarioCount === 0}
             >
-              Флот сценария {scenarioId ? `«${scenarioId}»` : ''} — {scenarioCount} шт.
+              Пул выбранного сценария — {scenarioCount} шт.
             </button>
           </div>
         ) : (
@@ -178,7 +177,7 @@ export function BoardsView({ vehicles, park, scenarioId, scenarioFleet, onOpenMo
                         <span className={styles.userBadge}>своя модель</span>
                       )}
                       {model && isEdited(model) && (
-                        <span className={styles.userBadge}>ТТХ правлены</span>
+                        <span className={styles.userBadge}>ТТХ изменены</span>
                       )}
                       {model?.hidden && <span className={styles.hiddenBadge}>модель скрыта</span>}
                     </span>
@@ -219,7 +218,7 @@ function ModelOptions({ models }: { models: ModelView[] }) {
   const own = models.filter((model) => model.base === null);
   return (
     <>
-      <optgroup label="Каталог (data/vehicles.yaml)">
+      <optgroup label="Каталог Геоскан">
         {catalog.map((model) => (
           <option key={model.id} value={model.id}>
             {model.name}
@@ -276,8 +275,8 @@ function BoardEditor({ board, models, vehicles, park, onOpenModel, onRemoved }: 
       </div>
       <p className={styles.hint}>
         {board.active
-          ? 'Борт можно брать во флот расчёта.'
-          : 'Борт на обслуживании или в резерве — во флот расчёта не попадёт.'}
+          ? 'Борт можно брать в пул расчёта.'
+          : 'Борт на обслуживании или в резерве — в пул расчёта не попадёт.'}
       </p>
 
       <label className={styles.field}>
@@ -310,13 +309,13 @@ function BoardEditor({ board, models, vehicles, park, onOpenModel, onRemoved }: 
       )}
       {model?.hidden && (
         <Notice tone="caution">
-          Модель скрыта в разделе «Модели и ТТХ» — такой борт во флот расчёта не попадёт.
+          Модель скрыта в разделе «Модели и ТТХ» — такой борт в пул расчёта не попадёт.
         </Notice>
       )}
       {model && (model.base === null || isEdited(model)) && (
         <p className={styles.hint}>
-          {model.base === null ? 'Своя модель' : 'ТТХ модели правлены'}: в расчёт уходят числа
-          пользователя, план помечает такие борта.
+          {model.base === null ? 'Своя модель' : 'ТТХ модели изменены'}: в расчёт уходят ваши числа,
+          план помечает такие борта.
         </p>
       )}
 
@@ -344,8 +343,8 @@ function BoardEditor({ board, models, vehicles, park, onOpenModel, onRemoved }: 
           );
         })}
         <p className={styles.hint}>
-          Одна нагрузка — расчёт возьмёт её. Несколько или ни одной — нагрузку выберет модель съёмки
-          из всех, что несёт модель.
+          Отмечена одна нагрузка — расчёт возьмёт её. Несколько или ни одной — расчёт подберёт
+          подходящую из всех, что несёт модель.
         </p>
       </fieldset>
 

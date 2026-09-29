@@ -7,6 +7,8 @@ type Props = {
   schedule: Schedule;
   /** Сводка бортов выгрузки — даёт подписи «Геоскан Gemini #3» и порядок строк. */
   boards: BoardSummary[];
+  /** Названия площадок по идентификатору — для подсказки у полосы вылета. */
+  sites?: Map<string, string>;
   /**
    * `compact` — для боковой панели; `wide` — вкладка «Расписание» во всю
    * ширину: строки выше, делений шкалы больше, у делений — время UTC.
@@ -40,7 +42,7 @@ function boardKey(item: { vehicle_id: string; vehicle_instance: number }): strin
  * бортами. У baseline он велик: в демо один коптер делает 21 вылет, другой 7
  * (долг №25, задача E6 шаг 2).
  */
-export function ScheduleGantt({ schedule, boards, variant = 'compact' }: Props) {
+export function ScheduleGantt({ schedule, boards, sites, variant = 'compact' }: Props) {
   const entries = schedule.entries ?? [];
   if (entries.length === 0) {
     return <p className={styles.empty}>Расписание пусто.</p>;
@@ -65,17 +67,19 @@ export function ScheduleGantt({ schedule, boards, variant = 'compact' }: Props) 
   const models = [...new Set([...rows.keys()].map((key) => key.split('/')[0]))];
 
   const moment = (seconds: number) =>
-    origin === null ? `T+${minutes(seconds)}` : clockTime(origin, seconds);
+    origin === null ? `T+${minutes(seconds)}` : `${clockTime(origin, seconds)} UTC`;
+  const site = (siteId: string) => sites?.get(siteId) ?? siteId;
 
   return (
     <div className={`${styles.gantt} ${variant === 'wide' ? styles.ganttWide : ''}`}>
       {[...rows].map(([key, own]) => {
         const [vehicleId, instance] = key.split('/');
         const color = MODEL_COLORS[models.indexOf(vehicleId) % MODEL_COLORS.length];
+        const label = labels.get(key) ?? `${vehicleId} #${Number(instance) + 1}`;
         return (
           <div className={styles.ganttRow} key={key}>
-            <span className={styles.ganttLabel} title={`${vehicleId} #${Number(instance) + 1}`}>
-              {labels.get(key) ?? `${vehicleId} #${Number(instance) + 1}`}
+            <span className={styles.ganttLabel} title={label}>
+              {label}
               <span className={styles.ganttCount}>{own.length}</span>
             </span>
             <span className={styles.ganttTrack}>
@@ -88,7 +92,7 @@ export function ScheduleGantt({ schedule, boards, variant = 'compact' }: Props) 
                         left: `${((entry.start_s - entry.delay_s) / span) * 100}%`,
                         width: `${(entry.delay_s / span) * 100}%`,
                       }}
-                      title={`${entry.sortie_id}: ожидание на земле ${hours(entry.delay_s)}`}
+                      title={`${label}, вылет ${entry.trip_index + 1}: ожидание на земле ${hours(entry.delay_s)}`}
                     />
                   )}
                   <span
@@ -99,12 +103,12 @@ export function ScheduleGantt({ schedule, boards, variant = 'compact' }: Props) 
                       background: color,
                     }}
                     title={
-                      `${entry.sortie_id}\n` +
+                      `${label}, вылет ${entry.trip_index + 1}\n` +
                       `взлёт ${moment(entry.start_s)} · посадка ${moment(entry.end_s)}\n` +
                       `в воздухе ${hours(entry.end_s - entry.start_s)}` +
                       (entry.delay_s > 0 ? ` · ожидание ${hours(entry.delay_s)}` : '') +
-                      `\nэшелон ${Math.round(entry.transit_altitude_m)} м · площадки ` +
-                      `${entry.takeoff_site_id} → ${entry.landing_site_id}`
+                      `\nэшелон перелёта ${Math.round(entry.transit_altitude_m)} м · ` +
+                      `${site(entry.takeoff_site_id)} → ${site(entry.landing_site_id)}`
                     }
                   />
                 </Fragment>

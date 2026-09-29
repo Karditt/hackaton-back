@@ -12,6 +12,7 @@ import {
   type PayloadSpecKey,
   type PayloadView,
 } from './park';
+import { fieldTitle, gapText } from './gaps';
 import type { ParkState } from './usePark';
 import styles from './fleet.module.css';
 
@@ -109,8 +110,8 @@ export function PayloadsView({ vehicles, park }: Props) {
                           </button>
                           {payload.custom && <span className={styles.userBadge}>своя</span>}
                           {gaps.length > 0 && (
-                            <span className={styles.gapBadge} title={gaps.join('\n')}>
-                              пробел
+                            <span className={styles.gapBadge} title={gaps.map(gapText).join('\n')}>
+                              нет данных
                             </span>
                           )}
                         </td>
@@ -146,8 +147,8 @@ export function PayloadsView({ vehicles, park }: Props) {
       <section className={styles.detailPane} ref={detail}>
         {selected === null && (
           <p className={styles.muted}>
-            Выберите нагрузку в таблице — здесь будут источник чисел и пробелы, а свою нагрузку
-            можно править.
+            Выберите нагрузку в таблице — здесь будут источник чисел и чего не хватает в документах,
+            а свою нагрузку можно править.
           </p>
         )}
         {selected !== null && !selected.custom && <CatalogPayload payload={selected.payload} />}
@@ -176,15 +177,16 @@ function CatalogPayload({ payload }: { payload: Payload }) {
       <p className={styles.source}>{payload.source}</p>
       {(payload.derived_fields ?? []).length > 0 && (
         <p className={styles.hint}>
-          Выведено по формуле из документированных чисел: {payload.derived_fields?.join(', ')}.
+          Рассчитано по формуле из документированных чисел:{' '}
+          {(payload.derived_fields ?? []).map((key) => fieldTitle(key).toLowerCase()).join(', ')}.
         </p>
       )}
       {(payload.gaps ?? []).length > 0 && (
         <>
-          <h3 className={styles.subheading}>Пробелы</h3>
+          <h3 className={styles.subheading}>Чего нет в документах</h3>
           <ul className={styles.plainList}>
             {payload.gaps?.map((gap) => (
-              <li key={gap}>{gap}</li>
+              <li key={gap}>{gapText(gap)}</li>
             ))}
           </ul>
         </>
@@ -211,7 +213,7 @@ function CustomPayloadEditor({ payload, park, onRemoved }: EditorProps) {
         <span className={styles.userBadge}>своя</span>
       </div>
       <Notice tone="caution">
-        Оптику своей нагрузки ввёл пользователь. В расчёт она уходит вместе с моделью, которая её
+        Оптика своей нагрузки — ваши значения. В расчёт нагрузка уходит вместе с моделью, которая её
         несёт, — отметьте её в разделе «Модели и ТТХ».
       </Notice>
 
@@ -261,7 +263,7 @@ function CustomPayloadEditor({ payload, park, onRemoved }: EditorProps) {
         </tbody>
       </table>
       <p className={styles.hint}>
-        По фокусному, матрице и кадру ядро считает высоту съёмки для заданного GSD.
+        По фокусному расстоянию, матрице и кадру рассчитывается высота съёмки для заданного GSD.
       </p>
 
       <label className={styles.field}>

@@ -629,7 +629,9 @@ def export_job(
     try:
         if export_format is ExportFormat.KML:
             return Response(
-                content=kml_to_bytes(mission_to_kml(run.result, run.scenario, projector, board)),
+                content=kml_to_bytes(
+                    mission_to_kml(run.result, run.scenario, projector, board, run.names)
+                ),
                 media_type="application/vnd.google-earth.kml+xml",
                 headers=_attachment(f"{stem}.kml"),
             )
@@ -639,7 +641,7 @@ def export_job(
                 media_type="text/csv; charset=utf-8",
                 headers=_attachment(f"{stem}.schedule.csv"),
             )
-        document = mission_to_geojson(run.result, run.scenario, projector, board)
+        document = mission_to_geojson(run.result, run.scenario, projector, board, run.names)
     except ExportError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     return Response(
@@ -660,7 +662,7 @@ def export_package(job_id: str) -> Response:
     run = _finished_job(_job_or_404(job_id)).run
     assert run is not None
     return Response(
-        content=mission_zip(run.result, run.scenario, run.work_area.projector),
+        content=mission_zip(run.result, run.scenario, run.work_area.projector, run.names),
         media_type="application/zip",
         headers=_attachment(f"{file_stem(run.scenario.id)}.zip"),
     )

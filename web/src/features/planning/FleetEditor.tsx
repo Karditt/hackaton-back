@@ -47,7 +47,7 @@ export function FleetEditor({ rows, vehicles, sites, onChange, disabled, parkFle
             title={
               parkFleet.rows.length === 0
                 ? 'В парке нет бортов в строю — вкладка «Техника»'
-                : 'Заменить флот бортами парка, которые в строю; площадку выберет распределение'
+                : 'Заменить пул бортами парка, которые в строю; площадки подберёт расчёт'
             }
           >
             Взять борта в строю из парка ({parkCount})
@@ -76,7 +76,7 @@ export function FleetEditor({ rows, vehicles, sites, onChange, disabled, parkFle
             >
               {vehicles.every((item) => item.id !== row.vehicle_id) && (
                 <option value={row.vehicle_id}>
-                  {row.vehicle_id} — скрыта или нет среди моделей
+                  {row.vehicle_id} — модель скрыта или её нет в каталоге
                 </option>
               )}
               {vehicles.map((item) => (
@@ -120,7 +120,7 @@ export function FleetEditor({ rows, vehicles, sites, onChange, disabled, parkFle
                 className={styles.rowButton}
                 onClick={() => onChange(rows.filter((_, position) => position !== index))}
                 disabled={disabled || rows.length <= 1}
-                title="Убрать борт из флота"
+                title="Убрать строку из пула"
               >
                 убрать
               </button>
@@ -133,7 +133,7 @@ export function FleetEditor({ rows, vehicles, sites, onChange, disabled, parkFle
               onChange={(event) => update(index, { payload_id: event.target.value })}
               disabled={disabled}
             >
-              <option value="">нагрузка — выберет модель съёмки</option>
+              <option value="">нагрузка — подберёт расчёт</option>
               {(vehicle?.payloads ?? []).map((payload) => (
                 <option key={payload.id} value={payload.id}>
                   {payload.name}
@@ -148,7 +148,7 @@ export function FleetEditor({ rows, vehicles, sites, onChange, disabled, parkFle
               onChange={(event) => update(index, { site_id: event.target.value })}
               disabled={disabled}
             >
-              <option value="">площадка — выберет распределение</option>
+              <option value="">площадка — подберёт расчёт</option>
               {sites.map((site) => (
                 <option key={site.id} value={site.id}>
                   {site.name || site.id}
@@ -171,7 +171,7 @@ export function FleetEditor({ rows, vehicles, sites, onChange, disabled, parkFle
 
       {total > MAX_FLEET_VEHICLES && (
         <Notice tone="error">
-          Во флоте {total} бортов, допустимо не больше {MAX_FLEET_VEHICLES} — ограничение заказчика.
+          В пуле {total} бортов, а в один расчёт берётся не больше {MAX_FLEET_VEHICLES}.
         </Notice>
       )}
     </fieldset>

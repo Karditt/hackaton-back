@@ -1,9 +1,11 @@
-import { exportUrl } from '../../api';
+import { exportUrl, type Vehicle } from '../../api';
 import { clockTime, hours } from '../../shared/format';
+import { planTitle, siteNames } from '../../shared/plan';
 import { Notice } from '../../shared/ui/Notice';
 import type { PlanningRun } from '../planning';
 import {
   ExportLinks,
+  MODE_LABEL,
   RecommendationsList,
   ScheduleGantt,
   ScheduleTable,
@@ -14,17 +16,14 @@ import styles from './SchedulePage.module.css';
 type Props = {
   /** Текущий расчёт; null — плана нет или параметры изменены после расчёта. */
   run: PlanningRun | null;
+  /** Каталог моделей — названия моделей в таблице бортов. */
+  vehicles: Vehicle[];
   /** Идёт расчёт. */
   busy: boolean;
   /** Вернуться к вкладке «План». */
   onGoPlan: () => void;
   /** Показать на карте только этот борт. */
   onShowBoard: (boardId: string) => void;
-};
-
-const MODE_LABEL: Record<string, string> = {
-  min_makespan: 'минимум срока',
-  min_resource: 'минимум ресурса',
 };
 
 /** Плитка сводки: крупное число и подпись. */
@@ -45,7 +44,7 @@ function Tile({ label, value }: { label: string; value: string }) {
  * поэтому у расписания своя вкладка. Всё, что здесь показано, посчитано на
  * сервере; страница только раскладывает.
  */
-export function SchedulePage({ run, busy, onGoPlan, onShowBoard }: Props) {
+export function SchedulePage({ run, vehicles, busy, onGoPlan, onShowBoard }: Props) {
   if (run === null) {
     return (
       <div className={styles.page}>
@@ -54,7 +53,7 @@ export function SchedulePage({ run, busy, onGoPlan, onShowBoard }: Props) {
           <p>
             {busy
               ? 'Идёт расчёт — расписание появится, когда он закончится.'
-              : 'Расписание — часть рассчитанного плана. Выберите сценарий и нажмите «Рассчитать» на вкладке «План». Если параметры правились после расчёта, план нужно пересчитать.'}
+              : 'Расписание — часть рассчитанного плана. Выберите сценарий и нажмите «Рассчитать» на вкладке «План и карта». Если параметры менялись после расчёта, план нужно пересчитать.'}
           </p>
           <button type="button" className={styles.primary} onClick={onGoPlan}>
             Перейти к плану
@@ -73,14 +72,14 @@ export function SchedulePage({ run, busy, onGoPlan, onShowBoard }: Props) {
       <div className={styles.page}>
         <h1 className={styles.title}>Расписания нет — задание невыполнимо</h1>
         <Notice tone="error">
-          Частичный план не выдаётся, поэтому и расписания нет. Ниже — причины и что добавить.
+          Частичный план не выдаётся, поэтому и расписания нет. Ниже — причины и что изменить.
         </Notice>
         <section className={styles.section}>
           <h2 className={styles.heading}>Причины</h2>
           <WarningsList warnings={mission.reasons ?? []} />
         </section>
         <section className={styles.section}>
-          <h2 className={styles.heading}>Что добавить</h2>
+          <h2 className={styles.heading}>Что изменить</h2>
           <RecommendationsList items={mission.recommendations ?? []} />
         </section>
         <ExportLinks jobId={run.jobId} feasible={false} boards={[]} />
@@ -93,6 +92,9 @@ export function SchedulePage({ run, busy, onGoPlan, onShowBoard }: Props) {
   const origin = schedule.start_time ? Date.parse(schedule.start_time) : null;
   const moment = (seconds: number) =>
     origin === null ? `T+${hours(seconds)}` : clockTime(origin, seconds);
+  const sites = siteNames(run.document);
+  const modelName = (vehicleId: string) =>
+    vehicles.find((vehicle) => vehicle.id === vehicleId)?.name ?? vehicleId;
 
   return (
     <div className={styles.page}>
@@ -100,9 +102,10 @@ export function SchedulePage({ run, busy, onGoPlan, onShowBoard }: Props) {
         <div>
           <h1 className={styles.title}>Расписание вылетов</h1>
           <p className={styles.subtitle}>
-            Сценарий <b>{run.scenarioId}</b> · {MODE_LABEL[run.mode] ?? run.mode} ·{' '}
+            <b>{planTitle(run.document) ?? run.scenarioId}</b> · {MODE_LABEL[run.mode] ?? run.mode}{' '}
+            ·{' '}
             {origin === null
-              ? 'время относительное, от начала работ'
+              ? 'время — от начала работ'
               : `начало работ ${clockTime(origin, 0)} UTC`}
           </p>
         </div>
@@ -113,7 +116,7 @@ export function SchedulePage({ run, busy, onGoPlan, onShowBoard }: Props) {
 
       {metrics && (
         <div className={styles.tiles}>
-          <Tile label="срок (makespan)" value={hours(metrics.makespan_s)} />
+          <Tile label="срок выполнения" value={hours(metrics.makespan_s)} />
           <Tile label="вылетов" value={String(metrics.sortie_count)} />
           <Tile label="бортов" value={String(metrics.vehicle_count)} />
           <Tile label="суммарный налёт" value={hours(metrics.total_flight_time_s)} />
@@ -123,7 +126,7 @@ export function SchedulePage({ run, busy, onGoPlan, onShowBoard }: Props) {
 
       <section className={styles.section}>
         <h2 className={styles.heading}>Диаграмма по бортам</h2>
-        <ScheduleGantt schedule={schedule} boards={boards} variant="wide" />
+        <ScheduleGantt schedule={schedule} boards={boards} sites={sites} variant="wide" />
       </section>
 
       <section className={styles.section}>
@@ -145,7 +148,7 @@ export function SchedulePage({ run, busy, onGoPlan, onShowBoard }: Props) {
               {boards.map((board) => (
                 <tr key={board.board_id}>
                   <td>{board.label}</td>
-                  <td className={styles.muted}>{board.vehicle_id}</td>
+                  <td className={styles.muted}>{modelName(board.vehicle_id)}</td>
                   <td>{board.sortie_count}</td>
                   <td>{hours(board.flight_time_s)}</td>
                   <td>{moment(board.first_takeoff_s)}</td>
@@ -169,7 +172,7 @@ export function SchedulePage({ run, busy, onGoPlan, onShowBoard }: Props) {
 
       <section className={styles.section}>
         <h2 className={styles.heading}>Все вылеты ({schedule.entries?.length ?? 0})</h2>
-        <ScheduleTable schedule={schedule} boards={boards} detailed />
+        <ScheduleTable schedule={schedule} boards={boards} sites={sites} detailed />
       </section>
     </div>
   );

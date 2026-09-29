@@ -69,12 +69,12 @@ export function useHint({ scenarioId, scenario, options, vehicles, vehicleProble
       setStatus('вопрос поставлен в очередь');
       try {
         const hintScenarioId = await scenarioToRun(scenarioId, scenario, options, vehicles, () =>
-          setStatus('сохраняю правленые параметры'),
+          setStatus('сохраняю изменённые параметры'),
         );
         const hint = await startHint(hintScenarioId, question);
         const finished = await waitForHint(hint.id, (current) => {
           setTick(current);
-          setStatus(current.state === 'running' ? 'идут прогоны' : 'вопрос в очереди');
+          setStatus(current.state === 'running' ? 'идут расчёты' : 'вопрос в очереди');
         });
         if (finished.state === 'failed') {
           throw new Error(finished.error ?? 'подсказка не удалась');

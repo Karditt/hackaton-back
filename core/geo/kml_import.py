@@ -289,7 +289,7 @@ def read_area(source: str | Path) -> tuple[GeoMultiPolygon, ImportReport]:
                 log.say(
                     "import.geometry_dropped",
                     "Куски области с контуром меньше трёх точек выброшены "
-                    "(сколько именно — в счётчике `dropped`)",
+                    "(сколько — в итоге импорта, «выброшено»)",
                     once=True,
                 )
                 continue
@@ -318,8 +318,8 @@ def read_area(source: str | Path) -> tuple[GeoMultiPolygon, ImportReport]:
             log.stats.dropped += 1
             log.say(
                 "import.geometry_dropped",
-                "Вырожденные куски области выброшены: нулевая площадь в проекции "
-                "(сколько именно — в счётчике `dropped`)",
+                "Вырожденные куски области выброшены: нулевая площадь "
+                "(сколько — в итоге импорта, «выброшено»)",
                 once=True,
             )
             continue
@@ -329,7 +329,7 @@ def read_area(source: str | Path) -> tuple[GeoMultiPolygon, ImportReport]:
                 "import.geometry_fixed",
                 "Самопересечения в контурах исправлены; площадь каждого куска "
                 f"изменилась не больше чем на {assumptions.IMPORT_REPAIR_AREA_FRACTION:.0%} "
-                "(сколько именно — в счётчике `fixed`)",
+                "(сколько — в итоге импорта, «исправлено»)",
                 once=True,
             )
         pieces.append(fixed)
@@ -521,7 +521,8 @@ def read_zones(
             log.say(
                 "import.zone_window_unknown",
                 f"Зона {name}: тип «{kind_text}», но времени действия в файле нет — "
-                "зона считается действующей всегда. Формат окон — docs/input_formats.md §3.2",
+                "зона считается действующей всегда. Окна действия задаются полями "
+                "active_from и active_to (формат — в документации сервиса)",
                 once=True,
             )
 
@@ -548,7 +549,7 @@ def read_zones(
                 log.say(
                     "import.zone_datum_unverified",
                     "Высоты зон заданы над уровнем моря, а рельеф не задан: "
-                    "отметки прочитаны как высоты над поверхностью (ЦМР — E1, P1)",
+                    "отметки прочитаны как высоты над поверхностью",
                     once=True,
                 )
 
@@ -763,8 +764,8 @@ def read_obstacles(
             footprint = LineString(metric).buffer(assumptions.OBSTACLE_LINE_WIDTH_M / 2.0)
             log.say(
                 "import.obstacle_line_buffered",
-                f"Линейные препятствия развёрнуты в полосу шириной "
-                f"{assumptions.OBSTACLE_LINE_WIDTH_M:.0f} м (допущение команды)",
+                f"Линейные препятствия (провода, ЛЭП) развёрнуты в полосу шириной "
+                f"{assumptions.OBSTACLE_LINE_WIDTH_M:.0f} м — ширины в файле нет",
                 once=True,
             )
         else:
@@ -807,7 +808,7 @@ def _obstacle_height(mode: str, z: float, terrain_m: float, log: _Log) -> float 
             log.say(
                 "import.obstacle_altitude_mode_nonstandard",
                 f"Значение altitudeMode «{normalized}» не из словаря KML — прочитано как "
-                "отметка над уровнем моря (docs/input_formats.md §4.2)",
+                "отметка над уровнем моря",
                 once=True,
             )
         height = z - terrain_m
@@ -822,7 +823,7 @@ def _obstacle_height(mode: str, z: float, terrain_m: float, log: _Log) -> float 
         log.say(
             "import.obstacle_altitude_mode_nonstandard",
             f"Значение altitudeMode «{mode}» не из словаря KML — прочитано как отметка "
-            "над уровнем моря (docs/input_formats.md §4.2)",
+            "над уровнем моря",
             once=True,
         )
         height = z - terrain_m

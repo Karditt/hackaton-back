@@ -116,7 +116,7 @@ export function usePlanning({
     setStatus('расчёт поставлен в очередь');
     try {
       const planId = await scenarioToRun(scenarioId, scenario, options, vehicles, () =>
-        setStatus('сохраняю правленые параметры'),
+        setStatus('сохраняю изменённые параметры'),
       );
       const job = await startPlanning(planId, mode);
       const finished = await waitForJob(job.id, (tick) =>

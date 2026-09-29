@@ -240,7 +240,7 @@ def test_service_wear_follows_customer_norms(runs: dict[str, PlanningRun]) -> No
     assert service_share("geoscan-gemini", 5, 3600.0) is None
     notes = [w for w in runs["medium"].mission.warnings if w.code == "plan.service_wear"]
     assert len(notes) == 1
-    assert "Gemini норматива нет" in notes[0].message
+    assert "для Геоскан Gemini норматив не задан" in notes[0].message
 
 
 def test_unknown_allocator_is_refused(simple_scenario: Scenario, catalog: VehicleCatalog) -> None:
