@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from shapely.geometry import LineString, box
 
+from core.allocate.fleet import expand_fleet
 from core.assumptions import VERTICAL_SEPARATION_M
-from core.deconflict import ScheduleBook
+from core.deconflict import ScheduleBook, assign_transit_levels
 from core.flight.cost import retime_sortie
 from core.flight.maneuver import ManeuverWindow, maneuver_overlap
 from core.geo.mask import build_work_area
@@ -104,6 +105,31 @@ def test_shared_level_warning_names_the_boards(runs: dict[str, PlanningRun]) -> 
         if w.code == "deconflict.levels_shared"
     }
     assert warned == shared
+
+
+def test_transit_level_prefers_clearing_the_obstacles(runs: dict[str, PlanningRun]) -> None:
+    """Долг №39: из свободных эшелонов — самый низкий над препятствиями.
+
+    В демо мачта (безопасная высота 300 м) мешает эшелону 285 м: коптер на
+    нём перелетает её в обход. Эшелон 285 м достаётся только тому, кому
+    других не осталось, а делят борта эшелон над мачтой.
+    """
+    run = runs["demo_100km2"]
+    mast = next(item for item in run.work_area.obstacles if item.id == "mast-north")
+    levels = list(_levels(run).values())
+    assert sum(mast.blocks_altitude(level) for level in levels) <= 1
+    shared = {level for level in levels if levels.count(level) > 1}
+    assert shared and not any(mast.blocks_altitude(level) for level in shared)
+
+    params = run.result.survey_plan
+    instances = expand_fleet(
+        run.scenario, run.vehicles, [item.vehicle_id for item in params.per_vehicle]
+    )
+    plain, _ = assign_transit_levels(instances, params, run.work_area.corridor_max_m)
+    tops = [item.safe_altitude_m for item in run.work_area.obstacles]
+    aware, _ = assign_transit_levels(instances, params, run.work_area.corridor_max_m, tops)
+    blocked = sum(mast.blocks_altitude(level) for level in plain.values())
+    assert sum(mast.blocks_altitude(level) for level in aware.values()) < blocked
 
 
 def _window(x_m: float, altitude_m: float, from_s: float, to_s: float) -> ManeuverWindow:

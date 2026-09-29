@@ -632,7 +632,13 @@ class Scenario(Model):
     survey_type: SurveyType = SurveyType.RGB
     quality: QualityRequirement
     wind: Wind = Field(default_factory=lambda: Wind(speed_mps=0.0, direction_deg=0.0))
-    fleet: list[FleetUnit] = Field(min_length=1)
+    fleet: list[FleetUnit] = Field(
+        min_length=1,
+        description=(
+            "Пул доступной техники: модель и доступное количество. Состав плана выбирает "
+            "расчёт (Mission.fleet_used): борт, которому работы не досталось, остаётся на земле"
+        ),
+    )
     vehicles: list[Vehicle] = Field(
         default_factory=list,
         description=(
@@ -1004,6 +1010,13 @@ class Recommendation(Model):
         default=None, description="Предлагаемое место (например, площадки), метры"
     )
     vehicle_id: str | None = None
+    checked: bool | None = Field(
+        default=None,
+        description=(
+            "Проверено расчётом сценария с этой правкой: True — с ней задание выполнимо, "
+            "False — её одной мало (итог — в конце сообщения), None — не проверялось"
+        ),
+    )
 
 
 class MissionMetrics(Model):
@@ -1047,6 +1060,20 @@ class Mission(Model):
     )
     recommendations: list[Recommendation] = Field(default_factory=list)
     warnings: list[PlanWarning] = Field(default_factory=list)
+    fleet_used: list[FleetUnit] = Field(
+        default_factory=list,
+        description=(
+            "Состав плана — результат, а не вход: борта пула, получившие работу, по модели, "
+            "нагрузке и площадке первого взлёта. Пусто у невыполнимого плана"
+        ),
+    )
+    fleet_idle: list[FleetUnit] = Field(
+        default_factory=list,
+        description=(
+            "Борта пула, оставшиеся на земле: плану не понадобились или не годятся для "
+            "этой съёмки. Пусто у невыполнимого плана"
+        ),
+    )
 
     algorithm: str
     mode: OptimizationMode

@@ -4,12 +4,15 @@
 получает причину и то, чего не хватает: площадку (с предлагаемым местом),
 борт, другую модель, окончание временного запрета (заказчик, №33, №42).
 
-Состояние: ЗАГЛУШКА — правила по кодам причин. Подбор площадок для всей
-области (№28, «будет вообще шикарно») — P2. TODO(E15) по коду.
+Советы выводятся правилами по кодам причин (`diagnose`) и проверяются расчётом
+(`verify_recommendations`): сценарий с правкой считается конвейером, и к
+совету дописывается, хватает ли её. Подбор площадок для всей области (№28,
+«будет вообще шикарно») — P2.
 """
 
 from __future__ import annotations
 
-from core.advise.diagnose import diagnose, stub_warning
+from core.advise.diagnose import advice_note, diagnose
+from core.advise.verify import ADVISED_SITE_ID, PlanFn, verify_recommendations
 
-__all__ = ["diagnose", "stub_warning"]
+__all__ = ["ADVISED_SITE_ID", "PlanFn", "advice_note", "diagnose", "verify_recommendations"]
