@@ -18,7 +18,9 @@ import json
 import logging
 import math
 import multiprocessing
+import os
 import shutil
+import signal
 import threading
 import traceback
 import uuid
@@ -61,6 +63,12 @@ class JobState(str, Enum):
     RUNNING = "running"
     DONE = "done"
     FAILED = "failed"
+
+
+def _own_process_group() -> None:
+    """Вынести процесс расчёта в свою группу, чтобы отмена убивала и его потомков."""
+    if hasattr(os, "setsid"):
+        os.setsid()
 
 
 @dataclass
@@ -404,7 +412,11 @@ class JobRegistry:
         job.cancelled = True
         executor = job.executor
         for process in list(getattr(executor, "_processes", {}).values()):
-            process.kill()
+            # Расчёт сам плодит процессы: убить надо всю группу, а не только главный.
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except (AttributeError, ProcessLookupError, PermissionError):
+                process.kill()
         return True
 
     def by_mission(self, mission_id: str) -> Job | None:
@@ -467,7 +479,11 @@ class JobRegistry:
         """
         job.state = JobState.RUNNING
         # Отдельный процесс: поток остановить нельзя, а процесс — можно (отмена).
-        job.executor = ProcessPoolExecutor(1, mp_context=multiprocessing.get_context("spawn"))
+        job.executor = ProcessPoolExecutor(
+            1,
+            mp_context=multiprocessing.get_context("spawn"),
+            initializer=_own_process_group,
+        )
         try:
             run = await asyncio.get_running_loop().run_in_executor(
                 job.executor, run_pipeline, scenario, None, mode, alpha, seed, allocator
