@@ -8,9 +8,10 @@
 Жёсткие правила (инвариант 9) дают НАРУШЕНИЯ: план с ними не выдаётся, задание
 объявляется невыполнимым с причиной. Мягкие — предупреждения.
 
-Не проверяется (объявлено в отчёте): досягаемость резервной площадки из любой
-точки маршрута, траектория петли разворота (вместо неё — защитная зона
-манёвра), рельеф между препятствиями (нет ЦМР). TODO(E7).
+Досягаемость запасной площадки из любой точки маршрута (№41) — мягкая
+проверка, предупреждение. Не проверяется (объявлено в отчёте): траектория
+петли разворота (вместо неё — защитная зона манёвра), рельеф между
+препятствиями (нет ЦМР).
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ import math
 from dataclasses import dataclass, field
 from datetime import timedelta
 
+import numpy as np
 from shapely.geometry import LineString, Point
 from shapely.geometry.base import BaseGeometry
 
@@ -585,6 +587,147 @@ def _check_daylight(
     return items
 
 
+@dataclass
+class _AlternateGap:
+    """Худшая точка маршрута, откуда запасная площадка недосягаема."""
+
+    sortie_id: str
+    point: MetricPoint
+    site: MetricPoint
+    site_id: str
+    distance_m: float
+    reach_m: float
+
+
+def _alternates(
+    scenario: Scenario, work_area: WorkArea, landing_site_id: str
+) -> dict[str, MetricPoint]:
+    """Запасные площадки вылета: все площадки сценария, кроме площадки посадки."""
+    return {
+        site.id: work_area.site(site.id) for site in scenario.sites if site.id != landing_site_id
+    }
+
+
+def _check_alternate_reach(
+    scenario: Scenario, work_area: WorkArea, sorties: list[Sortie], vehicles: dict[str, Vehicle]
+) -> list[PlanWarning]:
+    """Запасная площадка досягаема из любой точки маршрута (№41) — мягкая проверка.
+
+    Запасная — любая площадка, кроме площадки посадки вылета: резервная (она
+    для внештатных случаев, №41) или другая штатная. Площадка посадки может
+    стать недоступной — тогда борт садится на ближайшую запасную.
+    Из каждой точки маршрута — прямой перелёт до ближайшей запасной на
+    путевой скорости перелёта этого вылета, снижение и посадка — против
+    остатка заряда всей батареи: резерв 20% и есть запас на нештатный случай.
+    Прямая зон не обходит — это оценка досягаемости, а не маршрут. Точки
+    маршрута — вершины участков: дефицит вдоль отрезка выпуклый (расстояние
+    до точки выпукло, остаток заряда линеен по времени), наибольший — в
+    вершине.
+
+    Не нарушение: заказчик резервных площадок не требует, план без запасной
+    выполним. Предупреждение — одно на модель борта, с худшей точкой.
+
+    Returns:
+        Предупреждения `validate.alternate_reach` и, если запасных площадок
+        нет ни у одного вылета, справка `validate.no_alternate`.
+    """
+    worst: dict[str, _AlternateGap] = {}
+    affected: dict[str, set[str]] = {}
+    flown: dict[str, int] = {}
+    lonely = 0
+    for sortie in sorties:
+        vehicle = vehicles[sortie.vehicle_id]
+        flown[vehicle.id] = flown.get(vehicle.id, 0) + 1
+        alternates = _alternates(scenario, work_area, sortie.landing_site_id)
+        if not alternates:
+            lonely += 1
+            continue
+        speeds = [
+            leg.ground_speed_mps
+            for leg in sortie.legs
+            if leg.phase is FlightPhase.TRANSIT and leg.ground_speed_mps > 0.0
+        ]
+        speed_mps = max(speeds) if speeds else vehicle.cruise_speed_mps
+        points = np.array(
+            [
+                (waypoint.x_m, waypoint.y_m, waypoint.alt_m, waypoint.time_s)
+                for leg in _airborne_legs(sortie)
+                for waypoint in leg.waypoints
+            ]
+        )
+        if not len(points):
+            continue
+        site_ids = list(alternates)
+        sites = np.array([(alternates[key].x_m, alternates[key].y_m) for key in site_ids])
+        distances = np.hypot(
+            points[:, None, 0] - sites[None, :, 0], points[:, None, 1] - sites[None, :, 1]
+        )
+        nearest = distances.argmin(axis=1)
+        distance_m = distances[np.arange(len(points)), nearest]
+        spare_s = (
+            vehicle.endurance_s
+            - (points[:, 3] - sortie.start_time_s)
+            - points[:, 2] / assumptions.DESCENT_RATE_MPS
+            - assumptions.LANDING_TIME_S
+        )
+        reach_m = np.maximum(spare_s, 0.0) * speed_mps
+        deficit = distance_m - reach_m
+        index = int(deficit.argmax())
+        if deficit[index] <= 0.0:
+            continue
+        affected.setdefault(vehicle.id, set()).add(sortie.id)
+        gap = worst.get(vehicle.id)
+        if gap is None or deficit[index] > gap.distance_m - gap.reach_m:
+            site_id = site_ids[int(nearest[index])]
+            worst[vehicle.id] = _AlternateGap(
+                sortie_id=sortie.id,
+                point=MetricPoint(x_m=float(points[index, 0]), y_m=float(points[index, 1])),
+                site=alternates[site_id],
+                site_id=site_id,
+                distance_m=float(distance_m[index]),
+                reach_m=float(reach_m[index]),
+            )
+
+    items: list[PlanWarning] = []
+    for vehicle_id, gap in sorted(worst.items()):
+        vehicle = vehicles[vehicle_id]
+        items.append(
+            PlanWarning(
+                code="validate.alternate_reach",
+                severity=Severity.WARNING,
+                stage=Stage.VALIDATE,
+                message=(
+                    f"{vehicle.name}: в {len(affected[vehicle_id])} из {flown[vehicle_id]} "
+                    "вылетов есть точки, откуда запасная площадка недосягаема. Худшая — "
+                    f"вылет {gap.sortie_id}: до площадки {gap.site_id!r} по прямой "
+                    f"{gap.distance_m / 1000:.2f} км, остатка заряда хватит на "
+                    f"{gap.reach_m / 1000:.2f} км. При недоступной площадке посадки борту "
+                    "там садиться некуда"
+                ),
+                context={
+                    "vehicle_id": vehicle_id,
+                    "sortie_id": gap.sortie_id,
+                    "site_id": gap.site_id,
+                    "sorties": str(len(affected[vehicle_id])),
+                },
+                geometry=MetricLineString(points=[gap.point, gap.site]),
+            )
+        )
+    if lonely and lonely == len(sorties):
+        items.append(
+            PlanWarning(
+                code="validate.no_alternate",
+                severity=Severity.INFO,
+                stage=Stage.VALIDATE,
+                message=(
+                    "Запасной площадки нет: в сценарии одна площадка — при недоступной "
+                    "площадке посадки борту садиться некуда"
+                ),
+            )
+        )
+    return items
+
+
 def _derived_specs(vehicles: dict[str, Vehicle], sorties: list[Sortie]) -> list[PlanWarning]:
     """Какие числа плана выведены допущением, а не взяты из ТТХ (инвариант 6)."""
     items = []
@@ -644,6 +787,7 @@ def validate_plan(
     report.violations.extend(_check_continuity(sorties))
     report.violations.extend(_check_deadline(scenario, sorties))
     report.violations.extend(_check_daylight(scenario, work_area, sorties))
+    report.warnings.extend(_check_alternate_reach(scenario, work_area, sorties, vehicles))
     report.warnings.extend(_derived_specs(vehicles, sorties))
     report.warnings.append(
         PlanWarning(
@@ -651,9 +795,8 @@ def validate_plan(
             severity=Severity.INFO,
             stage=Stage.VALIDATE,
             message=(
-                "Не проверяются: досягаемость резервной площадки из любой точки маршрута, "
-                "траектория петли разворота (проверена защитная зона манёвра), рельеф "
-                "между препятствиями — ЦМР не подключена (TODO(E7))"
+                "Не проверяются: траектория петли разворота (проверена защитная зона "
+                "манёвра), рельеф между препятствиями — ЦМР не подключена"
             ),
         )
     )
