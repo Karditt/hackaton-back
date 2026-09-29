@@ -19,8 +19,9 @@ type Props = {
 };
 
 /**
- * Состав флота: модель, число бортов, нагрузка, площадка, комплекты АКБ
- * (E10). Геометрия площадок не правится — выбирается из сценария (№8, №12).
+ * Пул техники: модель, число бортов, нагрузка, площадка, комплекты АКБ
+ * (E10). Какие борта пула пойдут в работу, решает расчёт — состав плана в
+ * метриках. Геометрия площадок не правится — выбирается из сценария (№8, №12).
  */
 export function FleetEditor({ rows, vehicles, sites, onChange, disabled, parkFleet }: Props) {
   const total = fleetSize(rows);
@@ -32,8 +33,8 @@ export function FleetEditor({ rows, vehicles, sites, onChange, disabled, parkFle
 
   return (
     <fieldset className={styles.field}>
-      <legend>
-        Флот: {total} из {MAX_FLEET_VEHICLES}
+      <legend title="Доступная техника; какие борта пойдут в работу, решает расчёт">
+        Пул техники: {total} из {MAX_FLEET_VEHICLES}
       </legend>
 
       {parkFleet && (

@@ -238,7 +238,9 @@ core/   чистый Python, ноль веб-зависимостей, собс�
 
 | Файл | Что внутри |
 |---|---|
+| [`docs/explanatory_note.md`](docs/explanatory_note.md) | **Пояснительная записка:** задача, решение, модель, алгоритм, результаты против baseline |
 | [`docs/user_guide.md`](docs/user_guide.md) | **Руководство пользователя:** вход, интерфейс, итог, выгрузка, подсказки, CLI и API |
+| [`docs/demo_script.md`](docs/demo_script.md) | Сценарий показа на защите: что открыть и в каком порядке |
 | [`docs/known_limitations.md`](docs/known_limitations.md) | **Известные ограничения:** упрощения модели, чего нет, реестр чисел с источниками |
 | [`docs/input_formats.md`](docs/input_formats.md) | Чтение входных слоёв KML заказчика; формат высот и окон зон |
 | [`AGENT.md`](AGENT.md) | Правила разработки, карта репозитория, чек-лист инвариантов |

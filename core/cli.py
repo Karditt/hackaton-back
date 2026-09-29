@@ -11,6 +11,7 @@
     python -m core.cli hints scenarios/demo_100km2.json --deadline-h 6 -o out/hints.md
     python -m core.cli hints scenarios/demo_100km2.json --sweep
     python -m core.cli pareto scenarios/demo_100km2.json -o out/pareto.md
+    python -m core.cli sites scenarios/demo_100km2.json -o out/sites.md
     python -m core.cli import-layers --area area.kml --zones zones.kml \
         --obstacles obstacles.kml --params params.json -o scenarios/real.json
     python -m core.cli export-layers scenarios/simple.json -o scenarios/sources/simple
@@ -55,6 +56,7 @@ from core.schemas import (
     Severity,
     Vehicle,
 )
+from core.sites import SiteTrial, suggest_sites
 from core.sources import build_from_sources, load_sources, scenario_differences
 
 #: Подкоманды, которые не являются путём к сценарию.
@@ -69,6 +71,7 @@ SUBCOMMANDS = (
     "export-schema",
     "assumptions",
     "pareto",
+    "sites",
 )
 
 
@@ -442,6 +445,65 @@ def command_pareto(args: argparse.Namespace) -> int:
         target.write_text("\n".join(lines) + "\n", encoding="utf-8")
         print(f"  записано: {target}")
     return 0 if any(point.feasible for point in points) else 1
+
+
+def _site_row(trial: SiteTrial, base: SiteTrial) -> list[str]:
+    """Ячейки строки подбора площадки: вариант, место, срок, ресурс, изменение срока."""
+    place = f"{trial.position.lat:.5f}, {trial.position.lon:.5f}" if trial.position else "—"
+    if not trial.feasible or trial.makespan_s is None:
+        return [trial.label, place, "невыполним", "—", "—"]
+    change = (
+        _change(trial.makespan_s, base.makespan_s) if trial is not base and base.makespan_s else "—"
+    )
+    return [
+        trial.label,
+        place,
+        _hours(trial.makespan_s),
+        _hours(trial.resource_s or 0.0),
+        change,
+    ]
+
+
+def command_sites(args: argparse.Namespace) -> int:
+    """Подбор места новой площадки (заказчик, №28): кандидаты, проверенные расчётом.
+
+    Кандидат — центр компактного скопления самой дальней от площадок работы;
+    каждый проверяется полным расчётом. Приписка бортов снимается и в базовом
+    расчёте, и в пробах — выигрыш даёт площадка, а не свободная расстановка.
+    """
+    scenario = load_scenario(Path(args.scenario))
+    catalog = load_catalog(args.vehicles)
+    header = ["Вариант", "Место (широта, долгота)", "Срок, ч", "Ресурс, ч", "Срок"]
+    print(f"=== {scenario.id}: подбор места новой площадки")
+    trials: list[SiteTrial] = []
+
+    def on_trial(trial: SiteTrial) -> None:
+        trials.append(trial)
+        cells = _site_row(trial, trials[0])
+        print(f"  {' | '.join(cells)} | {trial.elapsed_s:.0f} с", flush=True)
+
+    suggest_sites(scenario, catalog, on_trial=on_trial)
+    lines = [
+        f"Подбор места новой площадки, сценарий `{scenario.id}`.",
+        "",
+        "| " + " | ".join(header) + " |",
+        "|" + "---|" * len(header),
+    ]
+    lines += ["| " + " | ".join(_site_row(trial, trials[0])) + " |" for trial in trials]
+    feasible = [trial for trial in trials[1:] if trial.feasible and trial.makespan_s is not None]
+    best = min(feasible, key=lambda trial: trial.makespan_s or 0.0, default=None)
+    base = trials[0]
+    if best is not None and (base.makespan_s is None or best.makespan_s < base.makespan_s):
+        lines += ["", f"**Лучше всего — {best.label}** ({_site_row(best, base)[1]})."]
+    else:
+        lines += ["", "**Новая площадка срок не сокращает.**"]
+    print("\n" + "\n".join(lines))
+    if args.output:
+        target = Path(args.output)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        print(f"  записано: {target}")
+    return 0
 
 
 def command_import_layers(args: argparse.Namespace) -> int:
@@ -892,6 +954,14 @@ def build_parser() -> argparse.ArgumentParser:
     pareto.add_argument("--vehicles", help="путь к каталогу техники вместо data/vehicles.yaml")
     pareto.add_argument("-o", "--output", help="куда записать таблицу Markdown")
     pareto.set_defaults(handler=command_pareto)
+
+    sites = subparsers.add_parser(
+        "sites", help="подбор места новой площадки: кандидаты, проверенные расчётом"
+    )
+    sites.add_argument("scenario", help="путь к JSON-сценарию")
+    sites.add_argument("--vehicles", help="путь к каталогу техники вместо data/vehicles.yaml")
+    sites.add_argument("-o", "--output", help="куда записать таблицу Markdown")
+    sites.set_defaults(handler=command_sites)
 
     registry = subparsers.add_parser("assumptions", help="напечатать реестр допущений")
     registry.add_argument("--json", action="store_true", help="машиночитаемый вывод")

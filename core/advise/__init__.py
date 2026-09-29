@@ -12,7 +12,14 @@
 
 from __future__ import annotations
 
-from core.advise.diagnose import advice_note, diagnose
+from core.advise.diagnose import advice_note, diagnose, site_spot
 from core.advise.verify import ADVISED_SITE_ID, PlanFn, verify_recommendations
 
-__all__ = ["ADVISED_SITE_ID", "PlanFn", "advice_note", "diagnose", "verify_recommendations"]
+__all__ = [
+    "ADVISED_SITE_ID",
+    "PlanFn",
+    "advice_note",
+    "diagnose",
+    "site_spot",
+    "verify_recommendations",
+]

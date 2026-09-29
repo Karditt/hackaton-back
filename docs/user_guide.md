@@ -205,7 +205,9 @@ cd web && npm install && npm run dev
 Ядро считает и выгружает планы без интерфейса. Команда `pareto` строит фронт
 «срок — ресурс»: план «минимум срока», план «минимум ресурса» и между ними —
 «минимум ресурса» к нескольким срокам; видно, сколько ресурса стоит закончить
-раньше.
+раньше. Команда `sites` подбирает место ещё одной площадки: кандидаты — у
+скоплений самой дальней от площадок работы, каждый проверен полным расчётом;
+ответ — срок с каждым кандидатом против нынешнего.
 
 ```bash
 python -m core.cli scenarios/demo_100km2.json -o out/                     # комплект файлов
@@ -217,6 +219,7 @@ python -m core.cli import-layers --area area.kml --zones zones.kml \
     --obstacles obstacles.kml --params params.json -o scenario.json        # сценарий из слоёв
 python -m core.cli compare scenarios/ -o out/compare.md                    # оптимизатор против baseline
 python -m core.cli pareto scenarios/demo_100km2.json -o out/pareto.md      # что стоит каждый срок
+python -m core.cli sites scenarios/demo_100km2.json -o out/sites.md        # где поставить ещё площадку
 python -m core.cli assumptions                                             # реестр допущений
 ```
 

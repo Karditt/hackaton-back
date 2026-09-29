@@ -64,7 +64,7 @@ def _cells(decomposition: Decomposition, warning: PlanWarning) -> list[str]:
     return [item for item in ids.split(",") if item in known]
 
 
-def _site_spot(work_area: WorkArea, region: BaseGeometry) -> Point:
+def site_spot(work_area: WorkArea, region: BaseGeometry) -> Point:
     """Место площадки для подобластей `region`, метры.
 
     Центр наименьшего круга, накрывающего их, — самое дальнее плечо от него
@@ -113,7 +113,7 @@ def _out_of_reach(
     )
 
     region = unary_union([polygon_to_shapely(by_id[cell_id].polygon) for cell_id in cell_ids])
-    spot = _site_spot(work_area, region)
+    spot = site_spot(work_area, region)
     return [
         Recommendation(
             kind=RecommendationKind.ADD_SITE,
@@ -286,4 +286,4 @@ def advice_note(checked: bool) -> PlanWarning:
     )
 
 
-__all__ = ["advice_note", "diagnose"]
+__all__ = ["advice_note", "diagnose", "site_spot"]
