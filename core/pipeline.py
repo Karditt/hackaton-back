@@ -32,7 +32,13 @@ from core.allocate.greedy import (
     SortieBounds,
     build_greedy_allocation,
 )
-from core.allocate.objective import criterion_key, objective_value, resource_s, weighted_value
+from core.allocate.objective import (
+    criterion_key,
+    objective_value,
+    resource_s,
+    service_share,
+    weighted_value,
+)
 from core.allocate.search import improve_allocation
 from core.catalog import VehicleCatalog, load_catalog, user_vehicle_warnings
 from core.coverage.decompose import decompose
@@ -179,6 +185,50 @@ def _metrics(
     )
 
 
+def _service_note(sorties: list[Sortie], vehicles: dict[str, Vehicle]) -> PlanWarning | None:
+    """Износ по нормативам ТО заказчика (№50, долг №44): доля межсервисного интервала.
+
+    По каждой модели — самый нагруженный её борт. Модели без норматива
+    перечисляются отдельно: число не выдумывается.
+    """
+    flights: dict[tuple[str, int], int] = {}
+    flight_s: dict[tuple[str, int], float] = {}
+    for sortie in sorties:
+        key = (sortie.vehicle_id, sortie.vehicle_instance)
+        flights[key] = flights.get(key, 0) + 1
+        flight_s[key] = flight_s.get(key, 0.0) + sortie.duration_s
+    worst: dict[str, float] = {}
+    missing: set[str] = set()
+    for key, count in flights.items():
+        share = service_share(key[0], count, flight_s[key])
+        if share is None:
+            missing.add(key[0])
+        else:
+            worst[key[0]] = max(worst.get(key[0], 0.0), share)
+    if not worst:
+        return None
+    parts = [
+        f"{vehicles[model].name} — до {share * 100:.1f}% интервала на борт"
+        for model, share in sorted(worst.items())
+    ]
+    tail = (
+        f"; у {', '.join(sorted(vehicles[model].name for model in missing))} норматива нет"
+        if missing
+        else ""
+    )
+    return PlanWarning(
+        code="plan.service_wear",
+        severity=Severity.INFO,
+        stage=Stage.ALLOCATE,
+        message=(
+            "Износ по нормативам ТО (201, 401 — 80 полётов, 801 — 160 ч): "
+            + "; ".join(parts)
+            + tail
+        ),
+        context={model: f"{share:.4f}" for model, share in worst.items()},
+    )
+
+
 def _errors(warnings: list[PlanWarning]) -> list[PlanWarning]:
     return [warning for warning in warnings if warning.severity is Severity.ERROR]
 
@@ -277,6 +327,10 @@ class _Assembler:
             )
             mission_warnings.append(stub_warning())
             stages.append(Stage.ADVISE)
+        else:
+            wear = _service_note(sorties or [], self.vehicles)
+            if wear is not None:
+                mission_warnings.append(wear)
 
         area_center = self.work_area.area.centroid
         mission = Mission(
@@ -532,7 +586,18 @@ def run_pipeline(
 
         def greedy(
             strategy: GreedyStrategy, target_s: float | None, basis: Scenario = scenario
-        ) -> _Variant:
+        ) -> tuple[Allocation, tuple[bool, bool, float, float], float]:
+            """Эвристика и её оценка по книге расписания, без сборки плана.
+
+            Расписание ставит итоговые вылеты в том же порядке, что эвристика
+            ставила их в книгу, и получает те же старты (долг №54) — поэтому
+            срок и налёт из книги равны сроку и налёту плана, а собирать план
+            ради сравнения вариантов незачем (долг №62).
+
+            Returns:
+                Распределение, ключ критерия режима `basis` и срок, секунды.
+            """
+            placer = placer_for()
             candidate = build_greedy_allocation(
                 basis,
                 work_area.crs,
@@ -543,19 +608,27 @@ def run_pipeline(
                 sortie_cost,
                 survey_plan,
                 survey_time,
-                placer_for(),
+                placer,
                 ends_of,
                 strategy,
                 target_s,
             )
-            return (candidate, *realize(candidate))
+            end_s, flight_s, count = placer.totals()
+            key = criterion_key(
+                basis.mode,
+                basis.deadline_s,
+                end_s,
+                resource_s(flight_s, count),
+                complete=not candidate.unassigned_cell_ids and count > 0,
+            )
+            return candidate, key, end_s
 
-        def improve(variant: _Variant, basis: Scenario = scenario) -> _Variant:
-            """Довести вариант локальным поиском по критерию режима `basis`."""
+        def improve(allocation: Allocation, basis: Scenario = scenario) -> Allocation:
+            """Довести распределение локальным поиском по критерию режима `basis`."""
             if allocator != "local_search":
-                return variant
-            improved = improve_allocation(
-                variant[0],
+                return allocation
+            return improve_allocation(
+                allocation,
                 basis,
                 instances,
                 decomposition.cells,
@@ -566,9 +639,9 @@ def run_pipeline(
                 primary_sites,
                 ends_of,
             )
-            if improved.assignments == variant[0].assignments:
-                return (improved, *variant[1:])
-            return (improved, *realize(improved))
+
+        def variant_of(allocation: Allocation) -> _Variant:
+            return (allocation, *realize(allocation))
 
         def key_of(
             item: tuple[GreedyStrategy, Allocation, CoverageSet, list[Sortie], Schedule],
@@ -587,20 +660,21 @@ def run_pipeline(
             def key(variant: _Variant) -> tuple[bool, bool, float, float]:
                 return _plan_key(basis, variant[0], variant[2])
 
-            plain = greedy(strategy, None, basis)
+            plain, plain_key, makespan_s = greedy(strategy, None, basis)
             candidates = [plain]
-            if targets and basis.mode is OptimizationMode.MIN_MAKESPAN and plain[2]:
-                makespan_s = max(sortie.end_time_s() for sortie in plain[2])
-                aimed = min(
+            if targets and basis.mode is OptimizationMode.MIN_MAKESPAN and plain.assignments:
+                aimed, aimed_key, _end_s = min(
                     (
                         greedy(strategy, makespan_s * factor, basis)
                         for factor in assumptions.ALLOCATE_TARGET_FACTORS
                     ),
-                    key=key,
+                    key=lambda item: item[1],
                 )
-                if key(aimed) < key(plain):
+                if aimed_key < plain_key:
                     candidates.append(aimed)
-            return min((improve(variant, basis) for variant in candidates), key=key)
+            return min(
+                (variant_of(improve(allocation, basis)) for allocation in candidates), key=key
+            )
 
         tried: list[tuple[GreedyStrategy, Allocation, CoverageSet, list[Sortie], Schedule]] = []
         for strategy in STRATEGIES:
@@ -617,7 +691,8 @@ def run_pipeline(
                 fast = scenario.model_copy(update={"mode": OptimizationMode.MIN_MAKESPAN})
                 for strategy in STRATEGIES:
                     fallback = replace(strategy, name=f"{strategy.name}, от плана по сроку")
-                    tried.append((fallback, *improve(best_plan(strategy, fast))))
+                    quickest = best_plan(strategy, fast)[0]
+                    tried.append((fallback, *variant_of(improve(quickest))))
 
         best = min(range(len(tried)), key=lambda index: (key_of(tried[index]), index))
         _strategy, allocation, coverage, sorties, schedule = tried[best]

@@ -31,6 +31,29 @@ def resource_s(total_flight_time_s: float, cycle_count: int) -> float:
     return total_flight_time_s + assumptions.CYCLE_COST_S * cycle_count
 
 
+def service_share(vehicle_id: str, flights: int, flight_s: float) -> float | None:
+    """Доля межсервисного интервала, которую борт израсходует за план (заказчик, №50).
+
+    Не входит в критерий: у Gemini и Lite норматива заказчик не дал, а
+    критерий зафиксирован брифом (AGENT.md §7). Показывается в плане (долг №44).
+
+    Args:
+        vehicle_id: модель борта.
+        flights: число вылетов борта.
+        flight_s: налёт борта, секунды.
+
+    Returns:
+        Доля 0..1 (может быть больше 1); None — норматива для модели нет.
+    """
+    per_flights = assumptions.SERVICE_INTERVAL_FLIGHTS.get(vehicle_id)
+    if per_flights is not None:
+        return flights / per_flights
+    per_hours = assumptions.SERVICE_INTERVAL_HOURS.get(vehicle_id)
+    if per_hours is not None:
+        return flight_s / 3600.0 / per_hours
+    return None
+
+
 def objective_value(mode: OptimizationMode, makespan_s: float, resource: float) -> float:
     """Значение критерия выбранного режима, секунды. Меньше — лучше.
 
@@ -94,4 +117,4 @@ def criterion_key(
     return not complete, False, makespan_s, resource
 
 
-__all__ = ["criterion_key", "objective_value", "resource_s", "weighted_value"]
+__all__ = ["criterion_key", "objective_value", "resource_s", "service_share", "weighted_value"]

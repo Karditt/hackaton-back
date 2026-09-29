@@ -97,7 +97,8 @@ export function FleetPage({ vehicles, catalogError, park, scenarioId, scenarioFl
       {catalogError && <Notice tone="error">{catalogError}</Notice>}
       {!park.persisted && (
         <Notice tone="caution">
-          Хранилище браузера недоступно — парк сохранится только до перезагрузки страницы.
+          Парк не сохранён ни на сервере, ни в браузере — он проживёт только до перезагрузки
+          страницы.
         </Notice>
       )}
 

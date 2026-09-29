@@ -178,6 +178,38 @@ def list_assumptions(team_only: bool = False) -> dict[str, Any]:
     }
 
 
+#: Разделы парка техники, без которых он не парк (`web/src/features/fleet/park.ts`).
+_PARK_LISTS = ("boards", "models", "payloads")
+
+
+@app.get("/park", tags=["справочники"])
+def get_park() -> dict[str, Any]:
+    """Парк техники вкладки «Техника»: борта, свои модели, нагрузки, правки каталога.
+
+    `park` — `null`, пока веб его не сохранил. Содержимое сервис не
+    толкует: в расчёт ТТХ пользователя уходят со сценарием (`Scenario.vehicles`).
+    """
+    path = store.park_path
+    if not path.is_file():
+        return {"park": None}
+    try:
+        return {"park": json.loads(path.read_text(encoding="utf-8"))}
+    except (OSError, json.JSONDecodeError) as error:
+        raise HTTPException(status_code=500, detail=f"Парк не читается: {error}") from error
+
+
+@app.put("/park", tags=["справочники"])
+def put_park(park: dict[str, Any]) -> dict[str, Any]:
+    """Сохранить парк техники (долг №50): тот же парк на любом компьютере и в любом браузере."""
+    missing = [key for key in _PARK_LISTS if not isinstance(park.get(key), list)]
+    if missing:
+        raise HTTPException(status_code=422, detail=f"В парке нет списков: {', '.join(missing)}")
+    path = store.park_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(park, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"boards": len(park["boards"]), "models": len(park["models"])}
+
+
 @app.get("/scenarios", tags=["сценарии"])
 def list_scenarios() -> dict[str, Any]:
     """Список сохранённых сценариев.

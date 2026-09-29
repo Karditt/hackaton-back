@@ -149,6 +149,21 @@ def test_layers_are_imported_into_a_scenario(client) -> None:
     assert download.content == _import_files()["area"][1]
 
 
+def test_park_is_kept_on_the_server(client) -> None:
+    """Долг №50: парк вкладки «Техника» живёт на сервере, а не в одном браузере."""
+    assert client.get("/park").json() == {"park": None}
+    park = {
+        "boards": [{"id": "b1", "modelId": "geoscan-201", "active": True}],
+        "models": [],
+        "payloads": [],
+        "edits": {},
+        "hidden": [],
+    }
+    assert client.put("/park", json=park).json() == {"boards": 1, "models": 0}
+    assert client.get("/park").json() == {"park": park}
+    assert client.put("/park", json={"boards": []}).status_code == 422
+
+
 def test_import_without_params_is_422(client) -> None:
     """Параметры задания — не JSON: отказ на приёме, а не сбой при разборе слоёв."""
     response = client.post(
