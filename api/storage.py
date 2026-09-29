@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -28,6 +29,24 @@ DEFAULT_STORAGE_DIR = Path(__file__).resolve().parents[1] / "storage"
 
 #: Сколько ошибок контракта показывать в причине отказа — остальные числом.
 _ERRORS_SHOWN = 3
+
+#: Идентификатор сценария — имя файла в хранилище: буквы, цифры, «_», «-», «.».
+#: Косая черта и «..» увели бы файл из каталога хранилища.
+_SAFE_ID = re.compile(r"^\w[\w.-]{0,99}$")
+
+
+def check_scenario_id(scenario_id: str) -> None:
+    """Проверить, что идентификатор годится в имя файла хранилища.
+
+    Raises:
+        ScenarioError: в идентификаторе косая черта, «..», пробел или он пуст.
+    """
+    if not _SAFE_ID.match(scenario_id) or ".." in scenario_id:
+        raise ScenarioError(
+            f"Идентификатор сценария {scenario_id!r} не годится: только буквы, цифры, "
+            "«_», «-» и «.», без «..», до 100 знаков"
+        )
+
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +132,11 @@ class ScenarioStore:
 
         Returns:
             Сохранённый сценарий.
+
+        Raises:
+            ScenarioError: идентификатор не годится в имя файла.
         """
+        check_scenario_id(scenario.id)
         self._cache[scenario.id] = scenario
         path = self.path_of(scenario.id)
         path.write_text(scenario.model_dump_json(indent=2), encoding="utf-8")
@@ -172,4 +195,10 @@ class ScenarioStore:
         return True
 
 
-__all__ = ["DEFAULT_STORAGE_DIR", "STORAGE_ENV_VAR", "ScenarioStore", "describe_rejection"]
+__all__ = [
+    "DEFAULT_STORAGE_DIR",
+    "STORAGE_ENV_VAR",
+    "ScenarioStore",
+    "check_scenario_id",
+    "describe_rejection",
+]

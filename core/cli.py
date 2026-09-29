@@ -57,7 +57,12 @@ from core.schemas import (
     Vehicle,
 )
 from core.sites import SiteTrial, suggest_sites
-from core.sources import build_from_sources, load_sources, scenario_differences
+from core.sources import (
+    assemble_scenario,
+    build_from_sources,
+    load_sources,
+    scenario_differences,
+)
 
 #: Подкоманды, которые не являются путём к сценарию.
 SUBCOMMANDS = (
@@ -530,20 +535,19 @@ def command_import_layers(args: argparse.Namespace) -> int:
         terrain_min_m=args.terrain_min,
         terrain_max_m=args.terrain_max,
     )
-    payload["area"] = layers.area.model_dump(mode="json")
-    payload["no_fly_zones"] = [zone.model_dump(mode="json") for zone in layers.zones]
-    payload["obstacles"] = [obstacle.model_dump(mode="json") for obstacle in layers.obstacles]
     try:
-        scenario = Scenario.model_validate(payload)
+        scenario, report = assemble_scenario(
+            payload, layers, Path(args.sites) if args.sites else None
+        )
     except ValidationError as error:
         raise CoreError(f"Собранный сценарий не соответствует контракту:\n{error}") from error
 
-    report = layers.report
     print(f"=== импорт слоёв → {scenario.id}")
     for label, stats in (
         ("область", report.area),
         ("зоны", report.zones),
         ("препятствия", report.obstacles),
+        ("площадки", report.sites),
     ):
         print(
             f"  {label:<12}: прочитано {stats.read}, принято {stats.kept}, "
@@ -856,6 +860,11 @@ def build_parser() -> argparse.ArgumentParser:
     layers.add_argument("--area", required=True, help="KML области съёмки")
     layers.add_argument("--zones", help="KML зон ограничений")
     layers.add_argument("--obstacles", help="KML высотных препятствий")
+    layers.add_argument(
+        "--sites",
+        help="KML площадок взлёта-посадки (точки); без него — площадки из параметров, "
+        "а нет и там — подбирает сервис",
+    )
     layers.add_argument(
         "--params", required=True, help="JSON с параметрами задания: флот, площадки, GSD, сроки"
     )

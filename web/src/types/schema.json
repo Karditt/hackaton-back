@@ -2475,6 +2475,10 @@
         "obstacles": {
           "$ref": "#/definitions/LayerStats"
         },
+        "sites": {
+          "$ref": "#/definitions/LayerStats",
+          "description": "Слой площадок взлёта-посадки (точки KML); пусто — площадки из параметров"
+        },
         "area_km2": {
           "default": 0.0,
           "description": "Площадь принятой области, км²",

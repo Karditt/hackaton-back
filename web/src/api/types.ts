@@ -61,8 +61,8 @@ export type ScenarioSummary = {
 
 /** Исходный файл сценария — `GET /scenarios/{id}/files`. */
 export type ScenarioFile = {
-  /** `area`, `zones`, `obstacles` — слои KML; `params` — параметры задания; `scenario` — JSON. */
-  kind: 'area' | 'zones' | 'obstacles' | 'params' | 'scenario';
+  /** `area`, `zones`, `obstacles`, `sites` — слои KML; `params` — параметры задания; `scenario` — JSON. */
+  kind: 'area' | 'zones' | 'obstacles' | 'sites' | 'params' | 'scenario';
   name: string;
   size_bytes: number;
   /** Что сделал импорт со слоем; у параметров и JSON — нет. */

@@ -59,12 +59,17 @@ export async function fetchScenarioFile(
   return response.blob();
 }
 
-/** Файлы для сборки сценария: три слоя KML и параметры задания JSON-текстом. */
+/** Файл слоя для сборки сценария: содержимое и имя, под которым он уйдёт на сервер. */
+export type LayerFile = { file: Blob; name: string };
+
+/** Файлы для сборки сценария: слои KML и параметры задания JSON-текстом. */
 export type ImportFiles = {
   area: Blob;
   areaName: string;
-  zones: { file: Blob; name: string } | null;
-  obstacles: { file: Blob; name: string } | null;
+  zones: LayerFile | null;
+  obstacles: LayerFile | null;
+  /** Площадки точками KML; null — из параметров, а нет и там — подберёт сервис. */
+  sites?: LayerFile | null;
   params: string;
 };
 
@@ -79,6 +84,7 @@ export async function importScenario(files: ImportFiles): Promise<ImportedScenar
   form.append('area', files.area, files.areaName);
   if (files.zones) form.append('zones', files.zones.file, files.zones.name);
   if (files.obstacles) form.append('obstacles', files.obstacles.file, files.obstacles.name);
+  if (files.sites) form.append('sites', files.sites.file, files.sites.name);
   return request<ImportedScenario>('/scenarios/import', { method: 'POST', body: form });
 }
 

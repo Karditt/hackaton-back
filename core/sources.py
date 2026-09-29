@@ -17,22 +17,38 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from shapely.geometry import MultiPolygon, Polygon
 from shapely.geometry import Point as ShapelyPoint
 from shapely.geometry.base import BaseGeometry
 
+from core import text
 from core.errors import ScenarioError
-from core.geo.kml_import import import_layers
-from core.schemas import GeoPolygon, ImportReport, Obstacle, Scenario
+from core.geo.kml_import import ImportedLayers, import_layers, merge_reports, read_sites
+from core.geo.mask import build_work_area
+from core.schemas import (
+    GeoPolygon,
+    ImportReport,
+    Obstacle,
+    PlanWarning,
+    Scenario,
+    Severity,
+    Stage,
+)
+from core.sites import place_sites
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 #: Манифест по умолчанию. Не в корне `scenarios/`: там каждый JSON — сценарий.
 DEFAULT_MANIFEST = REPO_ROOT / "scenarios" / "sources" / "manifest.json"
 
-#: Виды исходных файлов: три слоя и параметры задания.
-SOURCE_KINDS = ("area", "zones", "obstacles", "params")
+#: Виды исходных файлов: четыре слоя и параметры задания. Слой площадок
+#: необязателен: площадки могут лежать в параметрах или быть подобраны.
+SOURCE_KINDS = ("area", "zones", "obstacles", "sites", "params")
+
+#: Временная площадка, пока сервис подбирает места: без неё сценарий не собрать.
+_PROVISIONAL_SITE_ID = "provisional"
 
 #: Допуск сравнения координат, градусы (~1 мм): импорт переводит область в
 #: метры и обратно, и последние знаки координат от этого шумят.
@@ -122,10 +138,92 @@ def build_from_sources(sources: ScenarioSources) -> tuple[Scenario, ImportReport
         zones_source=sources.files.get("zones"),
         obstacles_source=sources.files.get("obstacles"),
     )
-    payload["area"] = layers.area.model_dump(mode="json")
-    payload["no_fly_zones"] = [zone.model_dump(mode="json") for zone in layers.zones]
-    payload["obstacles"] = [obstacle.model_dump(mode="json") for obstacle in layers.obstacles]
-    return Scenario.model_validate(payload), layers.report
+    return assemble_scenario(payload, layers, sources.files.get("sites"))
+
+
+def _note(code: str, message: str, severity: Severity = Severity.INFO) -> PlanWarning:
+    return PlanWarning(code=code, severity=severity, stage=Stage.GEO, message=message)
+
+
+def assemble_scenario(
+    payload: dict[str, Any],
+    layers: ImportedLayers,
+    sites_source: str | Path | None = None,
+) -> tuple[Scenario, ImportReport]:
+    """Сценарий из параметров задания и прочитанных слоёв — для CLI и API.
+
+    Площадки: слой площадок (точки KML), если он есть, иначе — из параметров
+    задания; нет ни там, ни там — сервис подбирает места сам (`place_sites`,
+    заказчик №28) и говорит об этом в отчёте. Приписка борта к площадке,
+    которой в сценарии больше нет, снимается — тоже с отчётом.
+
+    Args:
+        payload: параметры задания — сценарий без трёх слоёв (JSON контракта).
+        layers: прочитанные слои области, зон и препятствий.
+        sites_source: файл слоя площадок или его содержимое; None — нет слоя.
+
+    Returns:
+        Сценарий и отчёт импорта.
+
+    Raises:
+        GeometryError: слой площадок не читается.
+        pydantic.ValidationError: параметры не соответствуют контракту.
+    """
+    data = dict(payload)
+    data["area"] = layers.area.model_dump(mode="json")
+    data["no_fly_zones"] = [zone.model_dump(mode="json") for zone in layers.zones]
+    data["obstacles"] = [obstacle.model_dump(mode="json") for obstacle in layers.obstacles]
+    report = layers.report
+    notes: list[PlanWarning] = []
+
+    if sites_source is not None:
+        sites, sites_report = read_sites(sites_source)
+        report = merge_reports(report, sites_report)
+        data["sites"] = [site.model_dump(mode="json", exclude_none=True) for site in sites]
+
+    known = {str(site.get("id")) for site in data.get("sites") or [] if isinstance(site, dict)}
+    fleet = data.get("fleet")
+    if isinstance(fleet, list):
+
+        def stray(unit: object) -> bool:
+            return (
+                isinstance(unit, dict)
+                and bool(unit.get("site_id"))
+                and (unit["site_id"] not in known)
+            )
+
+        unpinned = [str(unit.get("vehicle_id")) for unit in fleet if stray(unit)]
+        data["fleet"] = [{**unit, "site_id": None} if stray(unit) else unit for unit in fleet]
+        if unpinned:
+            notes.append(
+                _note(
+                    "import.site_unpinned",
+                    "Приписка к площадкам снята — таких площадок в сценарии нет: "
+                    f"{', '.join(sorted(set(unpinned)))}. Площадку бортам выберет расчёт",
+                    Severity.WARNING,
+                )
+            )
+
+    if not data.get("sites"):
+        anchor = layers.area.polygons[0].outer[0]
+        provisional = Scenario.model_validate(
+            {**data, "sites": [{"id": _PROVISIONAL_SITE_ID, "position": [anchor.lon, anchor.lat]}]}
+        )
+        sites = place_sites(build_work_area(provisional))
+        data["sites"] = [site.model_dump(mode="json", exclude_none=True) for site in sites]
+        count = text.counted(len(sites), ("площадку", "площадки", "площадок"))
+        notes.append(
+            _note(
+                "import.sites_auto",
+                f"Площадки в задании не заданы — сервис подобрал {count}: "
+                f"{', '.join(site.name for site in sites)}. Свои места — файлом площадок "
+                "(точки KML)",
+            )
+        )
+
+    if notes:
+        report = report.model_copy(update={"warnings": [*report.warnings, *notes]})
+    return Scenario.model_validate(data), report
 
 
 def import_report(sources: ScenarioSources) -> ImportReport:
@@ -218,6 +316,7 @@ __all__ = [
     "DEFAULT_MANIFEST",
     "SOURCE_KINDS",
     "ScenarioSources",
+    "assemble_scenario",
     "build_from_sources",
     "import_report",
     "load_sources",

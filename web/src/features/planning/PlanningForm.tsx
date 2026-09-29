@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import type {
   OptimizationMode,
   RejectedScenario,
@@ -19,6 +20,8 @@ type Props = {
   rejected: RejectedScenario[];
   scenarioId: string;
   onScenarioChange: (scenarioId: string) => void;
+  /** Создание сценария из своих файлов — под выбором сценария. */
+  newScenario?: ReactNode;
   mode: OptimizationMode;
   onModeChange: (mode: OptimizationMode) => void;
   /** Выбранный сценарий целиком; null — ещё не загружен. */
@@ -49,6 +52,7 @@ export function PlanningForm(props: Props) {
         onChange={props.onScenarioChange}
         disabled={busy}
       />
+      {props.newScenario}
       {props.rejected.length > 0 && (
         <Notice tone="caution">
           Не прочитаны файлы сценариев ({props.rejected.length}):{' '}

@@ -151,6 +151,92 @@ def test_layers_are_imported_into_a_scenario(client) -> None:
     assert download.content == _import_files()["area"][1]
 
 
+def _simple_sources() -> tuple[bytes, dict]:
+    folder = SCENARIOS_DIR / "sources" / "simple"
+    params = json.loads((folder / "params.json").read_text(encoding="utf-8"))
+    return (folder / "area.kml").read_bytes(), params
+
+
+def test_new_scenario_without_sites_gets_them_from_the_service(client) -> None:
+    """Новый сценарий: только область и параметры без площадок — места подбирает сервис."""
+    area, params = _simple_sources()
+    params.pop("sites")
+    params.update(id="user-20260929-120000", name="Свой район")
+    response = client.post(
+        "/scenarios/import",
+        files={"area": ("my_area.kml", area, "application/vnd.google-earth.kml+xml")},
+        data={"params": json.dumps(params, ensure_ascii=False)},
+    )
+    assert response.status_code == 201, response.text
+    report = response.json()["report"]
+    assert "import.sites_auto" in {warning["code"] for warning in report["warnings"]}
+    stored = client.get("/scenarios/user-20260929-120000").json()
+    assert [site["name"] for site in stored["sites"]] == ["Центральная"]
+    assert (
+        client.get("/scenarios/user-20260929-120000/layers").json()["properties"]["counts"]["site"]
+        == 1
+    )
+
+
+def test_new_scenario_takes_sites_from_a_kml_layer(client) -> None:
+    """Площадки точками KML заменяют площадки параметров и хранятся исходником сценария."""
+    area, params = _simple_sources()
+    params["id"] = "user-sites-layer"
+    sites = (
+        '<kml xmlns="http://www.opengis.net/kml/2.2"><Document>'
+        "<Placemark><name>Поле</name><Point><coordinates>30.318,59.906</coordinates></Point>"
+        "</Placemark></Document></kml>"
+    ).encode()
+    response = client.post(
+        "/scenarios/import",
+        files={
+            "area": ("area.kml", area, "application/vnd.google-earth.kml+xml"),
+            "sites": ("sites.kml", sites, "application/vnd.google-earth.kml+xml"),
+        },
+        data={"params": json.dumps(params, ensure_ascii=False)},
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["report"]["sites"]["kept"] == 1
+    stored = client.get("/scenarios/user-sites-layer").json()
+    assert [site["id"] for site in stored["sites"]] == ["site-1"]
+    listing = client.get("/scenarios/user-sites-layer/files").json()["files"]
+    files = {item["kind"]: item for item in listing}
+    assert files["sites"]["stats"]["kept"] == 1
+    assert client.get("/scenarios/user-sites-layer/files/sites").content == sites
+
+
+def test_copy_with_advised_site_keeps_the_source_files(client) -> None:
+    """Копия `<id>--site` (площадка по совету) и её правка `--custom` — файлы исходного."""
+    payload = _simple()
+    payload["id"] = "simple--site"
+    payload["sites"].append(
+        {"id": "advised-site-1", "name": "По совету", "position": [30.318, 59.906]}
+    )
+    assert client.post("/scenarios", json=payload).status_code == 201
+    for scenario_id in ("simple--site", "simple--site--custom"):
+        payload["id"] = scenario_id
+        assert client.post("/scenarios", json=payload).status_code == 201
+        assert client.get(f"/scenarios/{scenario_id}/files").json()["source_id"] == "simple"
+
+
+@pytest.mark.parametrize("bad_id", ["../escape", "a/b", "..", "with space", ""])
+def test_scenario_id_must_be_a_safe_file_name(client, bad_id: str) -> None:
+    """Идентификатор сценария — имя файла хранилища: «..» и «/» не выводят из каталога."""
+    payload = _simple()
+    payload["id"] = bad_id
+    response = client.post("/scenarios", json=payload)
+    assert response.status_code == 422
+    assert "Идентификатор" in response.json()["detail"]
+    area, params = _simple_sources()
+    params["id"] = bad_id
+    imported = client.post(
+        "/scenarios/import",
+        files={"area": ("area.kml", area, "application/vnd.google-earth.kml+xml")},
+        data={"params": json.dumps(params)},
+    )
+    assert imported.status_code == 422
+
+
 def test_park_is_kept_on_the_server(client) -> None:
     """Долг №50: парк вкладки «Техника» живёт на сервере, а не в одном браузере."""
     assert client.get("/park").json() == {"park": None}

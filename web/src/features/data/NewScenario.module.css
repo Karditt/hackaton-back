@@ -1,0 +1,191 @@
+/* Новый сценарий из своих файлов (E10). Геометрия не рисуется — №8, №12. */
+
+.closed {
+  margin: -8px 0 16px;
+}
+
+.openButton {
+  width: 100%;
+  padding: 6px 10px;
+  font: inherit;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-bg);
+  border: 1px dashed var(--accent);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.openButton:hover:not(:disabled) {
+  background: var(--panel);
+}
+
+.openButton:disabled {
+  color: var(--muted);
+  border-color: var(--line-strong);
+  cursor: not-allowed;
+}
+
+.box {
+  margin: -8px 0 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.title {
+  font-weight: 600;
+}
+
+.nameField {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.nameInput {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  margin-top: 4px;
+  padding: 6px;
+  font: inherit;
+  font-weight: 400;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.slots {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.slot {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 0;
+  border-top: 1px solid var(--line);
+}
+
+.slotText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.slotLabel {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.required {
+  color: var(--error);
+}
+
+.fileLine {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  min-width: 0;
+  font-size: 11px;
+}
+
+.fileName {
+  overflow: hidden;
+  color: var(--success);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.muted {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.choose {
+  padding: 3px 8px;
+  font-size: 11px;
+  color: var(--accent);
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.choose:hover:not(:disabled) {
+  background: var(--accent-bg);
+  border-color: var(--accent);
+}
+
+.remove {
+  padding: 0 4px;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.remove:hover {
+  color: var(--error);
+}
+
+.consequences {
+  margin: 8px 0;
+  padding: 6px 8px 6px 22px;
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--bg);
+  border-radius: var(--radius);
+}
+
+.consequences li + li {
+  margin-top: 2px;
+}
+
+.create {
+  width: 100%;
+  margin-bottom: 6px;
+  padding: 8px 10px;
+  font: inherit;
+  font-weight: 600;
+  color: var(--panel);
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.create:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.details {
+  margin: -4px 0 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.details summary {
+  cursor: pointer;
+}
+
+.details ul {
+  margin: 6px 0 0;
+  padding-left: 16px;
+}

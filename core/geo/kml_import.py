@@ -47,6 +47,8 @@ from core.schemas import (
     Obstacle,
     PlanWarning,
     Severity,
+    Site,
+    SiteKind,
     Stage,
 )
 
@@ -833,6 +835,85 @@ def _obstacle_height(mode: str, z: float, terrain_m: float, log: _Log) -> float 
 
 
 # --------------------------------------------------------------------------
+# Слой 4: площадки взлёта-посадки
+# --------------------------------------------------------------------------
+
+#: Значения поля `site_kind` и слова в имени, по которым площадка — резервная.
+_RESERVE_WORDS = ("reserve", "резерв")
+
+
+def read_sites(source: str | Path) -> tuple[list[Site], ImportReport]:
+    """Прочитать слой площадок взлёта-посадки (docs/input_formats.md §5).
+
+    Площадка — `Placemark` с `Point`: имя — `<name>`, идентификатор — поле
+    `site_id` в `ExtendedData` (иначе `site-N` по порядку), резервная — если
+    поле `site_kind` или имя говорит «резерв» / `reserve`. Высота точки не
+    читается: площадка на земле. Метки без точки пропускаются с отчётом.
+
+    Args:
+        source: путь к файлу KML или его содержимое.
+
+    Returns:
+        Пара «площадки, отчёт импорта» (счётчики — в `ImportReport.sites`).
+
+    Raises:
+        GeometryError: файл не читается или в нём нет ни одной точки.
+    """
+    log = _Log()
+    sites: list[Site] = []
+    used: set[str] = set()
+    for placemark in _placemarks(source):
+        log.stats.read += 1
+        point = next(_descendants(placemark, "Point"), None)
+        element = next(_descendants(point, "coordinates"), None) if point is not None else None
+        coords = _coordinates(element) if element is not None else []
+        if not coords:
+            log.stats.dropped += 1
+            log.say(
+                "import.site_dropped",
+                "Метки без точки в файле площадок пропущены: площадка — точка на земле "
+                "(сколько — в итоге импорта, «выброшено»)",
+                once=True,
+            )
+            continue
+        lon, lat, _ = coords[0]
+        data = _extended_data(placemark)
+        name = _text_of(placemark, "name")
+        given_id = data.get("site_id", "").strip()
+        site_id = given_id or f"site-{len(sites) + 1}"
+        while site_id in used:
+            site_id = f"{site_id}-{len(sites) + 1}"
+        used.add(site_id)
+        marker = f"{data.get('site_kind', '')} {name}".lower()
+        reserve = any(word in marker for word in _RESERVE_WORDS)
+        try:
+            position = GeoPoint(lon=lon, lat=lat)
+        except ValueError:
+            log.stats.dropped += 1
+            log.say(
+                "import.site_dropped",
+                "Площадки с координатами вне допустимых пропущены "
+                "(сколько — в итоге импорта, «выброшено»)",
+                once=True,
+            )
+            continue
+        # Без имени и без своего идентификатора площадку надо как-то назвать;
+        # с `site_id` (так пишет выгрузка) имя остаётся пустым, как было.
+        sites.append(
+            Site(
+                id=site_id,
+                name=name or ("" if given_id else f"Площадка {len(sites) + 1}"),
+                position=position,
+                kind=SiteKind.RESERVE if reserve else SiteKind.PRIMARY,
+            )
+        )
+    if not sites:
+        raise GeometryError("В файле площадок нет ни одной точки")
+    log.stats.kept = len(sites)
+    return sites, ImportReport(sites=log.stats, warnings=log.warnings)
+
+
+# --------------------------------------------------------------------------
 # Три слоя разом
 # --------------------------------------------------------------------------
 
@@ -906,17 +987,25 @@ def _merge(left: ImportReport, right: ImportReport) -> ImportReport:
         area=left.area if left.area.read else right.area,
         zones=left.zones if left.zones.read else right.zones,
         obstacles=left.obstacles if left.obstacles.read else right.obstacles,
+        sites=left.sites if left.sites.read else right.sites,
         area_km2=left.area_km2 or right.area_km2,
         warnings=[*left.warnings, *right.warnings],
     )
+
+
+def merge_reports(left: ImportReport, right: ImportReport) -> ImportReport:
+    """Отчёт слоёв плюс отчёт ещё одного слоя (площадок) — один отчёт."""
+    return _merge(left, right)
 
 
 __all__ = [
     "AltitudeRange",
     "ImportedLayers",
     "import_layers",
+    "merge_reports",
     "parse_altitude_text",
     "read_area",
     "read_obstacles",
+    "read_sites",
     "read_zones",
 ]
