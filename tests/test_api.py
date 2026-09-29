@@ -411,6 +411,38 @@ def test_pareto_front_runs_in_background_and_serves_each_plan(client) -> None:
     assert client.get("/pareto/front-nope").status_code == 404
 
 
+def test_site_search_runs_in_background_and_serves_each_plan(client) -> None:
+    """Подбор площадки — фоновая задача: базовый расчёт и кандидаты, у каждого — план."""
+    started = client.post("/scenarios/simple/sites")
+    assert started.status_code == 202
+    search_id = started.json()["id"]
+    deadline = time.monotonic() + 300.0
+    while True:
+        payload = client.get(f"/sites/{search_id}").json()
+        if payload["state"] in ("done", "failed") or time.monotonic() > deadline:
+            break
+        time.sleep(0.05)
+    assert payload["state"] == "done", payload["error"]
+    trials = payload["trials"]
+    assert trials[0]["position"] is None, "первый — расчёт «как есть»"
+    assert len(trials) >= 2 and all(trial["position"] for trial in trials[1:])
+    listed = {job["id"] for job in client.get("/jobs").json()["jobs"]}
+    candidate = trials[1]
+    assert candidate["plan_job_id"] not in listed
+    layers = client.get(
+        f"/jobs/{candidate['plan_job_id']}/export", params={"format": "geojson"}
+    ).json()
+    names = [
+        feature["properties"]["name"]
+        for feature in layers["features"]
+        if feature["properties"]["kind"] == "site"
+    ]
+    assert "Предложенная площадка" in names
+
+    assert client.post("/scenarios/nope/sites").status_code == 404
+    assert client.get("/sites/sites-nope").status_code == 404
+
+
 def test_hint_needs_exactly_one_question(client) -> None:
     assert client.post("/scenarios/simple/hints").status_code == 422
     both = client.post("/scenarios/simple/hints", params={"boards": 2, "sweep": True})

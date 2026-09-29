@@ -22,6 +22,7 @@ import { HistoryPanel } from '../features/history';
 import { MapView } from '../features/map/MapView';
 import { allLayers, resetPlanLayers, type MapFilter } from '../features/map/layers';
 import { ParetoPanel, usePareto } from '../features/pareto';
+import { SitesPanel, useSiteSearch } from '../features/sites';
 import {
   fleetSize,
   PlanningForm,
@@ -101,6 +102,13 @@ export default function App() {
     vehicleProblems: custom.problems,
   });
   const front = usePareto({
+    scenarioId,
+    scenario: draft.scenario,
+    options: draft.options,
+    vehicles: custom.vehicles,
+    vehicleProblems: custom.problems,
+  });
+  const siteSearch = useSiteSearch({
     scenarioId,
     scenario: draft.scenario,
     options: draft.options,
@@ -209,6 +217,14 @@ export default function App() {
             disabledNote={planningNote}
             lastRunS={lastRunS}
             onShowPlan={(jobId, label) => void planning.showJob(jobId, label, 'pareto')}
+            planBusy={planning.busy}
+          />
+          <SitesPanel
+            key={`sites-${scenarioId}`}
+            search={siteSearch}
+            disabledNote={planningNote}
+            lastRunS={lastRunS}
+            onShowPlan={(jobId, label) => void planning.showJob(jobId, label, 'sites')}
             planBusy={planning.busy}
           />
           <HistoryPanel

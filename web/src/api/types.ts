@@ -164,6 +164,40 @@ export type ParetoStatus = {
   finished_at: string | null;
 };
 
+/** Проба подбора площадки — `api/jobs.py`, `_trial_public`. */
+export type SiteTrial = {
+  /** «как есть (…)» или «площадка для дальних 20% площади». */
+  label: string;
+  /** Место новой площадки, WGS84; null — расчёт «как есть». */
+  position: { lon: number; lat: number } | null;
+  /** Доля площади дальней работы, ради которой поставлен кандидат, 0..1. */
+  share: number | null;
+  feasible: boolean;
+  /** Срок плана, секунды; null — план невыполним. */
+  makespan_s: number | null;
+  /** Ресурс плана — налёт плюс циклы, секунды. */
+  resource_s: number | null;
+  /** Время расчёта пробы, секунды. */
+  elapsed_s: number;
+  /** Задача с планом пробы: карта с предложенной площадкой, итог, выгрузка. */
+  plan_job_id: string;
+};
+
+/** Статус подбора площадки — `api/jobs.py`, `SitesJob.public()`. */
+export type SitesStatus = {
+  id: string;
+  scenario_id: string;
+  state: JobState;
+  progress: number;
+  /** Сколько расчётов ожидается: «как есть» и по кандидату на долю площади. */
+  expected_trials: number;
+  /** Готовые пробы: первая — «как есть», дальше кандидаты. */
+  trials: SiteTrial[];
+  error: string | null;
+  created_at: string;
+  finished_at: string | null;
+};
+
 export type GeoJsonFeature = {
   type: 'Feature';
   geometry: { type: string; coordinates: unknown };

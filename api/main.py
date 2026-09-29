@@ -598,6 +598,37 @@ def get_pareto(front_id: str) -> dict[str, Any]:
     return job.public()
 
 
+@app.post("/scenarios/{scenario_id}/sites", tags=["расчёт"], status_code=202)
+async def start_sites(scenario_id: str) -> dict[str, Any]:
+    """Подобрать место ещё одной площадки и проверить его расчётом (№28).
+
+    Кандидаты — у компактных скоплений самой дальней от площадок работы (10, 20
+    и 30% площади), место — центр наименьшего круга вокруг скопления вне
+    запретного. Каждый кандидат и базовый расчёт «как есть» — полный план с
+    краш-тестом без приписки бортов к площадкам; план — по `plan_job_id`.
+
+    Returns:
+        Задача подбора для поллинга `GET /sites/{id}`.
+    """
+    try:
+        scenario = store.get(scenario_id)
+    except ScenarioError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return jobs.submit_sites(scenario).public()
+
+
+@app.get("/sites/{search_id}", tags=["расчёт"])
+def get_sites(search_id: str) -> dict[str, Any]:
+    """Состояние подбора и готовые пробы: место, срок, ресурс, план пробы.
+
+    Точка поллинга: первая проба — базовый расчёт «как есть», дальше кандидаты.
+    """
+    job = jobs.site_search(search_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Подбор площадки {search_id!r} не найден")
+    return job.public()
+
+
 @app.get("/jobs", tags=["расчёт"])
 def list_jobs() -> dict[str, Any]:
     """Все задачи расчёта, новые первыми."""

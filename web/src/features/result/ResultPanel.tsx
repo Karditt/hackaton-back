@@ -75,6 +75,13 @@ export function ResultPanel({ run, vehicles, onOpenSchedule }: Props) {
           посчитать весь пул сценария — «Рассчитать».
         </Notice>
       )}
+      {run.label && run.origin === 'sites' && (
+        <Notice tone="caution">
+          {run.label} — пробный план подбора площадки: новая площадка на карте подписана
+          «Предложенная площадка», площадки бортам выбирал расчёт. Чтобы посчитать по параметрам
+          задания — «Рассчитать».
+        </Notice>
+      )}
       {run.label && run.origin === 'pareto' && (
         <Notice tone="caution">
           {run.label} — точка фронта «срок — ресурс», срок задания не учитывался. Чтобы посчитать по
