@@ -21,6 +21,7 @@ import { HintPanel, useHint } from '../features/hints';
 import { HistoryPanel } from '../features/history';
 import { MapView } from '../features/map/MapView';
 import { allLayers, resetPlanLayers, type MapFilter } from '../features/map/layers';
+import { ParetoPanel, usePareto } from '../features/pareto';
 import {
   fleetSize,
   PlanningForm,
@@ -99,6 +100,13 @@ export default function App() {
     vehicles: custom.vehicles,
     vehicleProblems: custom.problems,
   });
+  const front = usePareto({
+    scenarioId,
+    scenario: draft.scenario,
+    options: draft.options,
+    vehicles: custom.vehicles,
+    vehicleProblems: custom.problems,
+  });
 
   // Пул подсказки — флот панели параметров. Поле числа бортов с опечаткой —
   // пул не разобрать, об этом скажет и расчёт.
@@ -110,10 +118,12 @@ export default function App() {
     }
   }, [draft.options]);
   // Сколько шёл последний расчёт этого сценария — для оценки ожидания подсказки.
-  const lastRunS =
+  const lastRunTotalS =
     run && run.scenarioId.startsWith(scenarioId)
       ? Object.values(run.result.timings_s ?? {}).reduce((total, value) => total + value, 0)
-      : null;
+      : 0;
+  // Готовый план из истории или фронта времени расчёта может не нести.
+  const lastRunS = lastRunTotalS >= 1 ? lastRunTotalS : null;
 
   // Новый расчёт — новый состав бортов: слои результата и выбор борта
   // возвращаются к «показать всё». Исходные данные, спрятанные в менеджере,
@@ -190,6 +200,15 @@ export default function App() {
             lastRunS={lastRunS}
             vehicles={catalog}
             onShowPlan={(jobId, label) => void planning.showJob(jobId, label, 'hint')}
+            planBusy={planning.busy}
+          />
+          <ParetoPanel
+            // Новый сценарий — новый фронт: выбранная точка не переносится.
+            key={`front-${scenarioId}`}
+            front={front}
+            disabledNote={planningNote}
+            lastRunS={lastRunS}
+            onShowPlan={(jobId, label) => void planning.showJob(jobId, label, 'pareto')}
             planBusy={planning.busy}
           />
           <HistoryPanel

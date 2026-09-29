@@ -23,9 +23,9 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 
-from core import assumptions
+from core import assumptions, text
 from core.catalog import VehicleCatalog
-from core.pipeline import run_pipeline
+from core.pipeline import PlanningRun, run_pipeline
 from core.schemas import OptimizationMode, Scenario
 
 
@@ -56,14 +56,14 @@ def _plan(
     mode: OptimizationMode,
     deadline_s: float | None,
     label: str,
-) -> ParetoPoint:
+) -> tuple[ParetoPoint, PlanningRun]:
     """Прогнать конвейер в режиме `mode` со сроком `deadline_s` и свести в точку."""
     started = time.perf_counter()
     run = run_pipeline(
         scenario.model_copy(update={"deadline_s": deadline_s}), catalog, mode=mode, verify=False
     )
     metrics = run.mission.metrics if run.mission.is_feasible() else None
-    return ParetoPoint(
+    point = ParetoPoint(
         label=label,
         mode=mode,
         deadline_s=deadline_s,
@@ -74,6 +74,7 @@ def _plan(
         vehicle_count=metrics.vehicle_count if metrics else None,
         elapsed_s=time.perf_counter() - started,
     )
+    return point, run
 
 
 def _mark_dominated(points: list[ParetoPoint]) -> list[ParetoPoint]:
@@ -98,6 +99,7 @@ def pareto_front(
     catalog: VehicleCatalog | None = None,
     steps: int = assumptions.PARETO_STEPS,
     on_point: Callable[[ParetoPoint], None] | None = None,
+    on_plan: Callable[[ParetoPoint, PlanningRun], None] | None = None,
 ) -> list[ParetoPoint]:
     """Планы от «минимум срока» до «минимум ресурса» с ограничением по сроку между ними.
 
@@ -108,6 +110,8 @@ def pareto_front(
         catalog: каталог техники. None — прочитать `data/vehicles.yaml`.
         steps: сколько промежуточных сроков между краями.
         on_point: вызывается после каждого плана — для прогресса.
+        on_plan: вызывается после каждого плана вместе с самим планом — чтобы
+            его можно было открыть и выгрузить (API заводит его задачей).
 
     Returns:
         Точки по возрастанию срока ограничения: «минимум срока», промежуточные,
@@ -115,9 +119,12 @@ def pareto_front(
         срока), — только они.
     """
 
-    def done(point: ParetoPoint) -> ParetoPoint:
+    def done(planned: tuple[ParetoPoint, PlanningRun]) -> ParetoPoint:
+        point, run = planned
         if on_point is not None:
             on_point(point)
+        if on_plan is not None:
+            on_plan(point, run)
         return point
 
     fastest = done(_plan(scenario, catalog, OptimizationMode.MIN_MAKESPAN, None, "минимум срока"))
@@ -136,7 +143,7 @@ def pareto_front(
                         catalog,
                         OptimizationMode.MIN_RESOURCE,
                         deadline_s,
-                        f"минимум ресурса к сроку {deadline_s / 3600:.2f} ч".replace(".", ","),
+                        f"минимум ресурса к сроку {text.num(deadline_s / 3600, 2)} ч",
                     )
                 )
             )

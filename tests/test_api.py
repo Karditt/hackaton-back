@@ -381,6 +381,36 @@ def test_hint_runs_in_background_and_serves_the_plan(client) -> None:
     assert client.get(f"/jobs/{plan_job}/export", params={"format": "kml"}).status_code == 200
 
 
+def test_pareto_front_runs_in_background_and_serves_each_plan(client) -> None:
+    """Фронт «срок — ресурс» — фоновая задача; план каждой точки открывается, но
+    в историю расчётов не попадает."""
+    started = client.post("/scenarios/simple/pareto", params={"steps": 1})
+    assert started.status_code == 202
+    front_id = started.json()["id"]
+    assert started.json()["expected_points"] == 3
+    deadline = time.monotonic() + 300.0
+    while True:
+        payload = client.get(f"/pareto/{front_id}").json()
+        if payload["state"] in ("done", "failed") or time.monotonic() > deadline:
+            break
+        time.sleep(0.05)
+    assert payload["state"] == "done", payload["error"]
+    points = payload["points"]
+    assert [point["mode"] for point in points] == ["min_makespan", "min_resource", "min_resource"]
+    assert points[0]["deadline_s"] is None and points[-1]["deadline_s"] is None
+    assert all(point["feasible"] and point["plan_job_id"] for point in points)
+
+    listed = {job["id"] for job in client.get("/jobs").json()["jobs"]}
+    for point in points:
+        assert point["plan_job_id"] not in listed
+        result = client.get(f"/jobs/{point['plan_job_id']}/result").json()
+        assert result["mission"]["metrics"]["makespan_s"] == pytest.approx(point["makespan_s"])
+
+    assert client.post("/scenarios/nope/pareto").status_code == 404
+    assert client.post("/scenarios/simple/pareto", params={"steps": 0}).status_code == 422
+    assert client.get("/pareto/front-nope").status_code == 404
+
+
 def test_hint_needs_exactly_one_question(client) -> None:
     assert client.post("/scenarios/simple/hints").status_code == 422
     both = client.post("/scenarios/simple/hints", params={"boards": 2, "sweep": True})

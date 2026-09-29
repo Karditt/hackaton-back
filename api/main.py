@@ -232,12 +232,19 @@ def list_scenarios() -> dict[str, Any]:
     интерфейса не запускается; причина — в `planning_note`.
     """
     items = []
-    for scenario_id in store.list_ids():
+    ids = store.list_ids()
+    for scenario_id in ids:
         origin = _sources_for(scenario_id)
+        name = store.get(scenario_id).name
+        # Копия с правками называется по исходному сценарию: имя исходного
+        # могло смениться после того, как копия сохранена.
+        base_id = scenario_id.removesuffix(CUSTOM_SUFFIX)
+        if base_id != scenario_id and base_id in ids:
+            name = f"{store.get(base_id).name or base_id} (изменённые параметры)"
         items.append(
             {
                 "id": scenario_id,
-                "name": store.get(scenario_id).name,
+                "name": name,
                 "planning_available": origin.planning_available if origin else True,
                 "planning_note": origin.planning_note if origin else None,
             }
@@ -548,6 +555,46 @@ def get_hint(hint_id: str) -> dict[str, Any]:
     job = jobs.hint(hint_id)
     if job is None:
         raise HTTPException(status_code=404, detail=f"Подсказка {hint_id!r} не найдена")
+    return job.public()
+
+
+@app.post("/scenarios/{scenario_id}/pareto", tags=["расчёт"], status_code=202)
+async def start_pareto(
+    scenario_id: str,
+    steps: int = Query(
+        default=assumptions.PARETO_STEPS,
+        ge=1,
+        le=8,
+        description="Сколько промежуточных сроков между «минимум срока» и «минимум ресурса»",
+    ),
+) -> dict[str, Any]:
+    """Построить фронт «срок — ресурс»: что стоит закончить к каждому сроку (№52).
+
+    Края — планы «минимум срока» и «минимум ресурса», между ними — «минимум
+    ресурса» к промежуточным срокам. Каждая точка — настоящий план с
+    краш-тестом; его стадии и выгрузка — по `plan_job_id` через `/jobs/{id}/…`.
+    Срок сценария не учитывается.
+
+    Returns:
+        Задача фронта для поллинга `GET /pareto/{id}`.
+    """
+    try:
+        scenario = store.get(scenario_id)
+    except ScenarioError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return jobs.submit_pareto(scenario, steps).public()
+
+
+@app.get("/pareto/{front_id}", tags=["расчёт"])
+def get_pareto(front_id: str) -> dict[str, Any]:
+    """Состояние фронта и готовые точки: срок, ресурс, доминируется ли, план точки.
+
+    Точка поллинга: точки появляются по мере расчёта, по окончании — по
+    возрастанию срока и с пометкой доминируемых.
+    """
+    job = jobs.front(front_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Фронт {front_id!r} не найден")
     return job.public()
 
 

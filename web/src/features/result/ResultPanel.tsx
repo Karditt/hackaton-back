@@ -69,10 +69,16 @@ export function ResultPanel({ run, vehicles, onOpenSchedule }: Props) {
           текущим — «Рассчитать».
         </Notice>
       )}
-      {run.label && run.origin !== 'history' && (
+      {run.label && run.origin === 'hint' && (
         <Notice tone="caution">
           {run.label}: борта подобраны подсказкой по флоту, критерий — минимум срока. Чтобы
           посчитать весь пул сценария — «Рассчитать».
+        </Notice>
+      )}
+      {run.label && run.origin === 'pareto' && (
+        <Notice tone="caution">
+          {run.label} — точка фронта «срок — ресурс», срок задания не учитывался. Чтобы посчитать по
+          параметрам задания — «Рассчитать».
         </Notice>
       )}
       {feasible ? (

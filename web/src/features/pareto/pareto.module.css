@@ -1,0 +1,229 @@
+/* Фронт «срок — ресурс» (E12): вопрос, прогресс по планам, график и таблица. */
+
+.lead {
+  margin: 10px 0 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.note {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.badgeRunning,
+.badgeReady {
+  margin-left: 8px;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 999px;
+}
+
+.badgeRunning {
+  color: var(--accent);
+  background: var(--accent-bg);
+}
+
+.badgeReady {
+  color: var(--success);
+  background: var(--success-bg);
+}
+
+.build,
+.showPlan {
+  width: 100%;
+  padding: 8px;
+  font: inherit;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.build {
+  margin-bottom: 12px;
+}
+
+.build:disabled,
+.showPlan:disabled {
+  color: var(--muted);
+  border-color: var(--line-strong);
+  cursor: not-allowed;
+}
+
+.progressBox {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.progress {
+  width: 100%;
+  height: 8px;
+  accent-color: var(--accent);
+}
+
+.result {
+  margin-top: 4px;
+}
+
+.summaryText {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.chart {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.grid {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.tick {
+  font-size: 9px;
+  fill: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.axis {
+  font-size: 10px;
+  fill: var(--muted);
+}
+
+.frontLine {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  stroke-opacity: 0.6;
+}
+
+.pointGroup {
+  cursor: pointer;
+  outline: none;
+}
+
+.point {
+  fill: var(--accent);
+  stroke: var(--panel);
+  stroke-width: 1.5;
+}
+
+.dominated {
+  fill: var(--panel);
+  stroke: var(--muted);
+  stroke-width: 1.5;
+}
+
+.halo {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-opacity: 0.35;
+}
+
+.pointGroup:focus-visible .point,
+.pointGroup:focus-visible .dominated {
+  stroke: var(--text);
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  margin: 6px 0 10px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.legendFront,
+.legendDominated {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+
+.legendFront {
+  background: var(--accent);
+}
+
+.legendDominated {
+  margin-left: 6px;
+  border: 1.5px solid var(--muted);
+}
+
+.tableWrap {
+  margin-bottom: 12px;
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.table th,
+.table td {
+  padding: 3px 4px;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+}
+
+.table th {
+  color: var(--muted);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.table td {
+  white-space: nowrap;
+}
+
+.table td:first-child {
+  white-space: normal;
+}
+
+.table tbody tr {
+  cursor: pointer;
+}
+
+.table tbody tr:hover {
+  background: var(--bg);
+}
+
+.selectedRow,
+.selectedRow:hover {
+  background: var(--accent-bg);
+}
+
+.selectedRow td:first-child {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.repeats {
+  font-size: 11px;
+  color: var(--muted);
+}
